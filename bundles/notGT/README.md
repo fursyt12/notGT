@@ -826,6 +826,74 @@ el.animate([{ opacity: 0, transform: "translateY(20px)" }, { opacity: 1 }], {
 
 ---
 
+## Alpha-видео в оверлеях
+
+**`.mov` с alpha (ProRes 4444, HEVC+alpha, Animation) в Browser Source не играет
+вообще** — Chromium не умеет ни ProRes, ни alpha в H.264, поэтому такой файл не
+запустится независимо от размера. Нужна конвертация.
+
+Проверено отрисовкой в Chromium (тот же движок, что в OBS Browser Source):
+
+| Формат | Alpha | Куда ставить |
+| --- | --- | --- |
+| animated **WebP** | работает | слой `gif` или `image` (это просто `<img>`) |
+| **WebM VP9** + alpha | работает | слой `video` |
+| **WebM VP8** + alpha | работает | слой `video` |
+| ProRes 4444 `.mov` | **не декодируется** | — |
+
+### Конвертер
+
+```bash
+cd bundles/notGT
+
+# короткий луп (<= 10 c) -> animated WebP, с автообрезкой содержимого
+node scripts/convert-alpha.mjs ~/overlay.mov
+
+# длиннее -> WebM VP9
+node scripts/convert-alpha.mjs ~/overlay.mov --format webm
+
+# уменьшить и поджать
+node scripts/convert-alpha.mjs ~/overlay.mov --format webm --max-width 960 --crf 34
+
+# посмотреть команды, ничего не запуская
+node scripts/convert-alpha.mjs ~/overlay.mov --dry-run
+```
+
+Что делает: читает параметры через `ffprobe`, проверяет наличие alpha, ищет реальный
+бокс содержимого (`cropdetect`) и обрезает по нему, при необходимости масштабирует и
+пересчитывает fps, выбирает формат по длительности (`--threshold`, по умолчанию 10 c),
+а потом печатает выигрыш по размеру и готовый `src` для слоя. Результат попадает в
+`graphics/media/` и отдаётся как `/bundles/notGT/graphics/media/<файл>`.
+
+Ключевые опции: `--format auto|webp|webm|webm-vp8`, `--out <dir>`, `--quality` (WebP),
+`--crf` (VP8/VP9), `--bitrate` (VP8), `--fps`, `--scale w:h`, `--max-width`,
+`--crop w:h:x:y`, `--no-crop`, `--dry-run`.
+
+### Если хочется своими руками
+
+```bash
+# animated WebP (короткие лупы)
+ffmpeg -i in.mov -c:v libwebp_anim -pix_fmt yuva420p -q:v 80 -loop 0 -an out.webp
+
+# WebM VP9 (длиннее). -auto-alt-ref 0 обязателен: без него libvpx
+# вообще отказывается кодировать прозрачность
+ffmpeg -i in.mov -c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 \
+  -b:v 0 -crf 30 -row-mt 1 -cpu-used 2 -an out.webm
+
+# автообрезка по содержимому — самый крупный выигрыш
+CROP=$(ffmpeg -i in.mov -vf cropdetect=limit=0.1:round=2 -frames:v 90 -f null - 2>&1 \
+       | grep -o 'crop=[0-9:]*' | tail -1)
+```
+
+### Грабля с проверкой alpha
+
+**Не проверяйте прозрачность WebM через `ffprobe`/`ffmpeg`.** В WebM alpha лежит
+отдельным auxiliary-планом, и ffmpeg-декод его не показывает — файл выглядит
+непрозрачным, хотя Chromium/OBS проигрывают его с alpha корректно. Проверять нужно
+в OBS (или в Chromium). Для WebP такой проблемы нет, и конвертер сам проверяет alpha.
+
+---
+
 ## Траблшутинг
 
 **`401 {"error":"unauthorized"}`.** Задан `apiToken`, а запрос идёт без него. Добавьте
