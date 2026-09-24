@@ -124,6 +124,9 @@ async function main() {
 				});
 				await sleep(300);
 
+				const readState = async () => await (await fetch(`${BASE}/api/state`)).json();
+				const before = await readState();
+
 				const clicked = await page.evaluate(() => {
 					const target = [...document.querySelectorAll("button")].find((button) =>
 						/preview|проиграть/i.test(button.textContent ?? ""),
@@ -134,15 +137,23 @@ async function main() {
 				});
 				check("editor.html: Preview button present", clicked);
 
-				let visible = false;
-				for (let i = 0; i < 20 && !visible; i++) {
+				// Preview can legitimately take two paths: if the animation is placed
+				// on the out, the scheduler plays that placement (runtime.revision
+				// moves); otherwise it falls back to a timed manual show
+				// (activeVisible becomes true). Accept either effect.
+				let after = before;
+				let reacted = false;
+				for (let i = 0; i < 20 && !reacted; i++) {
 					await sleep(150);
-					const state = await (await fetch(`${BASE}/api/state`)).json();
-					visible = Boolean(state.activeVisible);
+					after = await readState();
+					reacted =
+						Boolean(after.activeVisible) !== Boolean(before.activeVisible) ||
+						(after.revision ?? 0) !== (before.revision ?? 0);
 				}
 				check(
-					"editor.html: Preview reaches the out (message -> extension -> state)",
-					visible,
+					"editor.html: Preview reaches the extension (state changed)",
+					reacted,
+					`activeVisible ${before.activeVisible}->${after.activeVisible}, rev ${before.revision}->${after.revision}`,
 				);
 				await fetch(`${BASE}/api/titles/hide`, {
 					method: "POST",

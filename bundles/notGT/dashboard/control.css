@@ -1,0 +1,310 @@
+/* notGT — Control panel (fullbleed workspace tab).
+ *
+ * Only `ctl-` prefixed classes live here; everything else comes from ui.css.
+ * The panel gets the full viewport width, so the layout is multi-column and
+ * the variable editor is a two-pane list + detail split.
+ */
+
+.ctl-app {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: 0;
+}
+
+/* ------------------------------------------------------------- status line */
+
+.ctl-status {
+	position: sticky;
+	top: 0;
+	z-index: 6;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 6px 10px;
+	background: var(--ng-bg-2);
+	border: 1px solid var(--ng-line);
+	border-radius: var(--ng-radius);
+}
+
+.ctl-status__brand {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	color: var(--ng-muted);
+}
+
+/* ---------------------------------------------------------------- layout */
+
+.ctl-layout {
+	display: grid;
+	grid-template-columns: minmax(360px, 26rem) minmax(0, 1fr);
+	gap: 10px;
+	align-items: start;
+	min-width: 0;
+}
+
+@media (max-width: 1100px) {
+	.ctl-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.ctl-col {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: 0;
+}
+
+/* --------------------------------------------------------- data card panes */
+
+.ctl-data-card {
+	min-width: 0;
+}
+
+.ctl-data {
+	display: grid;
+	grid-template-columns: minmax(240px, 20rem) minmax(0, 1fr);
+	gap: 10px;
+	min-width: 0;
+}
+
+@media (max-width: 780px) {
+	.ctl-data {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.ctl-data__pane {
+	min-width: 0;
+}
+
+.ctl-data__list-pane {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-right: 10px;
+	border-right: 1px solid var(--ng-line);
+}
+
+@media (max-width: 780px) {
+	.ctl-data__list-pane {
+		padding-right: 0;
+		border-right: 0;
+		border-bottom: 1px solid var(--ng-line);
+		padding-bottom: 10px;
+	}
+}
+
+.ctl-data__list {
+	max-height: min(52vh, 520px);
+	overflow: auto;
+}
+
+.ctl-var-row {
+	flex-wrap: nowrap;
+	align-items: stretch;
+}
+
+.ctl-var {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1;
+	min-width: 0;
+	padding: 5px 8px;
+	background: var(--ng-bg-3);
+	border: 1px solid var(--ng-line);
+	border-radius: 6px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.ctl-var:hover {
+	border-color: var(--ng-accent);
+}
+
+.ctl-var--selected,
+.ctl-var--selected:hover {
+	border-color: var(--ng-accent);
+	background: #24384d;
+	box-shadow: 0 0 0 1px var(--ng-accent) inset;
+}
+
+.ctl-var__meta {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.ctl-var__path {
+	color: var(--ng-fg);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ctl-var__summary {
+	font-size: 11px;
+	color: var(--ng-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ value editor */
+
+.ctl-editor {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+.ctl-editor__head {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.ctl-editor__path {
+	font-size: 13px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.ctl-elements {
+	max-height: min(60vh, 640px);
+	overflow: auto;
+	padding-right: 2px;
+}
+
+.ctl-element {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+}
+
+.ctl-element--current {
+	border-color: var(--ng-ok);
+	background: #22392d;
+	box-shadow: 0 0 0 1px var(--ng-ok) inset;
+}
+
+.ctl-element__head {
+	flex-wrap: nowrap;
+}
+
+.ctl-current {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 11px;
+	color: var(--ng-muted);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.ctl-element--current .ctl-current {
+	color: var(--ng-ok);
+	font-weight: 600;
+}
+
+.ctl-leaves {
+	gap: 4px;
+}
+
+.ctl-leaf {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.ctl-leaf__key {
+	flex: 0 0 6.5rem;
+	font-size: 11px;
+	color: var(--ng-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ctl-leaf__input {
+	flex: 1;
+}
+
+.ctl-empty {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 7px;
+	border: 1px dashed var(--ng-line);
+	border-radius: 6px;
+}
+
+/* ----------------------------------------------------------------- toggle */
+
+.ctl-switch {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.ctl-switch__input {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.ctl-switch__track {
+	position: relative;
+	display: inline-block;
+	width: 34px;
+	height: 18px;
+	border-radius: 999px;
+	background: var(--ng-bg);
+	border: 1px solid var(--ng-line);
+	transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.ctl-switch__thumb {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: var(--ng-muted);
+	transition: left 0.12s ease, background 0.12s ease;
+}
+
+.ctl-switch__label {
+	font-size: 11px;
+	color: var(--ng-muted);
+}
+
+.ctl-switch--on .ctl-switch__track {
+	background: var(--ng-accent-2);
+	border-color: var(--ng-accent);
+}
+
+.ctl-switch--on .ctl-switch__thumb {
+	left: 18px;
+	background: #fff;
+}
+
+.ctl-switch--on .ctl-switch__label {
+	color: var(--ng-ok);
+	font-weight: 600;
+}
+
+.ctl-switch:hover .ctl-switch__track {
+	border-color: var(--ng-accent);
+}

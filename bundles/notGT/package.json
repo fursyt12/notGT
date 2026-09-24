@@ -12,7 +12,7 @@
 				"name": "control",
 				"title": "notGT — Control",
 				"file": "control.html",
-				"width": 3,
+				"fullbleed": true,
 				"headerColor": "#1d2b3a"
 			},
 			{
