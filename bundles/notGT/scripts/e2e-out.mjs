@@ -58,11 +58,18 @@ async function main() {
 	if (!CHROME) throw new Error("No Chromium binary found; set CHROME_PATH");
 	fs.mkdirSync(outDir, { recursive: true });
 
-	// Deterministic starting state.
+	// Deterministic starting state. `merge` (not `replace`) so running the suite
+	// never wipes variables the operator added.
 	await api("POST", "/api/titles/hide", {});
-	await api("POST", "/api/data?mode=replace", {
+	await api("POST", "/api/data?mode=merge", {
 		speaker: { name: "Иван Петров", role: "Ведущий" },
 		ticker: { label: "LIVE", text: "notGT проверка" },
+		sponsor: {
+			label: "Партнёр",
+			name: "ACME",
+			meta: "Официальный партнёр трансляции",
+			accent: "#ff3b30",
+		},
 	});
 
 	const browser = await puppeteer.launch({
@@ -255,6 +262,62 @@ async function main() {
 			await sleep(400);
 		}
 
+		// --- 4c. placement math (x/y/scale) is exactly what the editor mirrors ---
+		await api("POST", "/api/titles/hide", {});
+		await sleep(400);
+		await api("POST", "/api/templates", {
+			id: "e2e-placement",
+			name: "E2E placement",
+			kind: "layers",
+			width: 1920,
+			height: 1080,
+			layers: [
+				{
+					id: "p_marker",
+					type: "shape",
+					shape: "rect",
+					x: 10,
+					y: 10,
+					width: 20,
+					height: 20,
+					style: { fill: "#00ff00", opacity: 1, rotation: 0 },
+					z: 1,
+				},
+			],
+			inTransition: { type: "none", durationMs: 0 },
+			outTransition: { type: "none", durationMs: 0 },
+			playback: { mode: "once", intervalMs: 10000, holdMs: 5000, autoStart: false },
+		});
+		const placed = await api("POST", "/api/outs/main/items", {
+			templateId: "e2e-placement",
+			x: 25,
+			y: 25,
+			scale: 0.5,
+			playback: { mode: "loop", intervalMs: 8000, holdMs: 6000, autoStart: true },
+		});
+		await page.waitForFunction(
+			() => document.querySelector('.notgt-layer[data-layer-id="p_marker"]') !== null,
+			{ timeout: 8000 },
+		);
+		await sleep(400);
+		const box = await page.evaluate(() => {
+			const el = document.querySelector('.notgt-layer[data-layer-id="p_marker"]');
+			const r = el.getBoundingClientRect();
+			return { x: r.x, y: r.y, w: r.width, h: r.height };
+		});
+		// out 1920x1080, item x/y = 25%, scale 0.5, layer at 10%/10% size 20% of the
+		// 1920x1080 template box  ->  left 480+96, top 270+54, w 192, h 108.
+		const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
+		check(
+			"placement x/y/scale renders exactly as the editor models it",
+			near(box.x, 576) && near(box.y, 324) && near(box.w, 192) && near(box.h, 108),
+			JSON.stringify(box),
+		);
+		await api("DELETE", `/api/outs/main/items/${placed.item.id}`);
+		await api("DELETE", "/api/templates/e2e-placement");
+		await api("POST", "/api/titles/hide", {});
+		await sleep(300);
+
 		// --- 5. loop scheduler -------------------------------------------
 		await api("POST", "/api/titles/hide", {});
 		const created = await api("POST", "/api/outs/main/items", {
@@ -285,6 +348,13 @@ async function main() {
 			pageErrors.length === 0,
 			pageErrors.slice(0, 3).join(" | "),
 		);
+
+		// --- restore the seeded values the suite overwrote ----------------
+		await api("POST", "/api/titles/hide", {});
+		await api("POST", "/api/data?mode=merge", {
+			speaker: { name: "Иван Петров", role: "Ведущий" },
+			ticker: { label: "LIVE", text: "notGT — титры, управляемые из Companion" },
+		});
 	} finally {
 		await browser.close();
 	}
