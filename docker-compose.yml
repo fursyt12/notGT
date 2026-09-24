@@ -1,0 +1,126 @@
+# ---------------------------------------------------------------------------
+# notGT — NodeCG + the `notGT` titling/animation bundle.
+#
+# Copy `.env.example` to `.env` and fill it in; compose interpolates the
+# ${...} placeholders below from that file:
+#   NOTGT_HOST, TRAEFIK_ENTRYPOINT, TRAEFIK_CERTRESOLVER,
+#   TRAEFIK_NETWORK, NOTGT_BASICAUTH_USERS
+#
+# The *API* token is NOT configured here: it lives in the bundle config that is
+# bind mounted below (./bundles/notGT/cfg/notGT.json).
+# ---------------------------------------------------------------------------
+
+services:
+  notgt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: notgt:latest
+    container_name: notgt
+    restart: unless-stopped
+
+    # NODE_ENV=production must stay set. Everything else (host, entrypoint,
+    # certresolver, basicauth users) comes from the `.env` file next to this
+    # compose file — see `.env.example`.
+    environment:
+      NODE_ENV: production
+      # TZ: Europe/Moscow
+
+    # ---------------------------------------------------------------------
+    # PERSISTENCE (explicit acceptance criterion)
+    #
+    # These named volumes survive `docker compose down`, `docker compose up
+    # --build` and image rebuilds. NodeCG keeps ALL titling state in
+    # Replicants persisted under /opt/nodecg/db (templates, outs, titleData,
+    # activeTitle, meta), uploaded "media" assets under /opt/nodecg/assets and
+    # logs under /opt/nodecg/logs. Without these volumes, recreating the
+    # container silently resets the whole show configuration.
+    # ---------------------------------------------------------------------
+    volumes:
+      - notgt-db:/opt/nodecg/db
+      - notgt-assets:/opt/nodecg/assets
+      - notgt-logs:/opt/nodecg/logs
+      # Bundle config as a bind mount, so the operator can set `apiToken`
+      # (and tweak the other keys) without rebuilding the image.
+      # The bundle reads it at boot -> restart the container after editing.
+      - ./bundles/notGT/cfg:/opt/nodecg/bundles/notGT/cfg
+
+    # Optional: publish the port for direct LAN access / debugging.
+    # ports:
+    #   - "9090:9090"
+
+    labels:
+      traefik.enable: "true"
+
+      # --- router ---------------------------------------------------------
+      traefik.http.routers.notgt.rule: "Host(`${NOTGT_HOST:-notgt.example.com}`)"
+      traefik.http.routers.notgt.entrypoints: "${TRAEFIK_ENTRYPOINT:-websecure}"
+      traefik.http.routers.notgt.tls: "true"
+      traefik.http.routers.notgt.tls.certresolver: "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      traefik.http.routers.notgt.service: "notgt"
+      # Basic Auth in front of the browser-facing surface (dashboard,
+      # graphics, api). See the commented-out alternative below if you would
+      # rather leave /api to the bundle's own token auth, or leave the
+      # graphics URLs open for OBS.
+      traefik.http.routers.notgt.middlewares: "notgt-auth"
+
+      # --- service --------------------------------------------------------
+      traefik.http.services.notgt.loadbalancer.server.port: "9090"
+      # Tell Traefik which network to talk to this container on.
+      traefik.docker.network: "${TRAEFIK_NETWORK:-traefik}"
+
+      # --- basicauth middleware -------------------------------------------
+      # NOTGT_BASICAUTH_USERS is an htpasswd user list. Generate it with:
+      #   htpasswd -nbB user pass | sed -e 's/\$/\$\$/g'
+      # (the `$$` escaping is required because compose interpolates `$`).
+      # This MUST be set in `.env`; if it expands to an empty string Traefik
+      # gets a basicauth middleware with no users.
+      traefik.http.middlewares.notgt-auth.basicauth.users: "${NOTGT_BASICAUTH_USERS}"
+      # traefik.http.middlewares.notgt-auth.basicauth.removeheader: "true"
+
+      # -------------------------------------------------------------------
+      # ALTERNATIVE (comment the `traefik.http.routers.notgt.middlewares`
+      # label above out, uncomment the block below):
+      # protect ONLY /dashboard and /bundles, and leave /api to the bundle's
+      # own token auth (`apiToken` in bundles/notGT/cfg/notGT.json).
+      #
+      # traefik.http.middlewares.notgt-auth.basicauth.users: "${NOTGT_BASICAUTH_USERS}"
+      # traefik.http.routers.notgt-dashboard.rule: "Host(`${NOTGT_HOST:-notgt.example.com}`) && (PathPrefix(`/dashboard`) || PathPrefix(`/bundles`))"
+      # traefik.http.routers.notgt-dashboard.entrypoints: "${TRAEFIK_ENTRYPOINT:-websecure}"
+      # traefik.http.routers.notgt-dashboard.tls: "true"
+      # traefik.http.routers.notgt-dashboard.tls.certresolver: "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      # traefik.http.routers.notgt-dashboard.service: "notgt"
+      # traefik.http.routers.notgt-dashboard.middlewares: "notgt-auth"
+      # traefik.http.routers.notgt-dashboard.priority: "100"
+      #
+      # Caveat: `/bundles/notGT/graphics/...` is what OBS loads, so both
+      # variants put Basic Auth in front of it. Either put the credentials in
+      # the Browser Source URL (`http://user:pass@host/...`) or drop
+      # `PathPrefix(`/bundles`)` and protect only `/dashboard`.
+      # -------------------------------------------------------------------
+
+    # /api/health is always reachable without a token, so it is safe to probe.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:9090/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+    networks:
+      - traefik
+
+networks:
+  # The Traefik network already exists (created by the Traefik stack), so it is
+  # external; override its name with TRAEFIK_NETWORK in `.env` if needed.
+  traefik:
+    external: true
+    name: "${TRAEFIK_NETWORK:-traefik}"
+
+volumes:
+  notgt-db:
+  notgt-assets:
+  notgt-logs:

@@ -1,7 +1,29 @@
+# Node dependencies (root monorepo AND the notGT bundle) are installed and
+# built inside the image — never copy host node_modules in.
 node_modules
 **/node_modules
 
-build
-build-types
-bundles
-db
+# npm scratch/cache directories from the local dev environment (repo root).
+/.npm-cache
+/.npm-tmp
+
+# Headless-test screenshots/artifacts produced by bundles/notGT/scripts/e2e-*.mjs.
+**/.e2e
+
+# Local build output (rebuilt inside the image).
+/build
+/build-types
+
+# Persisted runtime state — these live in Docker volumes, not in the image.
+# NOTE: deliberately anchored to the context root: `workspaces/nodecg/src`
+# contains a source directory literally named `assets`
+# (src/client/dashboard/elements/assets), which must stay in the context.
+/db
+/logs
+/assets
+
+# VCS metadata (repo root — the huge one).
+/.git
+
+# NOTE: `bundles/` is intentionally NOT ignored here — the notGT bundle is
+# copied into the image and built there by the `bundle-build` stage.
