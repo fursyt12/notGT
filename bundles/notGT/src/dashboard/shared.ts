@@ -502,6 +502,124 @@ export function useNotGtVersion(): number {
 	);
 }
 
+// --------------------------------------------------------------- video hold
+
+/**
+ * `src` of a template's first video layer, or `""` when it has none. Used both
+ * as the `hasVideoLayer` test and as a cache signature so that editing the clip
+ * of a template re-probes instead of reusing a stale duration.
+ */
+export function videoLayerSignature(template: TitleTemplate | undefined | null): string {
+	if (!template || template.kind === "code") return "";
+	const layer = (template.layers ?? []).find((item) => item.type === "video" && item.src);
+	return layer?.src ?? "";
+}
+
+export function hasVideoLayer(template: TitleTemplate | undefined | null): boolean {
+	return videoLayerSignature(template) !== "";
+}
+
+interface VideoDurationEntry {
+	signature: string;
+	value: number | null;
+}
+
+const videoDurationCache = new Map<string, VideoDurationEntry>();
+const videoDurationInflight = new Map<string, Promise<number | null>>();
+
+/**
+ * Length (ms) of the template's first local video layer, via the server's
+ * ffprobe endpoint. `null` means "not determinable" (no video layer, http/data
+ * URI, `{{...}}` binding, missing file, no ffprobe, network failure). Results
+ * are cached per template + video src; simultaneous callers share one request.
+ */
+export function probeVideoDuration(templateId: string, signature = ""): Promise<number | null> {
+	const cached = videoDurationCache.get(templateId);
+	if (cached && cached.signature === signature) return Promise.resolve(cached.value);
+	const running = videoDurationInflight.get(templateId);
+	if (running) return running;
+
+	const request = (async (): Promise<number | null> => {
+		try {
+			const response = await fetch(
+				`/api/media/probe?templateId=${encodeURIComponent(templateId)}`,
+				{ headers: { accept: "application/json" } },
+			);
+			if (!response.ok) return null;
+			const payload = (await response.json()) as { durationMs?: unknown };
+			const raw = payload?.durationMs;
+			const value =
+				typeof raw === "number" && Number.isFinite(raw) && raw > 0
+					? Math.round(raw)
+					: null;
+			videoDurationCache.set(templateId, { signature, value });
+			return value;
+		} catch {
+			// A failed probe is treated as "unknown" but deliberately not cached,
+			// so a transient network hiccup is retried on the next toggle.
+			return null;
+		} finally {
+			videoDurationInflight.delete(templateId);
+		}
+	})();
+
+	videoDurationInflight.set(templateId, request);
+	return request;
+}
+
+/**
+ * The probed video length for `templateId`, or `undefined` while unknown /
+ * disabled. The request only fires when `enabled` is true (the operator chose
+ * `holdMode: "video"`), so typing in the `holdMs` field never probes.
+ */
+export function useVideoDuration(
+	templateId: string | undefined,
+	enabled: boolean,
+	signature = "",
+): number | null | undefined {
+	const key = enabled && templateId ? `${templateId}\u0000${signature}` : "";
+	const [state, setState] = useState<{ key: string; value: number | null | undefined }>({
+		key: "",
+		value: undefined,
+	});
+
+	useEffect(() => {
+		if (!enabled || !templateId) {
+			setState((previous) => (previous.key === "" ? previous : { key: "", value: undefined }));
+			return;
+		}
+		const cached = videoDurationCache.get(templateId);
+		if (cached && cached.signature === signature) {
+			setState((previous) =>
+				previous.key === key ? previous : { key, value: cached.value },
+			);
+			return;
+		}
+		let alive = true;
+		setState((previous) => (previous.key === key ? previous : { key, value: undefined }));
+		void probeVideoDuration(templateId, signature).then((value) => {
+			if (alive) setState({ key, value });
+		});
+		return () => {
+			alive = false;
+		};
+	}, [key, enabled, templateId, signature]);
+
+	return state.key === key && key !== "" ? state.value : undefined;
+}
+
+/** Text rendered next to the «длительность = видео» checkbox. */
+export function videoHoldHint(
+	duration: number | null | undefined,
+	hasVideo: boolean,
+): string {
+	if (typeof duration === "number" && duration > 0) {
+		return `(${(duration / 1000).toFixed(1).replace(".", ",")} с)`;
+	}
+	if (!hasVideo) return "(не определена — нет видео слоя, будет использован holdMs)";
+	return "(не определена — будет использован holdMs)";
+}
+
 // -------------------------------------------------------------------- utils
 
 export function outUrlFor(outId: string): string {

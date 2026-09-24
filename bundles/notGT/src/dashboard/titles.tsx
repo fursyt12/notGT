@@ -13,6 +13,7 @@ import {
 	deleteTemplate,
 	duplicateTemplate,
 	getTemplate,
+	hasVideoLayer,
 	moveItem,
 	newTemplate,
 	removeItem,
@@ -24,6 +25,9 @@ import {
 	useOuts,
 	useRuntime,
 	useTemplates,
+	useVideoDuration,
+	videoHoldHint,
+	videoLayerSignature,
 } from "./shared";
 
 /** Number input that commits on blur / Enter. */
@@ -35,6 +39,7 @@ function NumberInput({
 	max,
 	title,
 	suffix,
+	disabled,
 }: {
 	value: number | undefined;
 	onCommit: (next: number) => void;
@@ -43,6 +48,7 @@ function NumberInput({
 	max?: number;
 	title?: string;
 	suffix?: string;
+	disabled?: boolean;
 }) {
 	return (
 		<span className="row" style={{ gap: 2 }}>
@@ -52,6 +58,7 @@ function NumberInput({
 				step={step}
 				min={min}
 				max={max}
+				disabled={disabled}
 				defaultValue={value ?? 0}
 				key={`${title}:${value}`}
 				onBlur={(event) => {
@@ -174,9 +181,21 @@ function ItemRow({ out, item }: { out: Out; item: OutItem }) {
 	const runtime = useRuntime();
 	const template = getTemplate(item.templateId);
 	const playing = (runtime.playing?.[out.id] ?? []).includes(item.id);
+	const videoMode = item.playback.holdMode === "video";
+	const hasVideo = hasVideoLayer(template);
+	const videoDuration = useVideoDuration(
+		item.templateId,
+		videoMode && hasVideo,
+		videoLayerSignature(template),
+	);
 
 	return (
-		<div className="item" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
+		<div
+			className="item"
+			data-out={out.id}
+			data-item={item.id}
+			style={{ flexWrap: "wrap", alignItems: "flex-start" }}
+		>
 			<div className="col grow" style={{ gap: 4 }}>
 				<div className="row">
 					<input
@@ -206,39 +225,63 @@ function ItemRow({ out, item }: { out: Out; item: OutItem }) {
 					</label>
 
 					{item.playback.mode === "loop" && (
-						<>
-							<label className="field" style={{ maxWidth: 100 }}>
-								период, мс
-								<NumberInput
-									title="period"
-									value={item.playback.intervalMs}
-									min={250}
-									step={250}
-									onCommit={(value) => updateItemPlayback(out.id, item.id, { intervalMs: value })}
-								/>
-							</label>
-							<label className="field" style={{ maxWidth: 100 }}>
-								держать, мс
-								<NumberInput
-									title="hold"
-									value={item.playback.holdMs}
-									min={0}
-									step={250}
-									onCommit={(value) => updateItemPlayback(out.id, item.id, { holdMs: value })}
-								/>
-							</label>
-							<label className="row small" style={{ maxWidth: 120, gap: 4 }}>
-								<input
-									type="checkbox"
-									checked={item.playback.autoStart}
-									onChange={(event) =>
-										updateItemPlayback(out.id, item.id, { autoStart: event.target.checked })
-									}
-								/>
-								авто-старт
-							</label>
-						</>
+						<label className="field" style={{ maxWidth: 100 }}>
+							период, мс
+							<NumberInput
+								title="period"
+								value={item.playback.intervalMs}
+								min={250}
+								step={250}
+								onCommit={(value) => updateItemPlayback(out.id, item.id, { intervalMs: value })}
+							/>
+						</label>
 					)}
+
+					<label className="field" style={{ maxWidth: 100 }}>
+						держать, мс
+						<NumberInput
+							title="hold"
+							value={item.playback.holdMs}
+							min={0}
+							step={250}
+							disabled={videoMode}
+							onCommit={(value) => updateItemPlayback(out.id, item.id, { holdMs: value })}
+						/>
+					</label>
+
+					{item.playback.mode === "loop" && (
+						<label className="row small" style={{ maxWidth: 120, gap: 4 }}>
+							<input
+								type="checkbox"
+								checked={item.playback.autoStart}
+								onChange={(event) =>
+									updateItemPlayback(out.id, item.id, { autoStart: event.target.checked })
+								}
+							/>
+							авто-старт
+						</label>
+					)}
+				</div>
+
+				<div className="row small" style={{ gap: 6 }} data-hold-scope="item">
+					<label className="row small" style={{ gap: 4, cursor: "pointer" }}>
+						<input
+							type="checkbox"
+							data-hold-mode
+							checked={videoMode}
+							onChange={(event) =>
+								updateItemPlayback(out.id, item.id, {
+									holdMode: event.target.checked ? "video" : "fixed",
+								})
+							}
+						/>
+						длительность = видео
+					</label>
+					{videoMode ? (
+						<span className="hint" data-hold-hint>
+							{videoHoldHint(videoDuration, hasVideo)}
+						</span>
+					) : null}
 				</div>
 
 				<div className="row">

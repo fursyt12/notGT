@@ -1,7 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { useEffect, useMemo, useState } from "react";
 
-import type { Out, TitleData, VariableSelection } from "../shared/types";
+import type { Out, OutItem, TitleData, TitleTemplate, VariableSelection } from "../shared/types";
 import {
 	absoluteOutUrl,
 	appendArrayItem,
@@ -9,8 +9,8 @@ import {
 	copyText,
 	duplicateArrayItem,
 	flattenData,
-	formatMs,
 	getTemplate,
+	hasVideoLayer,
 	hideTitle,
 	makeArray,
 	mergeData,
@@ -27,12 +27,16 @@ import {
 	triggerItem,
 	triggerTemplate,
 	updateItem,
+	updateItemPlayback,
 	useActiveTitle,
 	useOuts,
 	useRuntime,
 	useSelection,
 	useTemplates,
 	useTitleData,
+	useVideoDuration,
+	videoHoldHint,
+	videoLayerSignature,
 } from "./shared";
 
 function Badge({
@@ -622,6 +626,176 @@ function DataCard() {
 
 // ----------------------------------------------------------------- triggers
 
+/** Compact integer input for the per-item playback row; commits on blur / Enter. */
+function CtlNumberInput({
+	value,
+	onCommit,
+	step = 100,
+	min,
+	disabled,
+	title,
+}: {
+	value: number | undefined;
+	onCommit: (next: number) => void;
+	step?: number;
+	min?: number;
+	disabled?: boolean;
+	title?: string;
+}) {
+	const [draft, setDraft] = useState(value === undefined ? "" : String(value));
+	const [focused, setFocused] = useState(false);
+
+	useEffect(() => {
+		if (!focused) setDraft(value === undefined ? "" : String(value));
+	}, [value, focused]);
+
+	const commit = (raw: string) => {
+		const parsed = Number(raw);
+		if (!Number.isFinite(parsed)) {
+			setDraft(value === undefined ? "" : String(value));
+			return;
+		}
+		const rounded = Math.round(parsed);
+		onCommit(min !== undefined ? Math.max(min, rounded) : rounded);
+	};
+
+	return (
+		<input
+			type="number"
+			className="ctl-num"
+			data-hold-ms={title === "hold" ? "true" : undefined}
+			title={title}
+			step={step}
+			min={min}
+			disabled={disabled}
+			value={draft}
+			onFocus={() => setFocused(true)}
+			onChange={(event) => setDraft(event.target.value)}
+			onBlur={(event) => {
+				setFocused(false);
+				commit(event.target.value);
+			}}
+			onKeyDown={(event) => {
+				if (event.key === "Enter") (event.target as HTMLInputElement).blur();
+			}}
+		/>
+	);
+}
+
+function TriggerItemRow({
+	out,
+	item,
+	template,
+	playing,
+}: {
+	out: Out;
+	item: OutItem;
+	template: TitleTemplate | undefined;
+	playing: boolean;
+}) {
+	const videoMode = item.playback.holdMode === "video";
+	const hasVideo = hasVideoLayer(template);
+	const videoDuration = useVideoDuration(
+		item.templateId,
+		videoMode && hasVideo,
+		videoLayerSignature(template),
+	);
+
+	return (
+		<div className="item ctl-item" data-out={out.id} data-item={item.id}>
+			<div className="ctl-item__head row">
+				<strong className="grow">{template?.name ?? item.templateId}</strong>
+				{playing && <Badge tone="ok">играет</Badge>}
+				{!item.enabled && !item.held && <Badge>авто выкл</Badge>}
+				<label
+					className={`ctl-switch${item.held ? " ctl-switch--on" : ""}`}
+					data-out={out.id}
+					data-item={item.id}
+					data-held={item.held ? "true" : "false"}
+					title={item.held ? "Снять с эфира" : "Показать и держать в эфире"}
+				>
+					<input
+						type="checkbox"
+						className="ctl-switch__input"
+						checked={Boolean(item.held)}
+						onChange={() => updateItem(out.id, item.id, { held: !item.held })}
+					/>
+					<span className="ctl-switch__track">
+						<span className="ctl-switch__thumb" />
+					</span>
+					<span className="ctl-switch__label">показать</span>
+				</label>
+				<button className="tiny ctl-play" onClick={() => triggerItem(out.id, item.id)}>
+					Проиграть
+				</button>
+			</div>
+
+			<div className="ctl-item__playback row">
+				<label className="field" style={{ maxWidth: 90 }}>
+					режим
+					<select
+						value={item.playback.mode}
+						onChange={(event) =>
+							updateItemPlayback(out.id, item.id, {
+								mode: event.target.value === "loop" ? "loop" : "once",
+							})
+						}
+					>
+						<option value="once">once</option>
+						<option value="loop">loop</option>
+					</select>
+				</label>
+
+				{item.playback.mode === "loop" && (
+					<label className="field" style={{ maxWidth: 100 }}>
+						период, мс
+						<CtlNumberInput
+							title="period"
+							value={item.playback.intervalMs}
+							min={250}
+							step={250}
+							onCommit={(value) =>
+								updateItemPlayback(out.id, item.id, { intervalMs: value })
+							}
+						/>
+					</label>
+				)}
+
+				<label className="field" style={{ maxWidth: 110 }}>
+					держать, мс
+					<CtlNumberInput
+						title="hold"
+						value={item.playback.holdMs}
+						min={0}
+						step={250}
+						disabled={videoMode}
+						onCommit={(value) => updateItemPlayback(out.id, item.id, { holdMs: value })}
+					/>
+				</label>
+
+				<label className="ctl-hold row small" data-hold-scope="item">
+					<input
+						type="checkbox"
+						data-hold-mode
+						checked={videoMode}
+						onChange={(event) =>
+							updateItemPlayback(out.id, item.id, {
+								holdMode: event.target.checked ? "video" : "fixed",
+							})
+						}
+					/>
+					длительность = видео
+					{videoMode ? (
+						<span className="hint" data-hold-hint>
+							{videoHoldHint(videoDuration, hasVideo)}
+						</span>
+					) : null}
+				</label>
+			</div>
+		</div>
+	);
+}
+
 function TriggersCard() {
 	const outs = useOuts();
 	const templates = useTemplates();
@@ -646,50 +820,15 @@ function TriggersCard() {
 					</div>
 					<div className="list" style={{ marginTop: 4 }}>
 						{out.items.length === 0 && <div className="hint">Нет анимаций на этом out.</div>}
-						{out.items.map((item) => {
-							const template = templates.find((t) => t.id === item.templateId);
-							const playing = (runtime.playing?.[out.id] ?? []).includes(item.id);
-							return (
-								<div className="item" key={item.id}>
-									<span className="grow">{template?.name ?? item.templateId}</span>
-									{item.playback.mode === "loop" ? (
-										<Badge tone="loop">
-											loop · {formatMs(item.playback.intervalMs)}
-										</Badge>
-									) : (
-										<Badge>once</Badge>
-									)}
-									{playing && <Badge tone="ok">играет</Badge>}
-									{!item.enabled && !item.held && <Badge>авто выкл</Badge>}
-									<label
-										className={`ctl-switch${item.held ? " ctl-switch--on" : ""}`}
-										data-out={out.id}
-										data-item={item.id}
-										data-held={item.held ? "true" : "false"}
-										title={item.held ? "Снять с эфира" : "Показать и держать в эфире"}
-									>
-										<input
-											type="checkbox"
-											className="ctl-switch__input"
-											checked={Boolean(item.held)}
-											onChange={() =>
-												updateItem(out.id, item.id, { held: !item.held })
-											}
-										/>
-										<span className="ctl-switch__track">
-											<span className="ctl-switch__thumb" />
-										</span>
-										<span className="ctl-switch__label">показать</span>
-									</label>
-									<button
-										className="tiny ctl-play"
-										onClick={() => triggerItem(out.id, item.id)}
-									>
-										Проиграть
-									</button>
-								</div>
-							);
-						})}
+						{out.items.map((item) => (
+							<TriggerItemRow
+								key={item.id}
+								out={out}
+								item={item}
+								template={templates.find((t) => t.id === item.templateId)}
+								playing={(runtime.playing?.[out.id] ?? []).includes(item.id)}
+							/>
+						))}
 					</div>
 				</div>
 			))}

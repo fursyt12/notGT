@@ -482,6 +482,24 @@ body.editor-body {
 	margin: 0;
 }
 
+/* «длительность = видео» checkbox + probed-length hint, next to holdMs. */
+.ed-hold-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.ed-hold-row .ed-hint {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.ed-hold-ms:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
 .ed-small {
 	font-size: 10px;
 }

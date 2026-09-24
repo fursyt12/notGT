@@ -308,3 +308,38 @@
 .ctl-switch:hover .ctl-switch__track {
 	border-color: var(--ng-accent);
 }
+
+/* ------------------------------------------------- per-item playback editor */
+
+.ctl-item {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+}
+
+.ctl-item__head {
+	flex-wrap: wrap;
+}
+
+.ctl-item__playback {
+	align-items: flex-end;
+	gap: 8px;
+}
+
+.ctl-num:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+/* «длительность = видео» checkbox + probed-length hint, next to holdMs. */
+.ctl-hold {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	max-width: 100%;
+	cursor: pointer;
+}
+
+.ctl-hold input[type="checkbox"] {
+	flex: 0 0 auto;
+}

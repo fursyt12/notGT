@@ -67,6 +67,7 @@ import {
 	formatMs,
 	getDb,
 	getTemplate,
+	hasVideoLayer,
 	hideTitle,
 	moveItem,
 	newId,
@@ -84,6 +85,9 @@ import {
 	useSelection,
 	useTemplates,
 	useTitleData,
+	useVideoDuration,
+	videoHoldHint,
+	videoLayerSignature,
 } from "./shared";
 
 // ------------------------------------------------------------------ helpers
@@ -1516,6 +1520,58 @@ function LayerInspector({
 
 // ------------------------------------------------------- placement inspector
 
+/**
+ * `holdMs` input that can be disabled while «длительность = видео» is on.
+ * Mirrors `NumField`'s forgiving draft behaviour; the shared atom has no
+ * `disabled` prop and lives outside the files this change may touch.
+ */
+function HoldMsField({
+	label,
+	value,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	value: number | undefined;
+	disabled: boolean;
+	onChange: (value: number) => void;
+}) {
+	const [draft, setDraft] = useState(value === undefined ? "" : String(value));
+	const [focused, setFocused] = useState(false);
+
+	useEffect(() => {
+		if (!focused) setDraft(value === undefined ? "" : String(value));
+	}, [value, focused]);
+
+	return (
+		<Field label={`${label} (ms)`}>
+			<input
+				type="number"
+				className="ed-hold-ms"
+				data-hold-ms
+				step={100}
+				min={100}
+				title="hold"
+				disabled={disabled}
+				value={draft}
+				onFocus={() => setFocused(true)}
+				onBlur={() => {
+					setFocused(false);
+					setDraft(value === undefined ? "" : String(value));
+				}}
+				onChange={(event) => {
+					const raw = event.target.value;
+					setDraft(raw);
+					if (raw.trim() === "") return;
+					const parsed = Number(raw);
+					if (!Number.isFinite(parsed)) return;
+					onChange(parsed);
+				}}
+			/>
+		</Field>
+	);
+}
+
 function PlacementInspector({
 	out,
 	item,
@@ -1535,6 +1591,13 @@ function PlacementInspector({
 }) {
 	const playback = item.playback ?? defaultPlayback();
 	const fittedScale = template.width > 0 ? out.width / template.width : 1;
+	const videoMode = playback.holdMode === "video";
+	const hasVideo = hasVideoLayer(template);
+	const videoDuration = useVideoDuration(
+		item.templateId,
+		videoMode && hasVideo,
+		videoLayerSignature(template),
+	);
 
 	return (
 		<div className="ed-panel-body">
@@ -1598,14 +1661,24 @@ function PlacementInspector({
 						value={playback.intervalMs}
 						onChange={(value) => onPlayback({ intervalMs: Math.max(100, Math.round(value)) })}
 					/>
-					<NumField
+					<HoldMsField
 						label="Удержание"
-						suffix="ms"
-						step={100}
-						min={100}
 						value={playback.holdMs}
+						disabled={videoMode}
 						onChange={(value) => onPlayback({ holdMs: Math.max(100, Math.round(value)) })}
 					/>
+				</div>
+				<div className="ed-hold-row" data-hold-scope="placement">
+					<CheckField
+						label="длительность = видео"
+						checked={videoMode}
+						onChange={(value) => onPlayback({ holdMode: value ? "video" : "fixed" })}
+					/>
+					{videoMode ? (
+						<span className="ed-hint" data-hold-hint>
+							{videoHoldHint(videoDuration, hasVideo)}
+						</span>
+					) : null}
 				</div>
 				<CheckField
 					label="autoStart — запускать при старте"
@@ -1632,6 +1705,13 @@ function TemplateSettings({
 	const inTransition = template.inTransition ?? defaultTransition();
 	const outTransition = template.outTransition ?? defaultTransition();
 	const playback = template.playback ?? defaultPlayback();
+	const videoMode = playback.holdMode === "video";
+	const hasVideo = hasVideoLayer(template);
+	const videoDuration = useVideoDuration(
+		template.id,
+		videoMode && hasVideo,
+		videoLayerSignature(template),
+	);
 
 	return (
 		<div className="ed-panel-body">
@@ -1758,16 +1838,28 @@ function TemplateSettings({
 							onPatch({ playback: { ...playback, intervalMs: Math.max(100, Math.round(value)) } })
 						}
 					/>
-					<NumField
+					<HoldMsField
 						label="Удержание"
-						suffix="ms"
-						step={100}
-						min={100}
 						value={playback.holdMs}
+						disabled={videoMode}
 						onChange={(value) =>
 							onPatch({ playback: { ...playback, holdMs: Math.max(100, Math.round(value)) } })
 						}
 					/>
+				</div>
+				<div className="ed-hold-row" data-hold-scope="template">
+					<CheckField
+						label="длительность = видео"
+						checked={videoMode}
+						onChange={(value) =>
+							onPatch({ playback: { ...playback, holdMode: value ? "video" : "fixed" } })
+						}
+					/>
+					{videoMode ? (
+						<span className="ed-hint" data-hold-hint>
+							{videoHoldHint(videoDuration, hasVideo)}
+						</span>
+					) : null}
 				</div>
 				<CheckField
 					label="autoStart — запускать при старте"
