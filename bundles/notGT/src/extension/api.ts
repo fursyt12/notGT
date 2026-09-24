@@ -508,6 +508,7 @@ export function normalizeItem(input: Record<string, unknown>, index = 0): OutIte
 		scale: pickNumber(input["scale"]) ?? 1,
 		playback: defaultPlayback(),
 		enabled: typeof input["enabled"] === "boolean" ? input["enabled"] : true,
+		held: typeof input["held"] === "boolean" ? input["held"] : false,
 		order: pickNumber(input["order"]) ?? index,
 	};
 	return {

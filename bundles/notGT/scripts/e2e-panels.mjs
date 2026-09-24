@@ -35,6 +35,7 @@ const PANELS = [
 	{
 		file: "control.html",
 		expectText: ["notGT — Control", "Данные (переменные)"],
+		heldToggle: true,
 		shot: "panel-control.png",
 	},
 	{
@@ -235,6 +236,76 @@ async function main() {
 					fullPage: false,
 				});
 				await fetch(`${BASE}/api/outs/${fixture}`, { method: "DELETE" });
+			}
+
+			if (panel.heldToggle) {
+				// The "показать" switch must put the placement on air and KEEP it
+				// there (and take it off again), not just flip `enabled`.
+				const created = await (
+					await fetch(`${BASE}/api/outs/main/items`, {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({
+							templateId: "code-sample",
+							held: false,
+							playback: { mode: "once", intervalMs: 10000, holdMs: 300, autoStart: false },
+						}),
+					})
+				).json();
+				const itemId = created.item.id;
+
+				await page.reload({ waitUntil: "networkidle2", timeout: 30_000 });
+				await sleep(900);
+
+				const switchSelector = `label.ctl-switch[data-out="main"][data-item="${itemId}"] input`;
+				await page.waitForSelector(switchSelector, { timeout: 15_000 });
+
+				const snapshot = async () => {
+					const outs = await (await fetch(`${BASE}/api/outs`)).json();
+					const out = outs.outs.find((o) => o.id === "main");
+					const item = out?.items.find((i) => i.id === itemId);
+					const state = await (await fetch(`${BASE}/api/state`)).json();
+					return {
+						held: Boolean(item?.held),
+						enabled: Boolean(item?.enabled),
+						playing: (state.playing?.main ?? []).includes(itemId),
+					};
+				};
+
+				const off = await snapshot();
+				check("control.html: toggle starts off", !off.held && !off.playing, JSON.stringify(off));
+
+				await page.click(switchSelector);
+				await sleep(400);
+				const on = await snapshot();
+				check(
+					"control.html: toggle puts the placement on air and keeps it",
+					on.held && on.playing && on.enabled,
+					JSON.stringify(on),
+				);
+
+				await sleep(1400); // beyond the 300 ms holdMs
+				const still = await snapshot();
+				check(
+					"control.html: held placement is still on air after holdMs",
+					still.playing,
+					JSON.stringify(still),
+				);
+				await page.screenshot({
+					path: path.join(outDir, "control-held-on.png"),
+					fullPage: false,
+				});
+
+				await page.click(switchSelector);
+				await sleep(400);
+				const back = await snapshot();
+				check(
+					"control.html: toggle takes it off air again",
+					!back.held && !back.playing,
+					JSON.stringify(back),
+				);
+
+				await fetch(`${BASE}/api/outs/main/items/${itemId}`, { method: "DELETE" });
 			}
 
 			await page.screenshot({ path: path.join(outDir, panel.shot), fullPage: false });

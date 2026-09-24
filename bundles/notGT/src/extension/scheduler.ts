@@ -31,13 +31,22 @@ export class Scheduler {
 
 		for (const out of this.store.listOuts()) {
 			for (const item of out.items) {
-				if (!item.enabled) continue;
 				const template = this.store.getTemplate(item.templateId);
 				if (!template) continue;
+				const key = this.key(out.id, item.id);
+
+				// "Show it and keep it": the operator toggled this placement on,
+				// so it stays on air regardless of once/loop and of `enabled`.
+				if (item.held) {
+					desired.add(key);
+					this.hold(out.id, item.id);
+					continue;
+				}
+
+				if (!item.enabled) continue;
 				const playback = item.playback ?? template.playback;
 				if (playback.mode !== "loop" || !playback.autoStart) continue;
 
-				const key = this.key(out.id, item.id);
 				desired.add(key);
 				if (!this.timers.has(key)) this.startLoop(out.id, item.id);
 			}
@@ -113,8 +122,36 @@ export class Scheduler {
 		entry.interval = setInterval(tick, interval);
 	}
 
+	/**
+	 * Puts a placement on air and leaves it there: no hold timer, no interval.
+	 * Used for `held` placements, the operator's show/keep toggle.
+	 */
+	private hold(outId: string, itemId: string): void {
+		const key = this.key(outId, itemId);
+		const entry = this.timers.get(key) ?? {};
+		if (entry.interval) {
+			clearInterval(entry.interval);
+			entry.interval = undefined;
+		}
+		if (entry.hold) {
+			clearTimeout(entry.hold);
+			entry.hold = undefined;
+		}
+		this.timers.set(key, entry);
+
+		// Only the first transition onto air replays the entrance animation;
+		// staying held must not restart it on every sync().
+		if (!this.store.isPlaying(outId, itemId)) {
+			this.store.addPlaying(outId, itemId);
+			this.store.markTrigger(outId, itemId);
+		}
+	}
+
 	private play(outId: string, itemId: string, holdMs: number): void {
 		this.store.addPlaying(outId, itemId);
+
+		// A held placement never times out.
+		if (this.store.getItem(outId, itemId)?.item.held) return;
 
 		// Bump the play counter. Graphics watch it and (re)start the entrance
 		// animation. This deliberately does NOT use a socket message: a
@@ -134,10 +171,11 @@ export class Scheduler {
 
 	private stop(key: string): void {
 		const entry = this.timers.get(key);
-		if (!entry) return;
-		if (entry.interval) clearInterval(entry.interval);
-		if (entry.hold) clearTimeout(entry.hold);
-		this.timers.delete(key);
+		if (entry) {
+			if (entry.interval) clearInterval(entry.interval);
+			if (entry.hold) clearTimeout(entry.hold);
+			this.timers.delete(key);
+		}
 
 		const [outId, itemId] = key.split("::");
 		if (outId && itemId) this.store.removePlaying(outId, itemId);

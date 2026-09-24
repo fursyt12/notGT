@@ -660,26 +660,26 @@ function TriggersCard() {
 										<Badge>once</Badge>
 									)}
 									{playing && <Badge tone="ok">играет</Badge>}
-									{!item.enabled && <Badge>выкл</Badge>}
+									{!item.enabled && !item.held && <Badge>авто выкл</Badge>}
 									<label
-										className={`ctl-switch${item.enabled ? " ctl-switch--on" : ""}`}
+										className={`ctl-switch${item.held ? " ctl-switch--on" : ""}`}
 										data-out={out.id}
 										data-item={item.id}
-										data-enabled={item.enabled ? "true" : "false"}
-										title={item.enabled ? "показ включён" : "показ выключен"}
+										data-held={item.held ? "true" : "false"}
+										title={item.held ? "Снять с эфира" : "Показать и держать в эфире"}
 									>
 										<input
 											type="checkbox"
 											className="ctl-switch__input"
-											checked={item.enabled}
+											checked={Boolean(item.held)}
 											onChange={() =>
-												updateItem(out.id, item.id, { enabled: !item.enabled })
+												updateItem(out.id, item.id, { held: !item.held })
 											}
 										/>
 										<span className="ctl-switch__track">
 											<span className="ctl-switch__thumb" />
 										</span>
-										<span className="ctl-switch__label">показ</span>
+										<span className="ctl-switch__label">показать</span>
 									</label>
 									<button
 										className="tiny ctl-play"

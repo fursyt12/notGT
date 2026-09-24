@@ -390,6 +390,36 @@ async function main() {
 		await api("DELETE", "/api/templates/e2e-array");
 		await sleep(300);
 
+		// --- 4e. "show it and keep it" toggle (held placements) -----------
+		await api("POST", "/api/titles/hide", {});
+		await sleep(400);
+		const heldItem = await api("POST", "/api/outs/main/items", {
+			templateId: "lower-third",
+			held: true,
+			// A deliberately tiny hold: a held placement must ignore it.
+			playback: { mode: "once", intervalMs: 10000, holdMs: 300, autoStart: false },
+		});
+		const heldId = heldItem.item.id;
+		const playingMain = async () => (await api("GET", "/api/state")).playing?.main ?? [];
+
+		await sleep(250);
+		check("held placement goes on air", (await playingMain()).includes(heldId), heldId);
+		await page.waitForSelector(".notgt-slot", { timeout: 8000 });
+		check("held placement is rendered on the out", true);
+
+		await sleep(1600); // far beyond the 300 ms holdMs
+		check(
+			"held placement is still on air after holdMs (show and keep)",
+			(await playingMain()).includes(heldId),
+		);
+
+		await api("PATCH", `/api/outs/main/items/${heldId}`, { held: false });
+		await sleep(500);
+		check("toggling held off takes it off air", !(await playingMain()).includes(heldId));
+
+		await api("DELETE", `/api/outs/main/items/${heldId}`);
+		await sleep(300);
+
 		// --- 5. loop scheduler -------------------------------------------
 		await api("POST", "/api/titles/hide", {});
 		const created = await api("POST", "/api/outs/main/items", {

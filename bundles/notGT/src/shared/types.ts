@@ -176,6 +176,12 @@ export interface OutItem {
 	/** Overrides the template's own playback config when set. */
 	playback: PlaybackConfig;
 	enabled: boolean;
+	/**
+	 * "Show it and keep it": while true the placement stays on air until the
+	 * toggle is switched off — no `holdMs` timeout, no `once`/`loop` schedule,
+	 * and it wins over `enabled`. This is the operator's live on/off toggle.
+	 */
+	held?: boolean;
 	order: number;
 }
 
