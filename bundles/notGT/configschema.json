@@ -1,0 +1,27 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema",
+	"type": "object",
+	"properties": {
+		"apiToken": {
+			"type": "string",
+			"default": "",
+			"description": "Shared secret for the /api endpoints (Bitfocus Companion, external integrations). Send it as `Authorization: Bearer <token>`, `X-API-Token: <token>` or `?token=<token>`. When empty the API is unauthenticated (only safe if the server is not reachable from untrusted networks)."
+		},
+		"allowUnauthenticatedApi": {
+			"type": "boolean",
+			"default": false,
+			"description": "Explicitly allow the /api endpoints to be used without a token. Ignored when apiToken is set."
+		},
+		"hideApiState": {
+			"type": "boolean",
+			"default": false,
+			"description": "Hide the `templates`/`outs` payloads from GET /api/state. Useful for very chatty Companion feedback polling."
+		},
+		"defaultOutId": {
+			"type": "string",
+			"default": "main",
+			"description": "Id of the out created on first run."
+		}
+	},
+	"required": []
+}

@@ -1,0 +1,312 @@
+/* notGT dashboard UI — shared by all three panels. */
+
+:root {
+	--ng-bg: #1b2430;
+	--ng-bg-2: #222e3c;
+	--ng-bg-3: #2b3947;
+	--ng-line: #3a4a5c;
+	--ng-fg: #e6edf3;
+	--ng-muted: #93a4b5;
+	--ng-accent: #4aa8ff;
+	--ng-accent-2: #1f6feb;
+	--ng-danger: #ff5c5c;
+	--ng-ok: #4ade80;
+	--ng-warn: #fbbf24;
+	--ng-radius: 8px;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	padding: 10px;
+	background: var(--ng-bg);
+	color: var(--ng-fg);
+	font: 13px/1.45 "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+	margin: 0 0 8px;
+	font-weight: 700;
+}
+
+h1 {
+	font-size: 16px;
+}
+
+h2 {
+	font-size: 14px;
+}
+
+h3 {
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--ng-muted);
+}
+
+a {
+	color: var(--ng-accent);
+}
+
+.card {
+	background: var(--ng-bg-2);
+	border: 1px solid var(--ng-line);
+	border-radius: var(--ng-radius);
+	padding: 10px;
+	margin-bottom: 10px;
+}
+
+.card__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
+.row--between {
+	justify-content: space-between;
+}
+
+.col {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.grid {
+	display: grid;
+	gap: 8px;
+}
+
+.grid--2 {
+	grid-template-columns: 1fr 1fr;
+}
+
+.grid--3 {
+	grid-template-columns: repeat(3, 1fr);
+}
+
+.muted {
+	color: var(--ng-muted);
+}
+
+.small {
+	font-size: 11px;
+}
+
+.mono {
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.grow {
+	flex: 1;
+	min-width: 0;
+}
+
+button,
+.btn {
+	appearance: none;
+	border: 1px solid var(--ng-line);
+	background: var(--ng-bg-3);
+	color: var(--ng-fg);
+	border-radius: 6px;
+	padding: 6px 10px;
+	font: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+button:hover,
+.btn:hover {
+	border-color: var(--ng-accent);
+}
+
+button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+button.primary {
+	background: var(--ng-accent-2);
+	border-color: var(--ng-accent-2);
+	color: #fff;
+}
+
+button.danger {
+	background: transparent;
+	border-color: var(--ng-danger);
+	color: var(--ng-danger);
+}
+
+button.ghost {
+	background: transparent;
+}
+
+button.tiny {
+	padding: 2px 6px;
+	font-size: 11px;
+}
+
+button.active {
+	background: var(--ng-accent-2);
+	border-color: var(--ng-accent);
+	color: #fff;
+}
+
+input,
+select,
+textarea {
+	background: var(--ng-bg);
+	border: 1px solid var(--ng-line);
+	color: var(--ng-fg);
+	border-radius: 6px;
+	padding: 5px 7px;
+	font: inherit;
+	width: 100%;
+	min-width: 0;
+}
+
+input[type="checkbox"] {
+	width: auto;
+}
+
+input[type="color"] {
+	padding: 0;
+	height: 28px;
+	width: 40px;
+}
+
+input[type="number"] {
+	width: 100%;
+}
+
+label.field {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	font-size: 11px;
+	color: var(--ng-muted);
+}
+
+.badge {
+	display: inline-block;
+	padding: 1px 6px;
+	border-radius: 999px;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	border: 1px solid var(--ng-line);
+	color: var(--ng-muted);
+}
+
+.badge--live {
+	background: #7f1d1d;
+	border-color: #ef4444;
+	color: #fff;
+}
+
+.badge--ok {
+	border-color: var(--ng-ok);
+	color: var(--ng-ok);
+}
+
+.badge--loop {
+	border-color: var(--ng-warn);
+	color: var(--ng-warn);
+}
+
+.list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	background: var(--ng-bg-3);
+	border: 1px solid var(--ng-line);
+	border-radius: 6px;
+}
+
+.item--selected {
+	border-color: var(--ng-accent);
+}
+
+.item--dragging {
+	opacity: 0.6;
+}
+
+.spacer {
+	flex: 1;
+}
+
+.hint {
+	color: var(--ng-muted);
+	font-size: 11px;
+}
+
+.err {
+	color: var(--ng-danger);
+	font-size: 11px;
+}
+
+.ok {
+	color: var(--ng-ok);
+	font-size: 11px;
+}
+
+.warn {
+	color: var(--ng-warn);
+	font-size: 11px;
+}
+
+.scroll {
+	overflow: auto;
+}
+
+.code-area {
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	font-size: 12px;
+	min-height: 120px;
+	white-space: pre;
+}
+
+.divider {
+	height: 1px;
+	background: var(--ng-line);
+	margin: 8px 0;
+}
+
+.sticky-head {
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	background: var(--ng-bg);
+	padding-bottom: 8px;
+}
+
+.out-link {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+
+.out-link input {
+	font-size: 11px;
+}

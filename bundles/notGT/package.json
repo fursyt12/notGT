@@ -1,0 +1,82 @@
+{
+	"name": "notGT",
+	"version": "0.1.0",
+	"private": true,
+	"description": "notGT — web titling / animation system for NodeCG. Multi-out broadcast graphics controlled from the dashboard, Bitfocus Companion or plain HTTP.",
+	"license": "MIT",
+	"type": "commonjs",
+	"nodecg": {
+		"compatibleRange": "^2.0.0",
+		"dashboardPanels": [
+			{
+				"name": "control",
+				"title": "notGT — Control",
+				"file": "control.html",
+				"width": 3,
+				"headerColor": "#1d2b3a"
+			},
+			{
+				"name": "titles",
+				"title": "notGT — Titles & Outs",
+				"file": "titles.html",
+				"width": 3,
+				"headerColor": "#243b53"
+			},
+			{
+				"name": "editor",
+				"title": "notGT — Editor",
+				"file": "editor.html",
+				"fullbleed": true,
+				"headerColor": "#102a43"
+			}
+		],
+		"graphics": [
+			{
+				"file": "out.html",
+				"width": 1920,
+				"height": 1080,
+				"singleInstance": false
+			}
+		],
+		"assetCategories": [
+			{
+				"name": "media",
+				"title": "notGT Media",
+				"allowedTypes": [
+					"png",
+					"jpg",
+					"jpeg",
+					"gif",
+					"webp",
+					"svg",
+					"mp4",
+					"webm",
+					"woff",
+					"woff2",
+					"ttf",
+					"otf",
+					"json"
+				]
+			}
+		]
+	},
+	"scripts": {
+		"build": "node scripts/build.mjs",
+		"watch": "node scripts/build.mjs --watch",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test:e2e": "node scripts/e2e-out.mjs && node scripts/e2e-panels.mjs"
+	},
+	"devDependencies": {
+		"@types/node": "^20.19.0",
+		"@types/react": "^18.3.12",
+		"@types/react-dom": "^18.3.1",
+		"@vitejs/plugin-react": "^4.3.4",
+		"esbuild": "^0.24.0",
+		"konva": "^9.3.16",
+		"react": "^18.3.1",
+		"react-dom": "^18.3.1",
+		"react-konva": "^18.2.10",
+		"typescript": "^5.6.3",
+		"vite": "^5.4.11"
+	}
+}

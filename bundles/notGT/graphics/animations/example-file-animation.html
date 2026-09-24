@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="notgt:name" content="File animation — sponsor bug" />
+		<title>Sponsor bug</title>
+		<style>
+			/*
+			 * Пример анимации, написанной ФАЙЛОМ, а не в веб-редакторе.
+			 *
+			 * Рантайм notGT подключается автоматически, ДО этого скрипта, поэтому
+			 * внутри доступны:
+			 *   vars('sponsor.name', 'fallback')  — значение переменной
+			 *   data                              — весь набор переменных
+			 *   onData(fn)                        — вызывается при каждом изменении
+			 *   root                              — контейнер анимации (document.body)
+			 *   [data-bind="sponsor.name"]        — текст обновляется сам
+			 *
+			 * Значения задаются в панели «Control» или через POST /api/data.
+			 * Файл перечитывается при показе анимации, поэтому после правки
+			 * достаточно обновить Browser Source в OBS (или перезапустить
+			 * анимацию), перезапуск NodeCG не нужен.
+			 */
+
+			html,
+			body {
+				margin: 0;
+				width: 100%;
+				height: 100%;
+				background: transparent;
+				overflow: hidden;
+			}
+
+			.bug {
+				position: absolute;
+				right: 4%;
+				bottom: 9%;
+				display: flex;
+				align-items: stretch;
+				border-radius: 12px;
+				overflow: hidden;
+				font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+				box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+				transform: translateX(120%);
+				opacity: 0;
+				transition:
+					transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1),
+					opacity 380ms ease-out;
+			}
+
+			.bug.is-visible {
+				transform: translateX(0);
+				opacity: 1;
+			}
+
+			.bug__label {
+				display: flex;
+				align-items: center;
+				padding: 16px 22px;
+				font-size: 26px;
+				font-weight: 800;
+				letter-spacing: 0.14em;
+				text-transform: uppercase;
+				color: #ffffff;
+				background: var(--accent, #ff3b30);
+			}
+
+			.bug__body {
+				display: flex;
+				flex-direction: column;
+				justify-content: center;
+				gap: 2px;
+				padding: 14px 30px 14px 24px;
+				background: rgba(8, 20, 28, 0.94);
+			}
+
+			.bug__name {
+				font-size: 40px;
+				font-weight: 700;
+				color: #ffffff;
+				line-height: 1.05;
+			}
+
+			.bug__meta {
+				font-size: 22px;
+				font-weight: 500;
+				color: #8fd3ff;
+				letter-spacing: 0.04em;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="bug" id="bug">
+			<div class="bug__label" data-bind="sponsor.label">ПАРТНЁР</div>
+			<div class="bug__body">
+				<div class="bug__name" data-bind="sponsor.name">ACME</div>
+				<div class="bug__meta" data-bind="sponsor.meta">Официальный партнёр</div>
+			</div>
+		</div>
+
+		<script>
+			// Рантайм уже подключён: onData вызывается сразу и при каждом изменении.
+			onData(function () {
+				var bug = document.getElementById("bug");
+
+				// Цвет акцента — из переменной, с запасным значением.
+				bug.style.setProperty("--accent", vars("sponsor.accent", "#ff3b30"));
+
+				// Показываем, если партнёр задан; иначе прячем.
+				var hasSponsor = vars("sponsor.name", "") !== "";
+				bug.classList.toggle("is-visible", hasSponsor);
+			});
+		</script>
+	</body>
+</html>

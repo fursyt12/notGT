@@ -1,0 +1,564 @@
+/*
+ * notGT — editor panel styles.
+ *
+ * Self-contained and scoped with the `ed-` prefix so nothing here can clash
+ * with ui.css. Colours come from the shared dark theme variables in ui.css.
+ */
+
+body.editor-body {
+	margin: 0;
+	padding: 0;
+	height: 100vh;
+	overflow: hidden;
+}
+
+#notgt-root {
+	height: 100vh;
+}
+
+.ed-root {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	min-height: 0;
+	background: var(--ng-bg);
+	color: var(--ng-fg);
+}
+
+/* ------------------------------------------------------------------ toolbar */
+
+.ed-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	padding: 7px 10px;
+	background: var(--ng-bg-2);
+	border-bottom: 1px solid var(--ng-line);
+}
+
+.ed-toolbar--sub {
+	background: var(--ng-bg);
+	border-bottom: 1px solid var(--ng-line);
+	padding: 5px 10px;
+	font-size: 12px;
+}
+
+.ed-toolbar__title {
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	margin-right: 4px;
+}
+
+.ed-toolbar button {
+	padding: 4px 9px;
+}
+
+.ed-out-select {
+	width: auto;
+	min-width: 160px;
+	max-width: 240px;
+}
+
+.ed-vline {
+	width: 1px;
+	align-self: stretch;
+	background: var(--ng-line);
+	margin: 2px 4px;
+}
+
+.ed-spacer {
+	flex: 1;
+	min-width: 8px;
+}
+
+.ed-chip {
+	font-size: 11px;
+	padding: 2px 8px;
+	border-radius: 999px;
+	border: 1px solid var(--ng-line);
+	color: var(--ng-muted);
+}
+
+.ed-chip.is-dirty {
+	border-color: var(--ng-warn);
+	color: var(--ng-warn);
+}
+
+.ed-flash {
+	font-size: 11px;
+	color: var(--ng-ok);
+	background: rgba(74, 222, 128, 0.08);
+	border: 1px solid rgba(74, 222, 128, 0.35);
+	border-radius: 999px;
+	padding: 2px 10px;
+}
+
+/* ------------------------------------------------------------------- layout */
+
+.ed-main {
+	flex: 1;
+	display: grid;
+	grid-template-columns: 290px minmax(0, 1fr) 350px;
+	min-height: 0;
+}
+
+.ed-side {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-height: 0;
+	overflow: auto;
+	padding: 10px;
+	background: var(--ng-bg);
+	border-right: 1px solid var(--ng-line);
+}
+
+.ed-side--right {
+	border-right: 0;
+	border-left: 1px solid var(--ng-line);
+}
+
+.ed-center {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	background: #0b1118;
+}
+
+/* ------------------------------------------------------------------- canvas */
+
+.ed-canvas-wrap {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: auto;
+	padding: 12px;
+}
+
+.ed-canvas-stage {
+	position: relative;
+	box-shadow: 0 0 0 1px var(--ng-line), 0 14px 40px rgba(0, 0, 0, 0.55);
+	background-color: #0f1720;
+	background-image:
+		linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%),
+		linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%);
+	background-size: 32px 32px;
+	background-position: 0 0, 16px 16px;
+}
+
+.ed-canvas-placeholder {
+	color: var(--ng-muted);
+	font-size: 12px;
+}
+
+.ed-canvas-status {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	flex-wrap: wrap;
+	padding: 5px 10px;
+	border-top: 1px solid var(--ng-line);
+	background: var(--ng-bg-2);
+	font-size: 11px;
+	color: var(--ng-muted);
+}
+
+.ed-ok {
+	color: var(--ng-ok);
+}
+
+/* --------------------------------------------------------------- code panel */
+
+.ed-code-preview {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 12px;
+	background-color: #0f1720;
+	background-image:
+		linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%),
+		linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%);
+	background-size: 32px 32px;
+	background-position: 0 0, 16px 16px;
+}
+
+.ed-preview-frame {
+	width: 100%;
+	height: 100%;
+	border: 1px solid var(--ng-line);
+	border-radius: var(--ng-radius);
+	background: transparent;
+}
+
+.ed-code {
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	font-size: 12px;
+	line-height: 1.45;
+	resize: vertical;
+	white-space: pre;
+	tab-size: 2;
+}
+
+.ed-note {
+	background: var(--ng-bg-2);
+	border: 1px solid var(--ng-line);
+	border-left: 3px solid var(--ng-accent);
+	border-radius: var(--ng-radius);
+	padding: 8px 10px;
+	font-size: 11px;
+	color: var(--ng-muted);
+}
+
+.ed-note ul {
+	margin: 6px 0;
+	padding-left: 16px;
+}
+
+.ed-note li {
+	margin: 2px 0;
+}
+
+.ed-note p {
+	margin: 6px 0 0;
+}
+
+.ed-note code {
+	color: var(--ng-fg);
+	background: var(--ng-bg);
+	padding: 1px 4px;
+	border-radius: 4px;
+}
+
+/* --------------------------------------------------------------- structure */
+
+.ed-card {
+	background: var(--ng-bg-2);
+	border: 1px solid var(--ng-line);
+	border-radius: var(--ng-radius);
+	padding: 8px;
+}
+
+.ed-card__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.ed-panel-body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.ed-section {
+	background: var(--ng-bg-2);
+	border: 1px solid var(--ng-line);
+	border-radius: var(--ng-radius);
+	overflow: hidden;
+}
+
+.ed-section__head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	padding: 7px 9px;
+	text-align: left;
+	background: var(--ng-bg-3);
+	border: 0;
+	border-radius: 0;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--ng-muted);
+}
+
+.ed-section__head:hover {
+	color: var(--ng-fg);
+}
+
+.ed-caret {
+	font-size: 10px;
+	width: 10px;
+}
+
+.ed-section__body {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 9px;
+}
+
+/* ------------------------------------------------------------------- lists */
+
+.ed-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.ed-list-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 6px;
+	background: var(--ng-bg);
+	border: 1px solid var(--ng-line);
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.ed-list-item:hover {
+	border-color: var(--ng-muted);
+}
+
+.ed-list-item.is-selected {
+	border-color: var(--ng-accent);
+	background: var(--ng-bg-3);
+}
+
+.ed-list-item.is-hidden {
+	opacity: 0.6;
+}
+
+.ed-list-item__name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+}
+
+.ed-list-item__actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex: 0 0 auto;
+}
+
+.ed-layer-icon {
+	flex: 0 0 auto;
+	width: 18px;
+	height: 18px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 4px;
+	background: var(--ng-bg-3);
+	border: 1px solid var(--ng-line);
+	font-size: 10px;
+	color: var(--ng-muted);
+}
+
+.ed-badge {
+	flex: 0 0 auto;
+	font-size: 9px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	padding: 1px 5px;
+	border-radius: 999px;
+	border: 1px solid var(--ng-line);
+	color: var(--ng-muted);
+}
+
+.ed-badge--code {
+	border-color: var(--ng-warn);
+	color: var(--ng-warn);
+}
+
+.ed-inline-name {
+	display: block;
+	width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ed-inline-name--edit {
+	background: var(--ng-bg);
+	border: 1px solid var(--ng-accent);
+	color: var(--ng-fg);
+	border-radius: 4px;
+	padding: 1px 4px;
+	font: inherit;
+}
+
+/* -------------------------------------------------------------------- form */
+
+.ed-field {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+}
+
+.ed-field__label {
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--ng-muted);
+}
+
+.ed-grid2 {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 6px;
+}
+
+.ed-check {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 11px;
+	color: var(--ng-muted);
+	cursor: pointer;
+}
+
+.ed-check input {
+	width: auto;
+}
+
+.ed-color {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.ed-color input[type="text"] {
+	flex: 1;
+	min-width: 0;
+}
+
+.ed-color input[type="color"] {
+	flex: 0 0 auto;
+}
+
+.ed-mono {
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	font-size: 11px;
+}
+
+.ed-hint {
+	color: var(--ng-muted);
+	font-size: 11px;
+	margin: 0;
+}
+
+.ed-small {
+	font-size: 10px;
+}
+
+.ed-muted {
+	color: var(--ng-muted);
+}
+
+.ed-mt {
+	margin-top: 8px;
+}
+
+.ed-mb {
+	margin-bottom: 8px;
+}
+
+.ed-ellipsis {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 320px;
+}
+
+.ed-image-preview {
+	width: 100%;
+	max-height: 140px;
+	object-fit: contain;
+	background-color: #0f1720;
+	border: 1px dashed var(--ng-line);
+	border-radius: 6px;
+	padding: 4px;
+}
+
+.ed-image-preview--empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 64px;
+	font-size: 11px;
+	color: var(--ng-muted);
+	border-style: dashed;
+}
+
+/* ----------------------------------------------------------------- buttons */
+
+.ed-icon-btn {
+	padding: 1px 4px;
+	font-size: 10px;
+	line-height: 1.4;
+	background: transparent;
+	border-color: transparent;
+	color: var(--ng-muted);
+}
+
+.ed-icon-btn:hover {
+	border-color: var(--ng-line);
+	color: var(--ng-fg);
+}
+
+.ed-icon-btn.is-on {
+	color: var(--ng-warn);
+	border-color: var(--ng-line);
+}
+
+.ed-icon-btn.ed-icon-btn--danger:hover {
+	color: var(--ng-danger);
+	border-color: var(--ng-danger);
+}
+
+.ed-mini {
+	padding: 2px 6px;
+	font-size: 10px;
+}
+
+/* -------------------------------------------------------------- empty state */
+
+.ed-empty {
+	margin: auto;
+	max-width: 460px;
+	text-align: center;
+	padding: 32px 24px;
+	color: var(--ng-muted);
+}
+
+.ed-empty h2 {
+	color: var(--ng-fg);
+	margin-bottom: 6px;
+}
+
+.ed-row--center {
+	justify-content: center;
+	margin-top: 14px;
+}
+
+/* --------------------------------------------------------------- responsive */
+
+@media (max-width: 1280px) {
+	.ed-main {
+		grid-template-columns: 240px minmax(0, 1fr) 300px;
+	}
+}
+
+@media (max-width: 1000px) {
+	.ed-main {
+		grid-template-columns: 220px minmax(0, 1fr) 260px;
+	}
+}

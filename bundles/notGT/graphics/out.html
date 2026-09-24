@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>notGT out</title>
+		<style>
+			html,
+			body {
+				margin: 0;
+				padding: 0;
+				width: 100%;
+				height: 100%;
+				overflow: hidden;
+				background: transparent;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			#notgt-stage {
+				position: absolute;
+				inset: 0;
+				pointer-events: none;
+			}
+
+			.notgt-slot {
+				position: absolute;
+				transform-origin: top left;
+				will-change: transform, opacity;
+			}
+
+			.notgt-animator {
+				position: relative;
+				will-change: transform, opacity;
+			}
+
+			.notgt-box {
+				position: absolute;
+				inset: 0;
+			}
+
+			.notgt-layer {
+				position: absolute;
+			}
+
+			.notgt-code-frame {
+				border: 0;
+				display: block;
+				background: transparent;
+				overflow: hidden;
+			}
+
+			#notgt-debug {
+				position: absolute;
+				left: 8px;
+				top: 8px;
+				z-index: 99999;
+				display: none;
+				padding: 6px 8px;
+				border-radius: 6px;
+				background: rgba(0, 0, 0, 0.65);
+				color: #7ef29d;
+				font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+				white-space: pre;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="notgt-stage"></div>
+		<div id="notgt-debug"></div>
+		<script type="module" src="./assets/out.js"></script>
+	</body>
+</html>

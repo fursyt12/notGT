@@ -13,7 +13,12 @@ npm-debug.log
 yarn-error.log
 
 # Local bundles
-/bundles/**
+/bundles/*
+# ...except the notGT application bundle that ships with this fork.
+!/bundles/notGT/
+# Build caches created inside the workspace (sandboxed npm runs).
+/.npm-cache/
+/.npm-tmp/
 
 # Datastores
 /db/**

@@ -1,0 +1,6 @@
+{
+	"apiToken": "change-me",
+	"allowUnauthenticatedApi": false,
+	"hideApiState": false,
+	"defaultOutId": "main"
+}
