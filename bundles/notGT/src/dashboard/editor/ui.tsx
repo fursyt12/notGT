@@ -30,6 +30,20 @@ export function round(value: number, digits = 2): number {
 	return Math.round(value * factor) / factor;
 }
 
+/** Human-readable byte size for the media list / upload result ("13,5 КБ"). */
+export function formatBytes(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes <= 0) return "0 Б";
+	const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+	let value = bytes;
+	let unit = 0;
+	while (value >= 1024 && unit < units.length - 1) {
+		value /= 1024;
+		unit += 1;
+	}
+	const digits = unit === 0 ? 0 : value >= 10 ? 1 : 2;
+	return `${value.toFixed(digits).replace(".", ",")} ${units[unit]}`;
+}
+
 export function stringifyValue(value: unknown): string {
 	if (value === null || value === undefined) return "";
 	if (typeof value === "string") return value;

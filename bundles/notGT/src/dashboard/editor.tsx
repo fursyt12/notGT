@@ -19,6 +19,7 @@ import { createRoot } from "react-dom/client";
 
 import { buildCodeDocument, codeSource } from "../graphics/code-runtime";
 import { interpolate } from "../shared/binding";
+import { BUNDLE_NAME } from "../shared/types";
 import type {
 	CodeBlock,
 	Layer,
@@ -47,6 +48,7 @@ import {
 	TRANSITION_TYPES,
 	TextField,
 	clamp,
+	formatBytes,
 	layerDisplayName,
 	resolveAssetUrl,
 	round,
@@ -566,6 +568,438 @@ function LayerList({
 	);
 }
 
+// ---------------------------------------------------------------- media drop
+
+const MEDIA_BASE = `/bundles/${BUNDLE_NAME}/media`;
+const MEDIA_ACCEPT =
+	"video/*,image/*,.mov,.mp4,.mkv,.webm,.webp,.gif,.m4v,.avi";
+const MEDIA_LIST_LIMIT = 8;
+
+interface MediaFile {
+	name: string;
+	src: string;
+	bytes: number;
+	mtime: number;
+}
+
+interface MediaJob {
+	id: string;
+	state: "converting" | "done" | "error";
+	progress: number;
+	message: string;
+	originalName: string;
+	src?: string;
+	format?: string;
+	bytes?: number;
+	inputBytes?: number;
+	error?: string;
+}
+
+type MediaStage = "idle" | "upload" | "convert" | "done" | "error";
+
+/** File name from a `/assets/notGT/media/<name>` URL (percent-decoded). */
+function mediaNameFromSrc(src: string): string {
+	const last = src.split("/").pop() ?? "";
+	try {
+		return decodeURIComponent(last);
+	} catch {
+		return last;
+	}
+}
+
+/**
+ * Drag-and-drop upload for the `video` layer.
+ *
+ * The panel posts the raw bytes with XMLHttpRequest (so `upload.onprogress`
+ * drives a real upload bar), then polls the server job for the ffmpeg
+ * conversion stage. A finished file is only written into the editor's *local
+ * draft* (`onPick` → `onPatch`), so `Сохранить` still decides when it reaches
+ * the Replicant.
+ */
+function MediaDropZone({
+	currentSrc,
+	onPick,
+}: {
+	currentSrc: string;
+	onPick: (src: string) => void;
+}) {
+	const [dragActive, setDragActive] = useState(false);
+	const [stage, setStage] = useState<MediaStage>("idle");
+	const [progress, setProgress] = useState(0);
+	const [message, setMessage] = useState("");
+	const [notice, setNotice] = useState("");
+	const [error, setError] = useState("");
+	const [result, setResult] = useState<
+		{ name: string; bytes: number; format: string; src: string } | null
+	>(null);
+	const [files, setFiles] = useState<MediaFile[]>([]);
+	const [listError, setListError] = useState("");
+
+	const inputRef = useRef<HTMLInputElement | null>(null);
+	const dragDepth = useRef(0);
+	const xhrRef = useRef<XMLHttpRequest | null>(null);
+	const pollRef = useRef<number | undefined>(undefined);
+	const aliveRef = useRef(true);
+
+	const busy = stage === "upload" || stage === "convert";
+	const percent = Math.round(Math.max(0, Math.min(1, progress)) * 100);
+
+	useEffect(() => {
+		aliveRef.current = true;
+		return () => {
+			aliveRef.current = false;
+			if (pollRef.current !== undefined) window.clearTimeout(pollRef.current);
+			xhrRef.current?.abort();
+		};
+	}, []);
+
+	const refreshList = useCallback(async () => {
+		try {
+			const res = await fetch(`${MEDIA_BASE}/list`, { headers: { accept: "application/json" } });
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const json = (await res.json()) as { files?: MediaFile[] };
+			if (!aliveRef.current) return;
+			setFiles(Array.isArray(json.files) ? json.files : []);
+			setListError("");
+		} catch (err) {
+			if (!aliveRef.current) return;
+			setListError(`Не удалось получить список: ${String((err as Error)?.message ?? err)}`);
+		}
+	}, []);
+
+	useEffect(() => {
+		void refreshList();
+	}, [refreshList]);
+
+	const fail = useCallback((text: string) => {
+		if (!aliveRef.current) return;
+		if (pollRef.current !== undefined) {
+			window.clearTimeout(pollRef.current);
+			pollRef.current = undefined;
+		}
+		setStage("error");
+		setProgress(0);
+		setMessage("");
+		setError(text || "Не удалось загрузить файл");
+	}, []);
+
+	const pollJob = useCallback(
+		(jobId: string) => {
+			const tick = async () => {
+				if (!aliveRef.current) return;
+				try {
+					const res = await fetch(`${MEDIA_BASE}/jobs/${encodeURIComponent(jobId)}`);
+					const json = (await res.json().catch(() => ({}))) as {
+						job?: MediaJob;
+						error?: string;
+						message?: string;
+					};
+					if (!aliveRef.current) return;
+					if (!res.ok || !json.job) {
+						fail(json.message ?? json.error ?? `Сервер вернул HTTP ${res.status}`);
+						return;
+					}
+					const job = json.job;
+					if (job.state === "error") {
+						fail(job.error ?? job.message ?? "Конвертация не удалась");
+						return;
+					}
+					if (job.state === "done") {
+						const src = job.src ?? "";
+						setStage("done");
+						setProgress(1);
+						setMessage(job.message || "Готово");
+						setError("");
+						setResult({
+							name: src ? mediaNameFromSrc(src) : job.originalName,
+							bytes: job.bytes ?? 0,
+							format: job.format ?? "",
+							src,
+						});
+						if (src) onPick(src);
+						void refreshList();
+						return;
+					}
+					// Still converting: the server streams real ffmpeg progress.
+					setStage("convert");
+					setProgress(
+						Number.isFinite(job.progress) ? Math.max(0, Math.min(1, job.progress)) : 0,
+					);
+					setMessage(job.message || "Конвертация");
+					pollRef.current = window.setTimeout(() => {
+						void tick();
+					}, 500);
+				} catch (err) {
+					fail(`Не удалось узнать статус: ${String((err as Error)?.message ?? err)}`);
+				}
+			};
+			void tick();
+		},
+		[fail, onPick, refreshList],
+	);
+
+	const startUpload = useCallback(
+		(file: File) => {
+			if (xhrRef.current) return;
+			if (pollRef.current !== undefined) {
+				window.clearTimeout(pollRef.current);
+				pollRef.current = undefined;
+			}
+			setStage("upload");
+			setProgress(0);
+			setMessage("0%");
+			setError("");
+			setResult(null);
+
+			const xhr = new XMLHttpRequest();
+			xhrRef.current = xhr;
+			xhr.open("POST", `${MEDIA_BASE}/upload?name=${encodeURIComponent(file.name)}`);
+			xhr.setRequestHeader("Content-Type", "application/octet-stream");
+			xhr.upload.onprogress = (event) => {
+				if (!aliveRef.current || !event.lengthComputable || event.total <= 0) return;
+				const ratio = event.loaded / event.total;
+				setProgress(ratio);
+				setMessage(`${Math.round(ratio * 100)}%`);
+			};
+			xhr.onerror = () => {
+				xhrRef.current = null;
+				fail("Ошибка сети при загрузке файла");
+			};
+			xhr.onabort = () => {
+				xhrRef.current = null;
+				if (!aliveRef.current) return;
+				setStage("idle");
+				setProgress(0);
+				setMessage("");
+			};
+			xhr.onload = () => {
+				xhrRef.current = null;
+				let payload: { ok?: boolean; jobId?: string; error?: string } = {};
+				try {
+					payload = JSON.parse(xhr.responseText) as typeof payload;
+				} catch {
+					// Non-JSON body — the status check below reports it.
+				}
+				if (xhr.status >= 200 && xhr.status < 300 && payload.ok && payload.jobId) {
+					if (!aliveRef.current) return;
+					setStage("convert");
+					setProgress(0);
+					setMessage("Ожидание сервера…");
+					pollJob(payload.jobId);
+					return;
+				}
+				fail(payload.error ?? `Сервер отклонил загрузку (HTTP ${xhr.status})`);
+			};
+			xhr.send(file);
+		},
+		[fail, pollJob],
+	);
+
+	const handleFiles = useCallback(
+		(list: FileList | File[] | null) => {
+			const picked = list ? Array.from(list) : [];
+			if (picked.length === 0) return;
+			if (picked.length > 1) {
+				setNotice(
+					`Выбрано файлов: ${picked.length} — берём первый: ${picked[0]!.name}`,
+				);
+			} else {
+				setNotice("");
+			}
+			startUpload(picked[0]!);
+		},
+		[startUpload],
+	);
+
+	const removeFile = useCallback(
+		async (file: MediaFile) => {
+			if (!window.confirm(`Удалить «${file.name}» из хранилища?`)) return;
+			try {
+				const res = await fetch(`${MEDIA_BASE}/file/${encodeURIComponent(file.name)}`, {
+					method: "DELETE",
+				});
+				if (!res.ok) {
+					const json = (await res.json().catch(() => ({}))) as { message?: string };
+					if (aliveRef.current) {
+						setListError(json.message ?? `Не удалось удалить (HTTP ${res.status})`);
+					}
+					return;
+				}
+				setListError("");
+				await refreshList();
+			} catch (err) {
+				if (aliveRef.current) setListError(String((err as Error)?.message ?? err));
+			}
+		},
+		[refreshList],
+	);
+
+	const openPicker = () => {
+		if (busy) return;
+		inputRef.current?.click();
+	};
+
+	const stageLabel = stage === "upload" ? "Загрузка" : stage === "convert" ? "Конвертация" : "";
+
+	return (
+		<>
+			<div
+				className={`ed-drop${dragActive ? " is-drag" : ""}${busy ? " is-busy" : ""}`}
+				role="button"
+				tabIndex={0}
+				aria-disabled={busy}
+				title={busy ? "Идёт обработка файла…" : "Перетащите файл или нажмите, чтобы выбрать"}
+				onClick={openPicker}
+				onKeyDown={(event) => {
+					if (event.key === "Enter" || event.key === " ") {
+						event.preventDefault();
+						openPicker();
+					}
+				}}
+				onDragEnter={(event) => {
+					event.preventDefault();
+					dragDepth.current += 1;
+					if (!busy) setDragActive(true);
+				}}
+				onDragOver={(event) => {
+					event.preventDefault();
+					if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+					if (!busy) setDragActive(true);
+				}}
+				onDragLeave={(event) => {
+					event.preventDefault();
+					dragDepth.current = Math.max(0, dragDepth.current - 1);
+					if (dragDepth.current === 0) setDragActive(false);
+				}}
+				onDrop={(event) => {
+					event.preventDefault();
+					dragDepth.current = 0;
+					setDragActive(false);
+					if (busy) return;
+					handleFiles(event.dataTransfer?.files ?? null);
+				}}
+			>
+				<input
+					ref={inputRef}
+					type="file"
+					className="ed-drop__input"
+					accept={MEDIA_ACCEPT}
+					disabled={busy}
+					onChange={(event) => {
+						const picked = event.target.files ? Array.from(event.target.files) : [];
+						event.target.value = "";
+						handleFiles(picked);
+					}}
+				/>
+				<div className="ed-drop__title">
+					{busy ? "Обработка…" : "Перетащите видео или картинку сюда"}
+				</div>
+				<div className="ed-drop__hint">
+					{busy
+						? "Не закрывайте панель, пока файл не будет готов"
+						: "…или нажмите, чтобы выбрать файл"}
+				</div>
+			</div>
+
+			{busy ? (
+				<div className="ed-drop__prog">
+					<div className="ed-drop__prog-head">
+						<span className="ed-drop__stage">{stageLabel}</span>
+						<span className="ed-drop__pct">{percent}%</span>
+					</div>
+					<div
+						className="ed-progress"
+						role="progressbar"
+						aria-valuemin={0}
+						aria-valuemax={100}
+						aria-valuenow={percent}
+						aria-label={stageLabel}
+					>
+						<div className="ed-progress__fill" style={{ width: `${percent}%` }} />
+					</div>
+					{message && message !== `${percent}%` ? (
+						<div className="ed-drop__msg">{message}</div>
+					) : null}
+				</div>
+			) : null}
+
+			{stage === "done" && result ? (
+				<div className="ed-drop__result">
+					<div className="ed-drop__ok">
+						✓ {result.name}
+						{result.bytes > 0 ? ` · ${formatBytes(result.bytes)}` : ""}
+						{result.format ? ` · ${result.format}` : ""}
+					</div>
+					<div className="ed-hint">
+						Файл подставлен в поле ниже. Нажмите «Сохранить», чтобы применить.
+					</div>
+				</div>
+			) : null}
+
+			{stage === "error" && error ? (
+				<div className="ed-drop__error" role="alert">
+					{error}
+				</div>
+			) : null}
+
+			{notice && !busy ? <div className="ed-hint">{notice}</div> : null}
+
+			<div className="ed-media">
+				<div className="ed-media__head">
+					<span className="ed-media__title">уже загружено</span>
+					<button
+						type="button"
+						className="ed-mini"
+						title="Обновить список"
+						onClick={() => void refreshList()}
+					>
+						обновить
+					</button>
+				</div>
+				{listError ? (
+					<div className="ed-drop__error" role="alert">
+						{listError}
+					</div>
+				) : null}
+				{files.length === 0 ? (
+					<div className="ed-hint">Пока ничего не загружено.</div>
+				) : (
+					<div className="ed-media__list">
+						{files.slice(0, MEDIA_LIST_LIMIT).map((file) => (
+							<div
+								key={file.name}
+								className={`ed-media__item${file.src === currentSrc ? " is-selected" : ""}`}
+								title={file.name}
+							>
+								<button
+									type="button"
+									className="ed-media__pick"
+									title={`Подставить: ${file.src}`}
+									onClick={() => {
+										setNotice("");
+										onPick(file.src);
+									}}
+								>
+									<span className="ed-media__name">{file.name}</span>
+									<span className="ed-media__size">{formatBytes(file.bytes)}</span>
+								</button>
+								<button
+									type="button"
+									className="ed-icon-btn ed-icon-btn--danger"
+									title="Удалить файл"
+									onClick={() => void removeFile(file)}
+								>
+									✕
+								</button>
+							</div>
+						))}
+					</div>
+				)}
+			</div>
+		</>
+	);
+}
+
 // ------------------------------------------------------------ layer inspector
 
 function LayerInspector({
@@ -914,6 +1348,10 @@ function LayerInspector({
 
 			{layer.type === "video" ? (
 				<Section title="Видео">
+					<MediaDropZone
+						currentSrc={layer.src ?? ""}
+						onPick={(src) => onPatch({ src })}
+					/>
 					<TextField
 						label="URL или путь"
 						mono
