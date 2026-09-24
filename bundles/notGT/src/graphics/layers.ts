@@ -34,10 +34,13 @@ export function createLayerElement(layer: Layer): HTMLElement {
 	const el =
 		layer.type === "image" || layer.type === "gif"
 			? document.createElement("img")
-			: document.createElement("div");
+			: layer.type === "video"
+				? document.createElement("video")
+				: document.createElement("div");
 	el.className = "notgt-layer";
 	el.dataset["layerId"] = layer.id;
 	applyLayerStyle(el, layer);
+	if (el instanceof HTMLVideoElement) applyVideoAttributes(el, layer);
 	return el;
 }
 
@@ -107,10 +110,53 @@ export function applyLayerStyle(el: HTMLElement, layer: Layer): void {
 		return;
 	}
 
-	// image / gif
+	// image / gif / video
 	st.objectFit = "contain";
 	st.display = layer.hidden ? "none" : "block";
 	if (s.radius) st.borderRadius = `${s.radius}px`;
+	if (layer.type === "video") st.backgroundColor = "transparent";
+}
+
+/**
+ * Applies the media attributes of a video layer.
+ *
+ * `muted` is on by default because Chromium only autoplays muted media; an
+ * overlay should not carry audio anyway (use a dedicated source for that).
+ */
+function applyVideoAttributes(el: HTMLVideoElement, layer: Layer): void {
+	const s: LayerStyle = layer.style ?? {};
+	el.muted = s.videoMuted ?? true;
+	el.defaultMuted = el.muted;
+	el.loop = s.videoLoop ?? true;
+	el.autoplay = s.videoAutoplay ?? true;
+	el.playsInline = true;
+	el.preload = "auto";
+	el.controls = false;
+	el.disablePictureInPicture = true;
+	if (s.videoRate) el.playbackRate = s.videoRate;
+}
+
+/**
+ * Rewinds and plays every video layer of a slot. Called whenever the slot's
+ * entrance animation (re)starts, so a trigger restarts the clip from frame 0.
+ */
+export function restartVideoLayers(layerEls: Map<string, HTMLElement>): void {
+	for (const el of layerEls.values()) {
+		if (!(el instanceof HTMLVideoElement)) continue;
+		try {
+			el.currentTime = 0;
+		} catch {
+			// Not seekable yet (metadata still loading) — it will start at 0 anyway.
+		}
+		void el.play?.().catch(() => {});
+	}
+}
+
+/** Pauses every video layer, e.g. while a slot plays its exit transition. */
+export function pauseVideoLayers(layerEls: Map<string, HTMLElement>): void {
+	for (const el of layerEls.values()) {
+		if (el instanceof HTMLVideoElement) el.pause();
+	}
 }
 
 /** Updates only what actually changed — this is what keeps text flicker-free. */
@@ -131,5 +177,21 @@ export function updateLayerContent(
 		const current = img.getAttribute("src") ?? "";
 		if (next && current !== next) img.setAttribute("src", next);
 		else if (!next && current) img.removeAttribute("src");
+		return;
+	}
+	if (layer.type === "video") {
+		const video = el as HTMLVideoElement;
+		const next = layer.src ? interpolate(layer.src, data, selection) : "";
+		const current = video.getAttribute("src") ?? "";
+		if (next && current !== next) {
+			video.setAttribute("src", next);
+			video.load();
+		} else if (!next && current) {
+			video.removeAttribute("src");
+			video.load();
+		}
+		if (next && video.style.display !== "none") {
+			void video.play?.().catch(() => {});
+		}
 	}
 }

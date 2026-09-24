@@ -43,7 +43,7 @@ export const MESSAGES = {
 	refresh: "refresh",
 } as const;
 
-export type LayerType = "text" | "image" | "gif" | "shape";
+export type LayerType = "text" | "image" | "gif" | "video" | "shape";
 
 export interface LayerStyle {
 	/* typography */
@@ -70,6 +70,16 @@ export interface LayerStyle {
 	shadowBlur?: number;
 	shadowOffsetX?: number;
 	shadowOffsetY?: number;
+	/* video */
+	/** `false` stops the clip after one pass. Default: loop. */
+	videoLoop?: boolean;
+	/** Start playing as soon as the layer is rendered. Default: true. */
+	videoAutoplay?: boolean;
+	/** Must stay true for autoplay to be allowed; overlay audio is not needed. */
+	videoMuted?: boolean;
+	/** Playback speed multiplier. Default: 1. */
+	videoRate?: number;
+
 	/* shared */
 	opacity?: number;
 	rotation?: number;

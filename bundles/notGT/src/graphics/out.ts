@@ -24,7 +24,12 @@ import {
 	buildSourcedDocument,
 	codeSource,
 } from "./code-runtime";
-import { createLayerElement, updateLayerContent } from "./layers";
+import {
+	createLayerElement,
+	pauseVideoLayers,
+	restartVideoLayers,
+	updateLayerContent,
+} from "./layers";
 import { enterAnimation, exitAnimation } from "./transitions";
 
 interface Instance {
@@ -346,6 +351,7 @@ function render(): void {
 		if (desiredKeys.has(key)) continue;
 		slots.delete(key);
 		const template = list.find((t) => t.id === slot.templateId);
+		pauseVideoLayers(slot.layerEls);
 		exitAnimation(slot.animator, template?.outTransition, () => {
 			slot.positioner.remove();
 		});
@@ -360,6 +366,7 @@ function render(): void {
 			const stale = slot;
 			slots.delete(inst.key);
 			const staleTemplate = list.find((t) => t.id === stale.templateId);
+			pauseVideoLayers(stale.layerEls);
 			exitAnimation(stale.animator, staleTemplate?.outTransition, () => {
 				stale.positioner.remove();
 			});
@@ -370,17 +377,20 @@ function render(): void {
 			slot = createSlot(inst, template);
 			slots.set(inst.key, slot);
 			enterAnimation(slot.animator, template.inTransition);
+			restartVideoLayers(slot.layerEls);
 			slot.lastTrigger = inst.trigger;
 		} else {
 			applyPlacement(slot, inst);
 			if (slot.signature !== signatureOf(template)) {
 				rebuildSlot(slot, template, inst.data);
 				enterAnimation(slot.animator, template.inTransition);
+				restartVideoLayers(slot.layerEls);
 				slot.lastTrigger = inst.trigger;
 			} else if (inst.trigger !== slot.lastTrigger) {
 				// Re-triggered while already on screen: replay the entrance.
 				slot.lastTrigger = inst.trigger;
 				enterAnimation(slot.animator, template.inTransition);
+				restartVideoLayers(slot.layerEls);
 			}
 		}
 		updateSlotData(slot, template, inst.data);

@@ -420,6 +420,93 @@ async function main() {
 		await api("DELETE", `/api/outs/main/items/${heldId}`);
 		await sleep(300);
 
+		// --- 4f. video layers ---------------------------------------------
+		await api("POST", "/api/titles/hide", {});
+		await sleep(400);
+		// A 759-byte alpha WebM inlined as a data URI, so this check needs no
+		// fixtures on disk and no ffmpeg.
+		const VIDEO_URI =
+			"data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAALHEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggE2TbuMU6uEHFO7a1OsggKx7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjMuMS4xMDFXQYxMYXZmNjMuMS4xMDFEiYhAeQAAAAAAABZUrmvbrgEAAAAAAABS14EBc8WI3as5Aw8/hpucgQAitZyDdW5kiIEAhoVWX1ZQOYOBASPjg4QF9eEA4JSwgUC6gUCagQJTwIEBVbCEVbmBAVXugQHsAQAAAAAAAAIAABJUw2f+c3OfY8CAZ8iZRaOHRU5DT0RFUkSHjExhdmY2My4xLjEwMXNz2WPAi2PFiN2rOQMPP4abZ8ikRaOHRU5DT0RFUkSHl0xhdmM2My4xLjEwMSBsaWJ2cHgtdnA5Z8ihRaOIRFVSQVRJT05Eh5MwMDowMDowMC40MDAwMDAwMDAAH0O2dUDy54EAoNShqoEAAACCSYNCAAPwA/YAOCQcGMYAADBgAABnP/ou////lyf////4/AdRMHWhpaaj7oEBpZ6CSYNCAAPwA/YAOCQcGMYAADBgAABnP//+fcCd2YCgsaGTgQBkAIYAQJKcAFaAAAMgAABUcHWhlqaU7oEBpY+GAECSnABWgAADIAAAVHD7gZygsaGTgQDIAIYAQJKcAFWAAAMgAABUcHWhlqaU7oEBpY+GAECSnABVgAADIAAAVHD7gZygsaGTgQEsAIYAQJKcAFaAAAMgAABUcHWhlqaU7oEBpY+GAECSnABWgAADIAAAVHD7gZwcU7trkbuPs4EAt4r3gQHxggG58IED";
+		await api("POST", "/api/templates", {
+			id: "e2e-video",
+			name: "E2E video",
+			kind: "layers",
+			width: 1920,
+			height: 1080,
+			layers: [
+				{
+					id: "v_layer",
+					type: "video",
+					x: 25,
+					y: 25,
+					width: 20,
+					height: 20,
+					src: VIDEO_URI,
+					style: {
+						opacity: 1,
+						rotation: 0,
+						videoLoop: true,
+						videoAutoplay: true,
+						videoMuted: true,
+					},
+					z: 1,
+				},
+			],
+			inTransition: { type: "none", durationMs: 0 },
+			outTransition: { type: "none", durationMs: 0 },
+			playback: { mode: "once", intervalMs: 10000, holdMs: 30000, autoStart: false },
+		});
+		await api("POST", "/api/titles/e2e-video/show", {});
+		await page.waitForSelector('.notgt-layer[data-layer-id="v_layer"]', { timeout: 8000 });
+		await sleep(900);
+		const videoInfo = await page.evaluate(() => {
+			const el = document.querySelector('.notgt-layer[data-layer-id="v_layer"]');
+			if (!(el instanceof HTMLVideoElement)) return { tag: el?.tagName ?? null };
+			const r = el.getBoundingClientRect();
+			return {
+				tag: el.tagName,
+				muted: el.muted,
+				loop: el.loop,
+				playsInline: el.playsInline,
+				preload: el.preload,
+				srcOk: (el.getAttribute("src") ?? "").startsWith("data:video/webm"),
+				readyState: el.readyState,
+				videoWidth: el.videoWidth,
+				paused: el.paused,
+				x: Math.round(r.x),
+				y: Math.round(r.y),
+				w: Math.round(r.width),
+				h: Math.round(r.height),
+			};
+		});
+		check("video layer renders a <video>", videoInfo.tag === "VIDEO", JSON.stringify(videoInfo));
+		check(
+			"video layer is muted / looping / playsinline",
+			videoInfo.muted === true && videoInfo.loop === true && videoInfo.playsInline === true,
+			JSON.stringify(videoInfo),
+		);
+		check("video layer received its src", videoInfo.srcOk === true);
+		check(
+			"video layer decoded the clip",
+			videoInfo.readyState >= 1 && videoInfo.videoWidth > 0,
+			`readyState=${videoInfo.readyState} videoWidth=${videoInfo.videoWidth}`,
+		);
+		check(
+			"video layer is playing (muted autoplay works)",
+			videoInfo.paused === false,
+			`paused=${videoInfo.paused}`,
+		);
+		// Out 1920x1080, template box 1920x1080, layer at 25%/25% sized 20%/20%.
+		check(
+			"video layer geometry matches the layer percentages",
+			videoInfo.x === 480 && videoInfo.y === 270 && videoInfo.w === 384 && videoInfo.h === 216,
+			JSON.stringify({ x: videoInfo.x, y: videoInfo.y, w: videoInfo.w, h: videoInfo.h }),
+		);
+		await page.screenshot({ path: path.join(outDir, "video-layer.png") });
+		await api("POST", "/api/titles/hide", {});
+		await api("DELETE", "/api/templates/e2e-video");
+		await sleep(300);
+
 		// --- 5. loop scheduler -------------------------------------------
 		await api("POST", "/api/titles/hide", {});
 		const created = await api("POST", "/api/outs/main/items", {
