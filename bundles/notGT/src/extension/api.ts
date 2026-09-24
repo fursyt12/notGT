@@ -201,6 +201,12 @@ export function createApiRouter(
 		json(res, 200, { ok: true, active });
 	});
 
+	router.post("/titles/reset", (_req, res) => {
+		scheduler.stopOut();
+		const active = store.resetActive();
+		json(res, 200, { ok: true, active });
+	});
+
 	router.post("/titles/:templateId/show", (req, res) => {
 		const templateId = req.params["templateId"]!;
 		const { outId, data, label } = parseTitleBody(req);

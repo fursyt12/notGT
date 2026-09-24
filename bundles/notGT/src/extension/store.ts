@@ -82,6 +82,8 @@ export interface Store {
 		opts?: { outId?: string | null; data?: TitleData; label?: string },
 	): ActiveTitleState | undefined;
 	hide(opts?: { outId?: string | null; templateId?: string }): ActiveTitleState;
+	/** Clears the manual program state entirely (templateId, overrides, visibility). */
+	resetActive(): ActiveTitleState;
 	toggle(
 		templateId: string,
 		opts?: { outId?: string | null; data?: TitleData; label?: string },
@@ -171,7 +173,9 @@ export function createStore(nodecg: ServerAPI): Store {
 			items: o.items.filter((i: OutItem) => i.templateId !== id),
 		}));
 		if (activeTitle.value?.templateId === id) {
-			activeTitle.value = { ...(activeTitle.value ?? DEFAULT_ACTIVE), visible: false };
+			// Drop the reference entirely: leaving the deleted id behind would
+			// leave the program state pointing at a template that no longer exists.
+			activeTitle.value = { ...DEFAULT_ACTIVE, updatedAt: Date.now() };
 		}
 		return true;
 	}
@@ -365,6 +369,11 @@ export function createStore(nodecg: ServerAPI): Store {
 		return next;
 	}
 
+	function resetActive(): ActiveTitleState {
+		activeTitle.value = { ...DEFAULT_ACTIVE, updatedAt: Date.now() };
+		return activeTitle.value;
+	}
+
 	function toggle(
 		templateId: string,
 		opts: { outId?: string | null; data?: TitleData; label?: string } = {},
@@ -434,6 +443,7 @@ export function createStore(nodecg: ServerAPI): Store {
 		clearSelection,
 		show,
 		hide,
+		resetActive,
 		toggle,
 		effectiveData,
 		outUrl: outUrlFor,

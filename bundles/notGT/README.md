@@ -295,6 +295,7 @@ cp bundles/notGT/cfg/notGT.example.json \
 | `POST`               | `/api/titles/:templateId/toggle`            | Показать/скрыть (toggle).                                                                       |
 | `POST`               | `/api/titles/:templateId/trigger`           | Однократный проигрыш (one-shot).                                                                |
 | `POST`               | `/api/titles/hide`                          | Скрыть титр.                                                                                    |
+| `POST`               | `/api/titles/reset`                         | Полностью сбросить «программу»: активный титр, override'ы и видимость; воспроизведение на out'ах останавливается. |
 | `GET`                | `/api/outs`                                 | Список out'ов.                                                                                  |
 | `POST`               | `/api/outs`                                 | Создать out.                                                                                    |
 | `GET` `PUT` `PATCH`  | `/api/outs/:id`                             | Прочитать / обновить out.                                                                       |
