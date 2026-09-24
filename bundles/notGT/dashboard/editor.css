@@ -556,6 +556,25 @@ body.editor-body {
 	font-size: 10px;
 }
 
+/* ------------------------------------------------ video playback preview */
+
+.ed-preview {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
+.ed-preview__btn {
+	white-space: nowrap;
+}
+
+.ed-preview__btn.is-on {
+	border-color: var(--ng-accent);
+	color: var(--ng-accent);
+	background: var(--ng-bg-3);
+}
+
 /* -------------------------------------------------------------- empty state */
 
 .ed-empty {

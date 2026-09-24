@@ -64,6 +64,10 @@ export interface EditorCanvasProps {
 	draft: TitleTemplate | null;
 	activeItemId: string | null;
 	selectedLayerId: string | null;
+	/** Live playback preview: only the selected video layer is played. */
+	previewPlaying: boolean;
+	/** Incremented to seek the selected clip back to 0. */
+	restartToken: number;
 	data: TitleData;
 	selection: VariableSelection;
 	onSelectItem: (itemId: string | null) => void;
@@ -89,6 +93,8 @@ export function EditorCanvas({
 	draft,
 	activeItemId,
 	selectedLayerId,
+	previewPlaying,
+	restartToken,
 	data,
 	selection,
 	onSelectItem,
@@ -283,6 +289,8 @@ export function EditorCanvas({
 										stageH={stageH}
 										active={geom.item.id === activeItemId}
 										selectedLayerId={selectedLayerId}
+										previewPlaying={previewPlaying}
+										restartToken={restartToken}
 										data={data}
 										selection={selection}
 										onSelectItem={onSelectItem}
@@ -356,6 +364,8 @@ function AnimatedItem({
 	stageH,
 	active,
 	selectedLayerId,
+	previewPlaying,
+	restartToken,
 	data,
 	selection,
 	onSelectItem,
@@ -369,6 +379,8 @@ function AnimatedItem({
 	stageH: number;
 	active: boolean;
 	selectedLayerId: string | null;
+	previewPlaying: boolean;
+	restartToken: number;
 	data: TitleData;
 	selection: VariableSelection;
 	onSelectItem: (itemId: string | null) => void;
@@ -426,6 +438,8 @@ function AnimatedItem({
 						ky={k}
 						interactive={interactive}
 						listening={active}
+						playing={previewPlaying && active && layer.id === selectedLayerId}
+						restartToken={restartToken}
 						onSelect={() => onSelectLayer(layer.id)}
 						onChange={(patch) => onLayerChange(layer.id, patch)}
 						registerRef={registerRef(item.id, layer.id)}
@@ -587,6 +601,10 @@ interface LayerNodeProps {
 	interactive: boolean;
 	/** Belongs to the active placement (false = click-select only). */
 	listening: boolean;
+	/** Live preview is running for *this* video layer. */
+	playing: boolean;
+	/** Seek-to-zero token forwarded to `useHtmlVideo`. */
+	restartToken: number;
 	onSelect: () => void;
 	onChange: (patch: Partial<Layer>) => void;
 	registerRef: (node: Konva.Node | null) => void;
@@ -626,6 +644,8 @@ function LayerNode({
 	ky,
 	interactive,
 	listening,
+	playing,
+	restartToken,
 	onSelect,
 	onChange,
 	registerRef,
@@ -638,12 +658,16 @@ function LayerNode({
 	const image = useHtmlImage(imageSrc);
 	const { video, frame } = useHtmlVideo(videoSrc, {
 		loop: style.videoLoop ?? true,
-		muted: style.videoMuted ?? true,
+		// The editor preview is always silent, whatever `videoMuted` says — an
+		// operator panel must never make noise. The stored value is untouched.
+		muted: true,
 		rate: style.videoRate ?? 1,
+		playing,
+		restartToken,
 	});
 
-	// The editor only paints a single video frame; Konva does not watch the
-	// element, so force a redraw whenever a new picture is decoded.
+	// Konva does not watch the element: force a redraw on every decoded picture
+	// event and on every animation frame while the preview is playing.
 	const videoNodeRef = useRef<Konva.Image | null>(null);
 	const setVideoNode = useCallback(
 		(node: Konva.Image | null) => {

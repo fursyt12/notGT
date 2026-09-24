@@ -172,25 +172,46 @@ export function useHtmlImage(src: string): HTMLImageElement | undefined {
 }
 
 /**
- * Loads a *paused* video element for Konva's `image` prop.
+ * Loads a video element for Konva's `image` prop.
  *
- * The editor never plays clips: the element is only used to paint a single
- * frame, so it is muted/playsinline, `preload="metadata"` and paused as soon as
- * a frame is available. A missing, undecodable or 404 src simply yields
- * `undefined`, letting the caller draw a placeholder instead of crashing.
+ * Two modes:
+ *   - `playing: false` (default) — a single frozen frame: the element is
+ *     muted/playsinline, `preload="metadata"` and paused as soon as a frame is
+ *     available. A missing, undecodable or 404 src yields `undefined`, letting
+ *     the caller draw a placeholder instead of crashing.
+ *   - `playing: true` — the element is actually played and a
+ *     `requestAnimationFrame` loop bumps `frame` every animation frame so the
+ *     canvas can force a redraw (Konva does not observe a video element's
+ *     frames by itself). Pausing cancels the loop and bumps once so the last
+ *     picture stays on screen.
  *
- * `frame` is bumped on every media event that may produce a new picture
- * (`loadedmetadata` / `loadeddata` / `seeked`) so the canvas can force a redraw
- * — Konva does not observe a video element's frames by itself.
+ * The element is created once per `src`: `loop` / `muted` / `rate` changes are
+ * applied to the live element instead of recreating it, so typing a new speed
+ * does not restart the preview. `restartToken` seeks back to 0 (and resumes
+ * playback when `playing`) — the caller only has to increment it.
+ *
+ * `frame` is also bumped on every media event that may produce a new picture
+ * (`loadedmetadata` / `loadeddata` / `seeked`).
  */
 export function useHtmlVideo(
 	src: string,
-	options: { loop?: boolean; muted?: boolean; rate?: number } = {},
+	options: {
+		loop?: boolean;
+		muted?: boolean;
+		rate?: number;
+		playing?: boolean;
+		restartToken?: number;
+	} = {},
 ): { video: HTMLVideoElement | undefined; frame: number } {
-	const { loop = true, muted = true, rate = 1 } = options;
+	const { loop = true, muted = true, rate = 1, playing = false, restartToken = 0 } = options;
 	const [video, setVideo] = useState<HTMLVideoElement | undefined>(undefined);
 	const [frame, setFrame] = useState(0);
+	// Last `restartToken` this element has already handled. Starts as
+	// `undefined` so the initial mount never seeks over the "decode a picture"
+	// nudge below.
+	const lastRestart = useRef<number | undefined>(undefined);
 
+	// ---------------------------------------------------------- element lifecycle
 	useEffect(() => {
 		if (!src) {
 			setVideo(undefined);
@@ -212,8 +233,8 @@ export function useHtmlVideo(
 		};
 		const onMeta = () => {
 			if (!alive) return;
-			// Nudge off frame 0 so the browser actually decodes a picture, then
-			// stop: the editor must not consume CPU playing the clip.
+			// Nudge off frame 0 so the browser actually decodes a picture. When
+			// `playing` is set the play effect below takes it from here.
 			try {
 				if (el.duration > 0) el.currentTime = Math.min(0.1, el.duration / 2);
 			} catch {
@@ -225,7 +246,6 @@ export function useHtmlVideo(
 		const onData = () => {
 			if (!alive) return;
 			setVideo(el);
-			el.pause();
 			bump();
 		};
 		const onError = () => {
@@ -253,7 +273,75 @@ export function useHtmlVideo(
 				// Detached element — nothing to release.
 			}
 		};
-	}, [src, loop, muted, rate]);
+		// `loop` / `muted` / `rate` intentionally excluded: they are applied to
+		// the live element by the effects below so changing them mid-preview
+		// does not restart the clip.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [src]);
+
+	// --------------------------------------------------------------- live options
+	useEffect(() => {
+		if (video) video.loop = loop;
+	}, [video, loop]);
+
+	useEffect(() => {
+		if (!video) return;
+		video.muted = muted;
+		video.defaultMuted = muted;
+	}, [video, muted]);
+
+	useEffect(() => {
+		if (video && Number.isFinite(rate) && rate > 0) video.playbackRate = rate;
+	}, [video, rate]);
+
+	// ------------------------------------------------------------- play / pause
+	useEffect(() => {
+		if (!video) return;
+		if (playing) {
+			const started = video.play();
+			if (started && typeof started.catch === "function") {
+				started.catch(() => {
+					// Autoplay can reject while the element is still loading or if
+					// the src changed under us; the frozen frame is a fine fallback.
+				});
+			}
+		} else {
+			video.pause();
+			// Keep the last decoded picture visible after pausing.
+			setFrame((value) => value + 1);
+		}
+	}, [video, playing]);
+
+	// ---------------------------------------------------------- redraw loop
+	useEffect(() => {
+		if (!video || !playing) return;
+		let raf = 0;
+		const tick = () => {
+			setFrame((value) => value + 1);
+			raf = window.requestAnimationFrame(tick);
+		};
+		raf = window.requestAnimationFrame(tick);
+		return () => window.cancelAnimationFrame(raf);
+	}, [video, playing]);
+
+	// ------------------------------------------------------------- back to start
+	useEffect(() => {
+		if (!video) return;
+		if (lastRestart.current === restartToken) return;
+		const first = lastRestart.current === undefined;
+		lastRestart.current = restartToken;
+		if (first) return; // initial mount — leave the decoded nudge frame alone
+		try {
+			video.currentTime = 0;
+		} catch {
+			// Not seekable yet; the next `seeked` event still bumps a redraw.
+		}
+		if (playing) {
+			const started = video.play();
+			if (started && typeof started.catch === "function") started.catch(() => {});
+		}
+		setFrame((value) => value + 1);
+	}, [video, restartToken, playing]);
 
 	return { video, frame };
 }

@@ -619,9 +619,12 @@ function mediaNameFromSrc(src: string): string {
 function MediaDropZone({
 	currentSrc,
 	onPick,
+	onUploaded,
 }: {
 	currentSrc: string;
 	onPick: (src: string) => void;
+	/** Fired only when a freshly uploaded file lands, not when picking an existing one. */
+	onUploaded?: (src: string) => void;
 }) {
 	const [dragActive, setDragActive] = useState(false);
 	const [stage, setStage] = useState<MediaStage>("idle");
@@ -716,7 +719,10 @@ function MediaDropZone({
 							format: job.format ?? "",
 							src,
 						});
-						if (src) onPick(src);
+						if (src) {
+							onPick(src);
+							onUploaded?.(src);
+						}
 						void refreshList();
 						return;
 					}
@@ -735,7 +741,7 @@ function MediaDropZone({
 			};
 			void tick();
 		},
-		[fail, onPick, refreshList],
+		[fail, onPick, onUploaded, refreshList],
 	);
 
 	const startUpload = useCallback(
@@ -1007,15 +1013,23 @@ function LayerInspector({
 	data,
 	selection,
 	dataPaths,
+	previewPlaying,
 	onPatch,
 	onStyle,
+	onTogglePreview,
+	onRestartPreview,
+	onUploaded,
 }: {
 	layer: Layer;
 	data: TitleData;
 	selection: VariableSelection;
 	dataPaths: string[];
+	previewPlaying: boolean;
 	onPatch: (patch: Partial<Layer>) => void;
 	onStyle: (patch: Partial<LayerStyle>) => void;
+	onTogglePreview: () => void;
+	onRestartPreview: () => void;
+	onUploaded: (src: string) => void;
 }) {
 	const style = layer.style ?? {};
 	const srcPreview = layer.src
@@ -1351,6 +1365,7 @@ function LayerInspector({
 					<MediaDropZone
 						currentSrc={layer.src ?? ""}
 						onPick={(src) => onPatch({ src })}
+						onUploaded={onUploaded}
 					/>
 					<TextField
 						label="URL или путь"
@@ -1363,6 +1378,32 @@ function LayerInspector({
 						Файлы из <code>graphics/media/</code> отдаются напрямую:{" "}
 						<code>/bundles/notGT/graphics/media/&lt;файл&gt;</code>. Относительные
 						пути ищутся в /bundles/notGT/graphics/. Поддерживаются {"{{...}}"}.
+					</div>
+					<div className="ed-preview">
+						<button
+							type="button"
+							className={`ed-mini ed-preview__btn${previewPlaying ? " is-on" : ""}`}
+							title={previewPlaying ? "Пауза" : "Проиграть выбранный слой"}
+							aria-pressed={previewPlaying}
+							onClick={onTogglePreview}
+						>
+							{previewPlaying ? "⏸ пауза" : "▶ проиграть"}
+						</button>
+						<button
+							type="button"
+							className="ed-mini ed-preview__btn"
+							title="Вернуть выбранный клип в начало"
+							onClick={onRestartPreview}
+						>
+							⟲ в начало
+						</button>
+						<span className="ed-muted ed-small">
+							{previewPlaying ? "идёт предпросмотр" : "предпросмотр на паузе"}
+						</span>
+					</div>
+					<div className="ed-hint">
+						Предпросмотр играет только выбранный слой; на выходе клип
+						воспроизводится по настройкам анимации.
 					</div>
 					<div className="ed-grid2">
 						<CheckField
@@ -1397,8 +1438,7 @@ function LayerInspector({
 						/>
 					</div>
 					<div className="ed-hint">
-						Воспроизведением управляет графика; в редакторе показывается статичный
-						кадр.
+						Предпросмотр всегда без звука: поле videoMuted влияет только на выход.
 					</div>
 				</Section>
 			) : null}
@@ -1811,6 +1851,9 @@ export function EditorApp() {
 	const [outId, setOutId] = useState<string>("");
 	const [activeItemId, setActiveItemId] = useState<string | null>(null);
 	const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+	// Live playback preview of the selected video layer (editor panel only).
+	const [previewPlaying, setPreviewPlaying] = useState(false);
+	const [restartToken, setRestartToken] = useState(0);
 	const [libraryId, setLibraryId] = useState<string | null>(null);
 	const [draft, setDraft] = useState<TitleTemplate | null>(null);
 	const [dirty, setDirty] = useState(false);
@@ -1899,6 +1942,12 @@ export function EditorApp() {
 		setSelectedLayerId(null);
 	}, [draft, selectedLayerId]);
 
+	// Selecting another layer always drops back to the frozen frame: the
+	// operator must never be surprised by sudden playback.
+	useEffect(() => {
+		setPreviewPlaying(false);
+	}, [selectedLayerId]);
+
 	const confirmDiscard = useCallback((): boolean => {
 		if (!dirtyRef.current) return true;
 		return window.confirm("Есть несохранённые изменения. Продолжить без сохранения?");
@@ -1939,6 +1988,22 @@ export function EditorApp() {
 		},
 		[mutate],
 	);
+
+	// ------------------------------------------------------ video preview
+
+	const togglePreview = useCallback(() => {
+		setPreviewPlaying((value) => !value);
+	}, []);
+
+	const restartPreview = useCallback(() => {
+		setRestartToken((value) => value + 1);
+	}, []);
+
+	// A freshly uploaded clip on the selected layer may start playing once so
+	// the operator immediately sees what landed.
+	const handleUploaded = useCallback(() => {
+		setPreviewPlaying(true);
+	}, []);
 
 	const persist = useCallback((): TitleTemplate | null => {
 		const current = draftRef.current;
@@ -2408,6 +2473,8 @@ export function EditorApp() {
 						draft={draft}
 						activeItemId={activeItemId}
 						selectedLayerId={selectedLayerId}
+						previewPlaying={previewPlaying}
+						restartToken={restartToken}
 						data={data}
 						selection={selection}
 						onSelectItem={handleSelectItem}
@@ -2436,8 +2503,12 @@ export function EditorApp() {
 										data={data}
 										selection={selection}
 										dataPaths={dataPaths}
+										previewPlaying={previewPlaying}
 										onPatch={(patch) => updateLayer(selectedLayer.id, patch)}
 										onStyle={(patch) => updateStyle(selectedLayer.id, patch)}
+										onTogglePreview={togglePreview}
+										onRestartPreview={restartPreview}
+										onUploaded={handleUploaded}
 									/>
 								) : (
 									<div className="ed-card">
