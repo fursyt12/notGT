@@ -1,23 +1,32 @@
 /**
  * notGT — Editor dashboard panel (fullbleed).
  *
- * Visual authoring for `kind: "layers"` templates (react-konva canvas, layer
- * list, property inspector) and for `kind: "code"` templates (HTML/CSS/JS with
- * a live iframe preview built by the real graphics runtime).
+ * The canvas *is* the selected out: the `Out:` selector drives the stage, every
+ * animation placed on that out is drawn with the same placement math the
+ * graphics runtime uses (`out.width x out.height`, `item.x% / item.y%`,
+ * `scale(item.scale)` from the top-left corner), and the operator edits layers
+ * directly on that composite.
  *
- * Editing happens on a local clone of the selected template; nothing touches
- * the Replicant until "Сохранить" (which is also implied by Preview / Show).
+ * Editing model:
+ *   - placements (x/y/scale/enabled/playback/order, add/remove item) are
+ *     Replicant writes applied immediately;
+ *   - layer + template edits happen on a local draft clone of the active
+ *     animation and only reach the Replicant on "Сохранить" (also implied by
+ *     Preview / Показать / Toggle).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
-import { buildCodeDocument } from "../graphics/code-runtime";
+import { buildCodeDocument, codeSource } from "../graphics/code-runtime";
 import { interpolate } from "../shared/binding";
 import type {
 	CodeBlock,
 	Layer,
 	LayerStyle,
 	LayerType,
+	Out,
+	OutItem,
+	PlaybackConfig,
 	TemplateKind,
 	TitleData,
 	TitleTemplate,
@@ -44,6 +53,7 @@ import {
 } from "./editor/ui";
 import {
 	absoluteOutUrl,
+	addItem,
 	clone,
 	copyText,
 	defaultPlayback,
@@ -55,13 +65,19 @@ import {
 	getDb,
 	getTemplate,
 	hideTitle,
+	moveItem,
 	newId,
 	newTemplate,
+	removeItem,
 	saveTemplate,
 	showTitle,
 	toggleTitle,
+	triggerItem,
 	triggerTemplate,
+	updateItem,
+	updateItemPlayback,
 	useOuts,
+	useRuntime,
 	useTemplates,
 	useTitleData,
 } from "./shared";
@@ -101,6 +117,11 @@ const FONT_WEIGHTS: Array<{ value: string; label: string }> = [
 	{ value: "700", label: "700 bold" },
 	{ value: "800", label: "800 extrabold" },
 	{ value: "900", label: "900 black" },
+];
+
+const PLAYBACK_MODES: Array<{ value: PlaybackConfig["mode"]; label: string }> = [
+	{ value: "once", label: "once — по триггеру" },
+	{ value: "loop", label: "loop — цикл" },
 ];
 
 function normalizeZ(layers: Layer[]): Layer[] {
@@ -154,6 +175,11 @@ function makeLayer(type: LayerType, z: number): Layer {
 	};
 }
 
+function orderedItems(out: Out | null): OutItem[] {
+	if (!out) return [];
+	return [...out.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
 /** Textarea used for layer text and code blocks. */
 function CodeArea({
 	label,
@@ -182,22 +208,139 @@ function CodeArea({
 	);
 }
 
-// ------------------------------------------------------------- template list
+// ------------------------------------------------- "на этом out'е" item list
 
-function TemplateList({
+function OutItemsList({
+	out,
 	templates,
-	selectedId,
+	draft,
+	activeItemId,
+	playing,
+	onActivate,
+	onToggleEnabled,
+	onMove,
+	onTrigger,
+	onRemove,
+}: {
+	out: Out;
+	templates: TitleTemplate[];
+	draft: TitleTemplate | null;
+	activeItemId: string | null;
+	playing: string[];
+	onActivate: (itemId: string) => void;
+	onToggleEnabled: (itemId: string, enabled: boolean) => void;
+	onMove: (itemId: string, delta: number) => void;
+	onTrigger: (itemId: string) => void;
+	onRemove: (itemId: string) => void;
+}) {
+	const items = orderedItems(out);
+	return (
+		<div className="ed-card">
+			<div className="ed-card__head">
+				<strong>На этом out&apos;е</strong>
+				<span className="ed-muted ed-small">{items.length}</span>
+			</div>
+			{items.length === 0 ? (
+				<p className="ed-hint">
+					На этом out&apos;е пока ничего нет — разместите анимацию из библиотеки ниже.
+				</p>
+			) : (
+				<div className="ed-list">
+					{items.map((item) => {
+						const template = templates.find((candidate) => candidate.id === item.templateId);
+						const name =
+							draft && draft.id === item.templateId
+								? draft.name
+								: template?.name ?? "—";
+						return (
+							<div
+								key={item.id}
+								className={`ed-list-item${item.id === activeItemId ? " is-selected" : ""}${
+									item.enabled ? "" : " is-hidden"
+								}`}
+								onClick={() => onActivate(item.id)}
+							>
+								<input
+									type="checkbox"
+									title={item.enabled ? "Выключить на out'е" : "Включить на out'е"}
+									checked={item.enabled}
+									onClick={(event) => event.stopPropagation()}
+									onChange={(event) => onToggleEnabled(item.id, event.target.checked)}
+								/>
+								<span className="ed-list-item__name" title={name}>
+									{name}
+								</span>
+								{playing.includes(item.id) ? (
+									<span className="ed-badge ed-badge--live">играет</span>
+								) : null}
+								<span
+									className="ed-list-item__actions"
+									onClick={(event) => event.stopPropagation()}
+								>
+									<button
+										type="button"
+										className="ed-icon-btn"
+										title="Выше"
+										onClick={() => onMove(item.id, -1)}
+									>
+										↑
+									</button>
+									<button
+										type="button"
+										className="ed-icon-btn"
+										title="Ниже"
+										onClick={() => onMove(item.id, 1)}
+									>
+										↓
+									</button>
+									<button
+										type="button"
+										className="ed-icon-btn"
+										title="Проиграть"
+										onClick={() => onTrigger(item.id)}
+									>
+										проиграть
+									</button>
+									<button
+										type="button"
+										className="ed-icon-btn ed-icon-btn--danger"
+										title="Убрать с out'а"
+										onClick={() => onRemove(item.id)}
+									>
+										✕
+									</button>
+								</span>
+							</div>
+						);
+					})}
+				</div>
+			)}
+		</div>
+	);
+}
+
+// ----------------------------------------------------------- template library
+
+function TemplateLibrary({
+	templates,
+	placedIds,
+	activeTemplateId,
+	libraryId,
 	draft,
 	onSelect,
+	onPlace,
 	onCreate,
 	onDuplicate,
 	onDelete,
 	onRename,
 }: {
 	templates: TitleTemplate[];
-	selectedId: string | null;
+	placedIds: Set<string>;
+	activeTemplateId: string | null;
+	libraryId: string | null;
 	draft: TitleTemplate | null;
 	onSelect: (id: string) => void;
+	onPlace: (id: string) => void;
 	onCreate: (kind: TemplateKind) => void;
 	onDuplicate: (id: string) => void;
 	onDelete: (id: string) => void;
@@ -206,51 +349,70 @@ function TemplateList({
 	return (
 		<div className="ed-card">
 			<div className="ed-card__head">
-				<strong>Анимации</strong>
+				<strong>Все анимации</strong>
 				<span className="ed-muted ed-small">{templates.length}</span>
 			</div>
-			<div className="ed-list">
-				{templates.map((template) => {
-					const active = template.id === selectedId;
-					const name = active && draft ? draft.name : template.name;
-					return (
-						<div
-							key={template.id}
-							className={`ed-list-item${active ? " is-selected" : ""}`}
-							onClick={() => onSelect(template.id)}
-						>
-							<span className={`ed-badge ed-badge--${template.kind}`}>
-								{template.kind === "code" ? "код" : "слои"}
-							</span>
-							<span className="ed-list-item__name">
-								<InlineName
-									value={name}
-									placeholder="Без имени"
-									onChange={(next) => onRename(template.id, next)}
-								/>
-							</span>
-							<span className="ed-list-item__actions" onClick={(event) => event.stopPropagation()}>
-								<button
-									type="button"
-									className="ed-icon-btn"
-									title="Дублировать"
-									onClick={() => onDuplicate(template.id)}
+			{templates.length === 0 ? (
+				<p className="ed-hint">Анимаций пока нет — создайте первую.</p>
+			) : (
+				<div className="ed-list">
+					{templates.map((template) => {
+						const highlight =
+							template.id === activeTemplateId || template.id === libraryId;
+						const placed = placedIds.has(template.id);
+						const name = highlight && draft ? draft.name : template.name;
+						return (
+							<div
+								key={template.id}
+								className={`ed-list-item${highlight ? " is-selected" : ""}`}
+								onClick={() => onSelect(template.id)}
+							>
+								<span className={`ed-badge ed-badge--${template.kind}`}>
+									{template.kind === "code" ? "код" : "слои"}
+								</span>
+								<span className="ed-list-item__name">
+									<InlineName
+										value={name}
+										placeholder="Без имени"
+										onChange={(next) => onRename(template.id, next)}
+									/>
+								</span>
+								<span
+									className="ed-list-item__actions"
+									onClick={(event) => event.stopPropagation()}
 								>
-									⧉
-								</button>
-								<button
-									type="button"
-									className="ed-icon-btn ed-icon-btn--danger"
-									title="Удалить"
-									onClick={() => onDelete(template.id)}
-								>
-									✕
-								</button>
-							</span>
-						</div>
-					);
-				})}
-			</div>
+									{!placed ? (
+										<button
+											type="button"
+											className="ed-mini"
+											title="Разместить на выбранном out'е"
+											onClick={() => onPlace(template.id)}
+										>
+											на out
+										</button>
+									) : null}
+									<button
+										type="button"
+										className="ed-icon-btn"
+										title="Дублировать"
+										onClick={() => onDuplicate(template.id)}
+									>
+										⧉
+									</button>
+									<button
+										type="button"
+										className="ed-icon-btn ed-icon-btn--danger"
+										title="Удалить"
+										onClick={() => onDelete(template.id)}
+									>
+										✕
+									</button>
+								</span>
+							</div>
+						);
+					})}
+				</div>
+			)}
 			<div className="ed-row ed-mt">
 				<button type="button" onClick={() => onCreate("layers")}>
 					+ Слои
@@ -288,7 +450,7 @@ function LayerList({
 	return (
 		<div className="ed-card">
 			<div className="ed-card__head">
-				<strong>Слои</strong>
+				<strong>Слои активной анимации</strong>
 				<span className="ed-muted ed-small">{layers.length}</span>
 			</div>
 			<div className="ed-row ed-mb">
@@ -764,6 +926,112 @@ function LayerInspector({
 	);
 }
 
+// ------------------------------------------------------- placement inspector
+
+function PlacementInspector({
+	out,
+	item,
+	template,
+	onPatch,
+	onPlayback,
+	onRemove,
+	onFitOut,
+}: {
+	out: Out;
+	item: OutItem;
+	template: TitleTemplate;
+	onPatch: (patch: Partial<OutItem>) => void;
+	onPlayback: (patch: Partial<PlaybackConfig>) => void;
+	onRemove: () => void;
+	onFitOut: () => void;
+}) {
+	const playback = item.playback ?? defaultPlayback();
+	const fittedScale = template.width > 0 ? out.width / template.width : 1;
+
+	return (
+		<div className="ed-panel-body">
+			<Section title="Размещение на out'е">
+				<div className="ed-grid2">
+					<NumField
+						label="X"
+						suffix="%"
+						step={0.5}
+						value={item.x}
+						onChange={(value) => onPatch({ x: round(value) })}
+					/>
+					<NumField
+						label="Y"
+						suffix="%"
+						step={0.5}
+						value={item.y}
+						onChange={(value) => onPatch({ y: round(value) })}
+					/>
+					<NumField
+						label="Масштаб"
+						step={0.05}
+						min={0.02}
+						max={20}
+						value={item.scale}
+						onChange={(value) => onPatch({ scale: round(clamp(value, 0.02, 20), 4) })}
+					/>
+					<Field label="По ширине out'а">
+						<button type="button" className="ed-mini" onClick={onFitOut}>
+							по размеру out&apos;а
+						</button>
+					</Field>
+				</div>
+				<div className="ed-hint">
+					X/Y — проценты от {out.width}×{out.height}; масштаб умножает бокс анимации{" "}
+					{template.width}×{template.height} (полная ширина ≈ {round(fittedScale, 3)}).
+				</div>
+				<CheckField
+					label="включено на out'е"
+					checked={item.enabled}
+					onChange={(value) => onPatch({ enabled: value })}
+				/>
+				<button type="button" className="danger" onClick={onRemove}>
+					Убрать с out&apos;а
+				</button>
+			</Section>
+
+			<Section title="Проигрывание на out'е" defaultOpen={false}>
+				<SelectField
+					label="Режим"
+					value={playback.mode}
+					options={PLAYBACK_MODES}
+					onChange={(value) => onPlayback({ mode: value })}
+				/>
+				<div className="ed-grid2">
+					<NumField
+						label="Интервал"
+						suffix="ms"
+						step={100}
+						min={100}
+						value={playback.intervalMs}
+						onChange={(value) => onPlayback({ intervalMs: Math.max(100, Math.round(value)) })}
+					/>
+					<NumField
+						label="Удержание"
+						suffix="ms"
+						step={100}
+						min={100}
+						value={playback.holdMs}
+						onChange={(value) => onPlayback({ holdMs: Math.max(100, Math.round(value)) })}
+					/>
+				</div>
+				<CheckField
+					label="autoStart — запускать при старте"
+					checked={playback.autoStart}
+					onChange={(value) => onPlayback({ autoStart: value })}
+				/>
+				<div className="ed-hint">
+					Интервал {formatMs(playback.intervalMs)} · удержание {formatMs(playback.holdMs)}
+				</div>
+			</Section>
+		</div>
+	);
+}
+
 // --------------------------------------------------------- template settings
 
 function TemplateSettings({
@@ -779,7 +1047,12 @@ function TemplateSettings({
 
 	return (
 		<div className="ed-panel-body">
-			<Section title="Холст шаблона">
+			<Section title="Анимация (шаблон)">
+				<TextField
+					label="Имя"
+					value={template.name}
+					onChange={(value) => onPatch({ name: value })}
+				/>
 				<div className="ed-grid2">
 					<NumField
 						label="Ширина"
@@ -879,14 +1152,11 @@ function TemplateSettings({
 				</div>
 			</Section>
 
-			<Section title="Проигрывание" defaultOpen={false}>
+			<Section title="Проигрывание по умолчанию" defaultOpen={false}>
 				<SelectField
 					label="Режим"
 					value={playback.mode}
-					options={[
-						{ value: "once", label: "once — по триггеру" },
-						{ value: "loop", label: "loop — цикл" },
-					]}
+					options={PLAYBACK_MODES}
 					onChange={(value) => onPatch({ playback: { ...playback, mode: value } })}
 				/>
 				<div className="ed-grid2">
@@ -924,9 +1194,9 @@ function TemplateSettings({
 	);
 }
 
-// --------------------------------------------------------------- code panel
+// ---------------------------------------------------------------- code panel
 
-function CodePreview({ template, data }: { template: TitleTemplate; data: TitleData }) {
+function CodePreviewCard({ template, data }: { template: TitleTemplate; data: TitleData }) {
 	const [doc, setDoc] = useState("");
 	const [nonce, setNonce] = useState(0);
 
@@ -935,8 +1205,14 @@ function CodePreview({ template, data }: { template: TitleTemplate; data: TitleD
 	}, [template, data, nonce]);
 
 	return (
-		<div className="ed-center">
-			<div className="ed-code-preview">
+		<div className="ed-card">
+			<div className="ed-card__head">
+				<strong>Живой предпросмотр</strong>
+				<button type="button" className="ed-mini" onClick={() => setNonce((value) => value + 1)}>
+					Перезапустить
+				</button>
+			</div>
+			<div className="ed-code-preview ed-code-preview--panel">
 				<iframe
 					className="ed-preview-frame"
 					title="Предпросмотр код-анимации"
@@ -944,15 +1220,9 @@ function CodePreview({ template, data }: { template: TitleTemplate; data: TitleD
 					srcDoc={doc}
 				/>
 			</div>
-			<div className="ed-canvas-status">
-				<span>
-					Живой предпросмотр {template.width}×{template.height}
-				</span>
-				<span>Пересобирается при каждом изменении кода</span>
-				<button type="button" className="ed-mini" onClick={() => setNonce((value) => value + 1)}>
-					Перезапустить
-				</button>
-			</div>
+			<p className="ed-hint">
+				{template.width}×{template.height} · пересобирается при каждом изменении кода
+			</p>
 		</div>
 	);
 }
@@ -967,6 +1237,12 @@ function CodeEditors({
 	const code = template.code ?? { html: "", css: "", js: "" };
 	return (
 		<div className="ed-panel-body">
+			{codeSource(template) === "file" && code.src ? (
+				<div className="ed-hint">
+					HTML/CSS/JS загружаются из файла <code>{code.src}</code>. Если написать HTML
+					здесь, он перекроет файл.
+				</div>
+			) : null}
 			<Section title="HTML">
 				<CodeArea value={code.html} rows={8} onChange={(value) => onCode({ html: value })} />
 			</Section>
@@ -1006,48 +1282,30 @@ function CodeEditors({
 	);
 }
 
-// -------------------------------------------------------------- empty state
-
-function EmptyState({ onCreate }: { onCreate: (kind: TemplateKind) => void }) {
-	return (
-		<div className="ed-empty">
-			<h2>Пока нет ни одной анимации</h2>
-			<p className="ed-hint">
-				Соберите титр из слоёв на холсте или напишите анимацию на HTML/CSS/JS.
-			</p>
-			<div className="ed-row ed-row--center">
-				<button type="button" className="primary" onClick={() => onCreate("layers")}>
-					Создать анимацию
-				</button>
-				<button type="button" onClick={() => onCreate("code")}>
-					Создать код-анимацию
-				</button>
-			</div>
-		</div>
-	);
-}
-
 // --------------------------------------------------------------------- app
 
 export function EditorApp() {
 	const templates = useTemplates();
 	const outs = useOuts();
 	const data = useTitleData();
+	const runtime = useRuntime();
 
-	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const [outId, setOutId] = useState<string>("");
+	const [activeItemId, setActiveItemId] = useState<string | null>(null);
+	const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+	const [libraryId, setLibraryId] = useState<string | null>(null);
 	const [draft, setDraft] = useState<TitleTemplate | null>(null);
 	const [dirty, setDirty] = useState(false);
-	const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
-	const [outId, setOutId] = useState<string>("");
-	const [flash, setFlash] = useState<string>("");
+	const [flash, setFlash] = useState("");
 
-	const templatesRef = useRef(templates);
+	const dirtyRef = useRef(dirty);
 	const draftRef = useRef<TitleTemplate | null>(draft);
+	const userCleared = useRef(false);
 	const flashTimer = useRef<number | undefined>(undefined);
 
 	useEffect(() => {
-		templatesRef.current = templates;
-	}, [templates]);
+		dirtyRef.current = dirty;
+	}, [dirty]);
 
 	useEffect(() => {
 		draftRef.current = draft;
@@ -1066,36 +1324,55 @@ export function EditorApp() {
 		[],
 	);
 
-	// Select the first template once the replicant arrives.
-	useEffect(() => {
-		if (selectedId !== null) return;
-		if (templates.length === 0) return;
-		setSelectedId(templates[0]!.id);
-	}, [templates, selectedId]);
+	const out = outs.find((candidate) => candidate.id === outId) ?? null;
+	const items = useMemo(() => orderedItems(out), [out]);
+	const activeItem = items.find((item) => item.id === activeItemId) ?? null;
+	const editingTemplateId = activeItem?.templateId ?? libraryId ?? null;
 
-	// Drop the selection when the template disappears (deleted here or elsewhere).
+	// Pick a valid out as soon as the replicant arrives (or after a deletion).
 	useEffect(() => {
-		if (selectedId === null) return;
-		if (getTemplate(selectedId)) return;
-		setSelectedId(null);
-		setDraft(null);
-		setDirty(false);
-		setSelectedLayerId(null);
-	}, [templates, selectedId]);
-
-	// Load a fresh working copy whenever the selection changes.
-	useEffect(() => {
-		if (selectedId === null) {
-			setDraft(null);
-			setSelectedLayerId(null);
+		if (outs.length === 0) {
+			if (outId !== "") setOutId("");
 			return;
 		}
-		const source =
-			getTemplate(selectedId) ?? templatesRef.current.find((item) => item.id === selectedId);
+		if (!outs.some((candidate) => candidate.id === outId)) setOutId(outs[0]!.id);
+	}, [outs, outId]);
+
+	// Whenever the out changes, drop the per-out selection and default to its
+	// first animation (or the first library entry so Preview always has a target).
+	useEffect(() => {
+		userCleared.current = false;
+		const target = outs.find((candidate) => candidate.id === outId) ?? null;
+		const sorted = orderedItems(target);
+		setSelectedLayerId(null);
+		setActiveItemId(sorted.length > 0 ? sorted[0]!.id : null);
+		setLibraryId(sorted.length === 0 && templates[0] ? templates[0]!.id : null);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [outId]);
+
+	// Late-arriving replicants: choose a default once data exists.
+	useEffect(() => {
+		if (activeItemId || libraryId || userCleared.current) return;
+		const sorted = orderedItems(out);
+		if (sorted.length > 0) {
+			setActiveItemId(sorted[0]!.id);
+			return;
+		}
+		if (templates.length > 0) setLibraryId(templates[0]!.id);
+	}, [activeItemId, libraryId, out, templates]);
+
+	// Load a fresh working copy whenever the edited template changes.
+	useEffect(() => {
+		if (!editingTemplateId) {
+			setDraft(null);
+			setDirty(false);
+			return;
+		}
+		const source = getTemplate(editingTemplateId);
 		setDraft(source ? clone(source) : null);
 		setDirty(false);
 		setSelectedLayerId(null);
-	}, [selectedId]);
+	}, [editingTemplateId]);
 
 	// Keep the layer selection valid.
 	useEffect(() => {
@@ -1103,6 +1380,11 @@ export function EditorApp() {
 		if ((draft?.layers ?? []).some((layer) => layer.id === selectedLayerId)) return;
 		setSelectedLayerId(null);
 	}, [draft, selectedLayerId]);
+
+	const confirmDiscard = useCallback((): boolean => {
+		if (!dirtyRef.current) return true;
+		return window.confirm("Есть несохранённые изменения. Продолжить без сохранения?");
+	}, []);
 
 	const mutate = useCallback((fn: (template: TitleTemplate) => TitleTemplate) => {
 		setDraft((prev) => (prev ? fn(prev) : prev));
@@ -1140,17 +1422,155 @@ export function EditorApp() {
 		[mutate],
 	);
 
-	const addLayer = useCallback((type: LayerType) => {
-		const layer = makeLayer(type, 1);
-		setDraft((prev) => {
-			if (!prev) return prev;
-			const layers = normalizeZ(prev.layers);
-			layer.z = layers.length + 1;
-			return { ...prev, layers: [...layers, layer] };
+	const persist = useCallback((): TitleTemplate | null => {
+		const current = draftRef.current;
+		if (!current) return null;
+		const saved = saveTemplate(current);
+		draftRef.current = clone(saved);
+		setDraft(clone(saved));
+		setDirty(false);
+		return saved;
+	}, []);
+
+	// ------------------------------------------------------------ placement
+
+	const patchItem = (itemId: string, patch: Partial<OutItem>) => {
+		if (!out) return;
+		updateItem(out.id, itemId, patch);
+	};
+
+	const patchItemPlayback = (itemId: string, patch: Partial<PlaybackConfig>) => {
+		if (!out) return;
+		updateItemPlayback(out.id, itemId, patch);
+	};
+
+	const moveItemInOut = (itemId: string, delta: number) => {
+		if (!out) return;
+		moveItem(out.id, itemId, delta);
+	};
+
+	const triggerItemOnOut = (itemId: string) => {
+		if (!out) return;
+		triggerItem(out.id, itemId);
+		notify("Триггер отправлен");
+	};
+
+	const removeItemFromOut = (itemId: string) => {
+		if (!out) return;
+		if (itemId === activeItemId && dirty) {
+			if (!window.confirm("Убрать анимацию с out'а? Несохранённые изменения будут потеряны.")) {
+				return;
+			}
+		}
+		removeItem(out.id, itemId);
+		if (itemId === activeItemId) {
+			setActiveItemId(null);
+			setSelectedLayerId(null);
+			setDraft(null);
+			setDirty(false);
+		}
+		notify("Убрано с out'а");
+	};
+
+	const fitItemToOut = (item: OutItem) => {
+		if (!out) return;
+		const template = getTemplate(item.templateId);
+		if (!template || template.width <= 0) return;
+		updateItem(out.id, item.id, { scale: round(out.width / template.width, 4) });
+	};
+
+	// ------------------------------------------------------------- selection
+
+	const handleSelectItem = (itemId: string | null) => {
+		if (itemId === null) {
+			userCleared.current = true;
+			setActiveItemId(null);
+			setSelectedLayerId(null);
+			return;
+		}
+		if (itemId === activeItemId) {
+			setSelectedLayerId(null);
+			return;
+		}
+		if (!confirmDiscard()) return;
+		userCleared.current = false;
+		setActiveItemId(itemId);
+		setSelectedLayerId(null);
+		setLibraryId(null);
+	};
+
+	const chooseOut = (id: string) => {
+		if (id === outId) return;
+		if (!confirmDiscard()) return;
+		setOutId(id);
+	};
+
+	const selectLibrary = (templateId: string) => {
+		const placed = items.find((item) => item.templateId === templateId);
+		if (placed) {
+			handleSelectItem(placed.id);
+			return;
+		}
+		if (!confirmDiscard()) return;
+		userCleared.current = false;
+		setLibraryId(templateId);
+		setActiveItemId(null);
+		setSelectedLayerId(null);
+	};
+
+	const placeTemplate = (templateId: string) => {
+		if (!out) return;
+		if (editingTemplateId && editingTemplateId !== templateId && !confirmDiscard()) return;
+		const item = addItem(out.id, templateId);
+		if (!item) return;
+		userCleared.current = false;
+		setActiveItemId(item.id);
+		setSelectedLayerId(null);
+		setLibraryId(null);
+		notify("Анимация размещена на out'е");
+	};
+
+	// ------------------------------------------------------------- templates
+
+	const startNewAnimation = (): { item: OutItem; template: TitleTemplate } | null => {
+		if (!out) return null;
+		const base = newTemplate("layers");
+		const saved = saveTemplate({
+			...base,
+			name: "Новая анимация",
+			width: out.width,
+			height: out.height,
+			layers: [],
 		});
+		const item = addItem(out.id, saved.id);
+		if (!item) return null;
+		userCleared.current = false;
+		setActiveItemId(item.id);
+		setSelectedLayerId(null);
+		setLibraryId(null);
+		draftRef.current = clone(saved);
+		setDraft(clone(saved));
+		setDirty(false);
+		return { item, template: saved };
+	};
+
+	const addLayer = (type: LayerType) => {
+		let working = draft && draft.kind === "layers" ? draft : null;
+		if (!working) {
+			if (editingTemplateId && !confirmDiscard()) return;
+			const started = startNewAnimation();
+			if (!started) return;
+			working = started.template;
+		}
+		const layer = makeLayer(type, 1);
+		const layers = normalizeZ(working.layers ?? []);
+		layer.z = layers.length + 1;
+		const next = { ...working, layers: [...layers, layer] };
+		draftRef.current = next;
+		setDraft(next);
 		setDirty(true);
 		setSelectedLayerId(layer.id);
-	}, []);
+	};
 
 	const deleteLayer = useCallback(
 		(id: string) => {
@@ -1179,35 +1599,48 @@ export function EditorApp() {
 		[mutate],
 	);
 
-	const persist = useCallback((): TitleTemplate | null => {
-		const current = draftRef.current;
-		if (!current) return null;
-		const saved = saveTemplate(current);
-		draftRef.current = clone(saved);
-		setDraft(clone(saved));
-		setDirty(false);
-		return saved;
-	}, []);
-
 	const createTemplate = (kind: TemplateKind) => {
+		if (!confirmDiscard()) return;
 		const saved = saveTemplate(newTemplate(kind));
-		draftRef.current = clone(saved);
-		setDraft(clone(saved));
-		setDirty(false);
-		setSelectedId(saved.id);
+		if (out) {
+			const item = addItem(out.id, saved.id);
+			if (item) setActiveItemId(item.id);
+		}
+		setLibraryId(null);
+		setSelectedLayerId(null);
 		notify(kind === "code" ? "Создана код-анимация" : "Создана анимация слоёв");
 	};
 
-	const selectTemplate = (id: string) => {
-		if (id === selectedId) return;
-		if (dirty && !window.confirm("Есть несохранённые изменения. Переключить без сохранения?")) {
-			return;
+	const duplicate = (id: string) => {
+		if (!confirmDiscard()) return;
+		const copy = duplicateTemplate(id);
+		if (!copy) return;
+		if (out) {
+			const item = addItem(out.id, copy.id);
+			if (item) setActiveItemId(item.id);
 		}
-		setSelectedId(id);
+		setLibraryId(null);
+		setSelectedLayerId(null);
+		notify(`Дубликат: ${copy.name}`);
+	};
+
+	const removeTemplate = (id: string) => {
+		const template = getTemplate(id);
+		if (!template) return;
+		if (!window.confirm(`Удалить «${template.name}»?`)) return;
+		if (editingTemplateId === id) {
+			setActiveItemId(null);
+			setLibraryId(null);
+			setDraft(null);
+			setDirty(false);
+			setSelectedLayerId(null);
+		}
+		deleteTemplate(id);
+		notify("Анимация удалена");
 	};
 
 	const renameTemplate = (id: string, name: string) => {
-		if (id === selectedId) {
+		if (id === editingTemplateId) {
 			mutate((template) => ({ ...template, name }));
 			return;
 		}
@@ -1216,44 +1649,34 @@ export function EditorApp() {
 		saveTemplate({ ...template, name });
 	};
 
-	const duplicate = (id: string) => {
-		if (dirty && !window.confirm("Есть несохранённые изменения. Продолжить?")) return;
-		const copy = duplicateTemplate(id);
-		if (!copy) return;
-		draftRef.current = clone(copy);
-		setDraft(clone(copy));
-		setDirty(false);
-		setSelectedId(copy.id);
-		notify(`Дубликат: ${copy.name}`);
-	};
+	// --------------------------------------------------------------- toolbar
 
-	const removeTemplate = (id: string) => {
-		const template = getTemplate(id);
-		if (!template) return;
-		if (!window.confirm(`Удалить «${template.name}»?`)) return;
-		const remaining = templates.filter((item) => item.id !== id);
-		deleteTemplate(id);
-		if (selectedId === id) {
-			setSelectedId(remaining.length > 0 ? remaining[0]!.id : null);
-			setDraft(null);
-			setDirty(false);
-			setSelectedLayerId(null);
-		}
-		notify("Шаблон удалён");
+	const resolveForAction = (): TitleTemplate | null => {
+		const saved = persist();
+		if (saved) return saved;
+		if (editingTemplateId) return getTemplate(editingTemplateId) ?? null;
+		return null;
 	};
 
 	const preview = () => {
-		const saved = persist();
-		if (!saved) return;
-		triggerTemplate(saved.id, outId || null);
-		notify(`Preview → ${outId ? "выбранный out" : "все out'ы"}`);
+		const target = resolveForAction();
+		if (!target) return;
+		triggerTemplate(target.id, outId || null);
+		notify(`Preview → ${out ? out.name : "out"}`);
 	};
 
 	const showOnOut = () => {
-		const saved = persist();
-		if (!saved) return;
-		showTitle(saved.id, { outId: outId || null });
+		const target = resolveForAction();
+		if (!target) return;
+		showTitle(target.id, { outId: outId || null });
 		notify("Показано");
+	};
+
+	const toggleOnOut = () => {
+		const target = resolveForAction();
+		if (!target) return;
+		toggleTitle(target.id, { outId: outId || null });
+		notify("Переключено");
 	};
 
 	const hideOnOut = () => {
@@ -1261,17 +1684,9 @@ export function EditorApp() {
 		notify("Скрыто");
 	};
 
-	const toggleOnOut = () => {
-		const saved = persist();
-		if (!saved) return;
-		toggleTitle(saved.id, { outId: outId || null });
-		notify("Переключено");
-	};
-
-	// Arrow-key nudging for the selected layer.
+	// Arrow-key nudging: the layer when one is selected, otherwise the placement.
 	useEffect(() => {
 		const handler = (event: KeyboardEvent) => {
-			if (!selectedLayerId) return;
 			const target = event.target as HTMLElement | null;
 			if (
 				target &&
@@ -1290,115 +1705,141 @@ export function EditorApp() {
 			else if (event.key === "ArrowUp") dy = -step;
 			else if (event.key === "ArrowDown") dy = step;
 			else return;
-			event.preventDefault();
-			mutate((template) => ({
-				...template,
-				layers: template.layers.map((layer) =>
-					layer.id === selectedLayerId
-						? { ...layer, x: round(layer.x + dx), y: round(layer.y + dy) }
-						: layer,
-				),
-			}));
+
+			if (selectedLayerId && draft) {
+				event.preventDefault();
+				mutate((template) => ({
+					...template,
+					layers: template.layers.map((layer) =>
+						layer.id === selectedLayerId
+							? { ...layer, x: round(layer.x + dx), y: round(layer.y + dy) }
+							: layer,
+					),
+				}));
+				return;
+			}
+			if (activeItemId && out) {
+				const item = out.items.find((candidate) => candidate.id === activeItemId);
+				if (!item) return;
+				event.preventDefault();
+				updateItem(out.id, item.id, {
+					x: round(item.x + dx),
+					y: round(item.y + dy),
+				});
+			}
 		};
 		window.addEventListener("keydown", handler);
 		return () => window.removeEventListener("keydown", handler);
-	}, [selectedLayerId, mutate]);
+	}, [selectedLayerId, draft, activeItemId, out, mutate]);
+
+	// ---------------------------------------------------------------- derive
 
 	const dataPaths = useMemo(() => flattenData(data).map((row) => row.path), [data]);
 	const templatesLoaded = getDb().templates.value !== undefined;
+	const outsLoaded = getDb().outs.value !== undefined;
 	const draftLayers = draft?.layers ?? [];
 	const selectedLayer = draftLayers.find((layer) => layer.id === selectedLayerId) ?? null;
-	const activeOut = outs.find((out) => out.id === outId) ?? null;
+	const playingIds = out ? runtime.playing?.[out.id] ?? [] : [];
+	const placedIds = useMemo(() => new Set(items.map((item) => item.templateId)), [items]);
 
 	return (
 		<div className="ed-root">
 			<div className="ed-toolbar">
 				<span className="ed-toolbar__title">notGT — Editor</span>
 				{draft ? (
-					<>
-						<span className={`ed-chip${dirty ? " is-dirty" : ""}`}>
-							{dirty ? "● не сохранено" : "сохранено"}
-						</span>
-						<span className="ed-vline" />
-						<button type="button" onClick={() => addLayer("text")}>
-							+ Текст
-						</button>
-						<button type="button" onClick={() => addLayer("shape")}>
-							+ Фигура
-						</button>
-						<button type="button" onClick={() => addLayer("image")}>
-							+ Картинка
-						</button>
-						<button type="button" onClick={() => addLayer("gif")}>
-							+ GIF
-						</button>
-						<span className="ed-vline" />
-						<button type="button" className="primary" onClick={persist}>
-							Сохранить
-						</button>
-						<button type="button" onClick={preview}>
-							Preview
-						</button>
-					</>
+					<span className={`ed-chip${dirty ? " is-dirty" : ""}`}>
+						{dirty ? "● не сохранено" : "сохранено"}
+					</span>
 				) : null}
+				<span className="ed-vline" />
+				<button type="button" onClick={() => addLayer("text")}>
+					+ Текст
+				</button>
+				<button type="button" onClick={() => addLayer("shape")}>
+					+ Фигура
+				</button>
+				<button type="button" onClick={() => addLayer("image")}>
+					+ Картинка
+				</button>
+				<button type="button" onClick={() => addLayer("gif")}>
+					+ GIF
+				</button>
+				<span className="ed-vline" />
+				<button type="button" className="primary" onClick={persist} disabled={!draft}>
+					Сохранить
+				</button>
+				<button type="button" onClick={preview} disabled={!draft && !editingTemplateId}>
+					Preview
+				</button>
 				<span className="ed-spacer" />
 				{flash ? <span className="ed-flash">{flash}</span> : null}
 			</div>
 
 			<div className="ed-toolbar ed-toolbar--sub">
-				<span className="ed-muted ed-small">Show on out:</span>
+				<span className="ed-muted ed-small">Out:</span>
 				<select
 					className="ed-out-select"
 					value={outId}
-					onChange={(event) => setOutId(event.target.value)}
+					onChange={(event) => chooseOut(event.target.value)}
 				>
-					<option value="">все out&apos;ы</option>
-					{outs.map((out) => (
-						<option key={out.id} value={out.id}>
-							{out.name}
+					{outs.map((candidate) => (
+						<option key={candidate.id} value={candidate.id}>
+							{candidate.name}
 						</option>
 					))}
 				</select>
-				<button type="button" onClick={showOnOut} disabled={!draft}>
+				<button type="button" onClick={showOnOut} disabled={!draft && !editingTemplateId}>
 					Показать
 				</button>
-				<button type="button" onClick={toggleOnOut} disabled={!draft}>
+				<button type="button" onClick={toggleOnOut} disabled={!draft && !editingTemplateId}>
 					Toggle
 				</button>
-				<button type="button" className="danger" onClick={hideOnOut}>
+				<button type="button" className="danger" onClick={hideOnOut} disabled={!out}>
 					Скрыть
 				</button>
 				<span className="ed-vline" />
 				<button
 					type="button"
-					disabled={!activeOut}
-					title={activeOut ? "Скопировать URL для OBS" : "Выберите конкретный out"}
+					disabled={!out}
+					title={out ? "Скопировать URL для OBS" : "Нет out'а"}
 					onClick={() => {
-						if (!activeOut) return;
-						void copyText(absoluteOutUrl(activeOut.id)).then(() => notify("URL скопирован"));
+						if (!out) return;
+						void copyText(absoluteOutUrl(out.id)).then(() => notify("URL скопирован"));
 					}}
 				>
 					Копировать URL
 				</button>
-				{activeOut ? (
-					<span className="ed-muted ed-small ed-ellipsis">{absoluteOutUrl(activeOut.id)}</span>
+				{out ? (
+					<span className="ed-muted ed-small ed-ellipsis">{absoluteOutUrl(out.id)}</span>
 				) : (
-					<span className="ed-muted ed-small">выберите out, чтобы получить URL для OBS</span>
+					<span className="ed-muted ed-small">создайте out, чтобы получить URL для OBS</span>
 				)}
 			</div>
 
 			<div className="ed-main">
 				<div className="ed-side">
-					<TemplateList
-						templates={templates}
-						selectedId={selectedId}
-						draft={draft}
-						onSelect={selectTemplate}
-						onCreate={createTemplate}
-						onDuplicate={duplicate}
-						onDelete={removeTemplate}
-						onRename={renameTemplate}
-					/>
+					{out ? (
+						<OutItemsList
+							out={out}
+							templates={templates}
+							draft={draft}
+							activeItemId={activeItemId}
+							playing={playingIds}
+							onActivate={handleSelectItem}
+							onToggleEnabled={(itemId, enabled) => patchItem(itemId, { enabled })}
+							onMove={moveItemInOut}
+							onTrigger={triggerItemOnOut}
+							onRemove={removeItemFromOut}
+						/>
+					) : (
+						<div className="ed-card">
+							<div className="ed-card__head">
+								<strong>На этом out&apos;е</strong>
+							</div>
+							<p className="ed-hint">Нет ни одного out&apos;а.</p>
+						</div>
+					)}
+
 					{draft && draft.kind === "layers" ? (
 						<LayerList
 							layers={draftLayers}
@@ -1411,39 +1852,54 @@ export function EditorApp() {
 							onAdd={addLayer}
 						/>
 					) : null}
+
 					{draft && draft.kind === "code" ? (
 						<div className="ed-card">
 							<div className="ed-card__head">
 								<strong>Код-анимация</strong>
 							</div>
 							<p className="ed-hint">
-								Слои недоступны: шаблон собирается из HTML/CSS/JS. Предпросмотр — в центре,
-								редакторы — справа.
+								Слои недоступны: анимация собирается из HTML/CSS/JS. Редакторы и
+								предпросмотр — справа, на холсте — плейсхолдер.
 							</p>
 						</div>
 					) : null}
+
+					<TemplateLibrary
+						templates={templates}
+						placedIds={placedIds}
+						activeTemplateId={editingTemplateId}
+						libraryId={libraryId}
+						draft={draft}
+						onSelect={selectLibrary}
+						onPlace={placeTemplate}
+						onCreate={createTemplate}
+						onDuplicate={duplicate}
+						onDelete={removeTemplate}
+						onRename={renameTemplate}
+					/>
 				</div>
 
-				{draft ? (
-					draft.kind === "layers" ? (
-						<EditorCanvas
-							template={draft}
-							data={data}
-							selectedLayerId={selectedLayerId}
-							onSelectLayer={setSelectedLayerId}
-							onLayerChange={updateLayer}
-						/>
-					) : (
-						<CodePreview template={draft} data={data} />
-					)
-				) : templatesLoaded ? (
-					<div className="ed-center">
-						<EmptyState onCreate={createTemplate} />
-					</div>
+				{out ? (
+					<EditorCanvas
+						out={out}
+						templates={templates}
+						draft={draft}
+						activeItemId={activeItemId}
+						selectedLayerId={selectedLayerId}
+						data={data}
+						onSelectItem={handleSelectItem}
+						onSelectLayer={setSelectedLayerId}
+						onLayerChange={updateLayer}
+						onItemChange={patchItem}
+					/>
 				) : (
 					<div className="ed-center">
 						<div className="ed-empty">
-							<p className="ed-hint">Загрузка шаблонов…</p>
+							<h2>Нет out&apos;а</h2>
+							<p className="ed-hint">
+								Создайте out во вкладке «notGT — Titles &amp; Outs».
+							</p>
 						</div>
 					</div>
 				)}
@@ -1466,27 +1922,68 @@ export function EditorApp() {
 											<strong>Инспектор</strong>
 										</div>
 										<p className="ed-hint">
-											Выберите слой на холсте или в списке слева, чтобы изменить его
-											свойства. Ниже — настройки всего шаблона.
+											Выберите слой на холсте или в списке слева. Ниже — размещение
+											анимации на out&apos;е и настройки шаблона.
 										</p>
 									</div>
 								)
 							) : (
-								<CodeEditors
-									template={draft}
-									onCode={(patch) =>
-										updateTemplate({ code: { ...(draft.code ?? { html: "", css: "", js: "" }), ...patch } })
-									}
-								/>
+								<>
+									<CodePreviewCard template={draft} data={data} />
+									<CodeEditors
+										template={draft}
+										onCode={(patch) =>
+											updateTemplate({
+												code: {
+													...(draft.code ?? { html: "", css: "", js: "" }),
+													...patch,
+												},
+											})
+										}
+									/>
+								</>
 							)}
+
+							{activeItem && out ? (
+								<PlacementInspector
+									out={out}
+									item={activeItem}
+									template={draft}
+									onPatch={(patch) => patchItem(activeItem.id, patch)}
+									onPlayback={(patch) => patchItemPlayback(activeItem.id, patch)}
+									onRemove={() => removeItemFromOut(activeItem.id)}
+									onFitOut={() => fitItemToOut(activeItem)}
+								/>
+							) : (
+								<div className="ed-card">
+									<div className="ed-card__head">
+										<strong>Размещение на out&apos;е</strong>
+									</div>
+									<p className="ed-hint">
+										Эта анимация ещё не размещена на выбранном out&apos;е.
+									</p>
+									<button
+										type="button"
+										onClick={() => placeTemplate(draft.id)}
+										disabled={!out}
+									>
+										Разместить на out&apos;е
+									</button>
+								</div>
+							)}
+
 							<TemplateSettings template={draft} onPatch={updateTemplate} />
 						</>
 					) : (
 						<div className="ed-card">
 							<div className="ed-card__head">
-								<strong>Настройки</strong>
+								<strong>Инспектор</strong>
 							</div>
-							<p className="ed-hint">Выберите или создайте анимацию.</p>
+							<p className="ed-hint">
+								{outsLoaded && templatesLoaded
+									? "Выберите или создайте анимацию."
+									: "Загрузка…"}
+							</p>
 						</div>
 					)}
 				</div>

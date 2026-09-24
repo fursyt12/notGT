@@ -47,6 +47,7 @@ const PANELS = [
 		expectText: ["Editor"],
 		expectCanvas: true,
 		clickPreview: true,
+		outSwitch: true,
 		shot: "panel-editor.png",
 	},
 ];
@@ -148,6 +149,81 @@ async function main() {
 					headers: { "content-type": "application/json" },
 					body: "{}",
 				});
+			}
+
+			if (panel.outSwitch) {
+				// The canvas must BE the selected out: switching `Out:` has to change
+				// what is drawn. This is the exact regression the operator reported.
+				const fixture = "e2e-switch";
+				await fetch(`${BASE}/api/outs/${fixture}`, { method: "DELETE" });
+				await fetch(`${BASE}/api/outs`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						id: fixture,
+						name: "E2E Switch",
+						width: 1280,
+						height: 720,
+					}),
+				});
+				await fetch(`${BASE}/api/outs/${fixture}/items`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ templateId: "code-sample" }),
+				});
+
+				await page.reload({ waitUntil: "networkidle2", timeout: 30_000 });
+				await page.waitForSelector("select.ed-out-select", { timeout: 15_000 });
+				await sleep(800);
+
+				const options = await page.$$eval("select.ed-out-select option", (els) =>
+					els.map((el) => (el.textContent ?? "").trim()),
+				);
+				check(
+					"editor.html: Out selector offers outs and no \"все out'ы\"",
+					options.length >= 2 && !options.some((o) => /все out/i.test(o)),
+					JSON.stringify(options),
+				);
+
+				const readCanvas = () =>
+					page.evaluate(() => {
+						const canvas = document.querySelector("canvas");
+						const data = canvas ? canvas.toDataURL() : "";
+						let hash = 0;
+						for (let i = 0; i < data.length; i++) {
+							hash = (hash * 31 + data.charCodeAt(i)) | 0;
+						}
+						// The toolbar renders the label and the value in separate
+						// elements, so collapse the whole text and slice from "Out:".
+						const text = (document.body.innerText ?? "").replace(/\s+/g, " ");
+						const at = text.indexOf("Out:");
+						const status = at >= 0 ? text.slice(at, at + 140) : "";
+						return { hash, status };
+					});
+
+				await page.select("select.ed-out-select", "main");
+				await sleep(900);
+				const beforeSwitch = await readCanvas();
+
+				await page.select("select.ed-out-select", fixture);
+				await sleep(900);
+				const afterSwitch = await readCanvas();
+
+				check(
+					"editor.html: switching Out actually changes the canvas",
+					beforeSwitch.hash !== afterSwitch.hash,
+					`main=${beforeSwitch.hash} switch=${afterSwitch.hash}`,
+				);
+				check(
+					"editor.html: canvas reports the newly selected out",
+					/E2E Switch/.test(afterSwitch.status) && afterSwitch.status !== beforeSwitch.status,
+					`"${beforeSwitch.status}" -> "${afterSwitch.status}"`,
+				);
+				await page.screenshot({
+					path: path.join(outDir, "editor-out-switch.png"),
+					fullPage: false,
+				});
+				await fetch(`${BASE}/api/outs/${fixture}`, { method: "DELETE" });
 			}
 
 			await page.screenshot({ path: path.join(outDir, panel.shot), fullPage: false });

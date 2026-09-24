@@ -197,6 +197,15 @@ body.editor-body {
 	background: transparent;
 }
 
+/* Compact live preview inside the right-hand inspector column. */
+.ed-code-preview--panel {
+	flex: none;
+	aspect-ratio: 16 / 9;
+	width: 100%;
+	padding: 0;
+	border-radius: var(--ng-radius);
+}
+
 .ed-code {
 	font-family: ui-monospace, Menlo, Consolas, monospace;
 	font-size: 12px;
@@ -331,6 +340,17 @@ body.editor-body {
 	opacity: 0.6;
 }
 
+/* Row checkboxes / tiny action buttons must not stretch with the form styles. */
+.ed-list-item input[type="checkbox"] {
+	flex: 0 0 auto;
+	width: auto;
+	min-width: 0;
+}
+
+.ed-list-item .ed-icon-btn {
+	white-space: nowrap;
+}
+
 .ed-list-item__name {
 	flex: 1;
 	min-width: 0;
@@ -375,6 +395,13 @@ body.editor-body {
 .ed-badge--code {
 	border-color: var(--ng-warn);
 	color: var(--ng-warn);
+}
+
+/* "сейчас играет" badge in the per-out item list. */
+.ed-badge--live {
+	border-color: rgba(74, 222, 128, 0.55);
+	color: var(--ng-ok);
+	background: rgba(74, 222, 128, 0.08);
 }
 
 .ed-inline-name {

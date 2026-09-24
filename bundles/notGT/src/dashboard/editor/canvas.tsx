@@ -1,14 +1,27 @@
 /**
- * notGT editor — the react-konva canvas.
+ * notGT editor — the react-konva canvas. The stage *is* the selected out.
  *
- * Layers are stored as percentages of the template's design box, so the whole
- * stage is rendered at `design * scale` and every pixel value is multiplied by
- * that scale; dragging / resizing converts straight back to percentages.
+ * The placement math mirrors `src/graphics/out.ts` exactly:
+ *   stage = out.width x out.height design px, scaled by `fit` to the panel;
+ *   an animation is a `template.width x template.height` box placed at
+ *   `left: item.x% of out.width`, `top: item.y% of out.height`, then scaled by
+ *   `item.scale` around its top-left corner. Layers are positioned in percent of
+ *   that animation box.
+ *
+ * Interaction model:
+ *   - the active animation has a draggable frame (and an explicit move handle)
+ *     that edits the placement (`item.x` / `item.y`), plus a corner handle that
+ *     edits `item.scale`;
+ *   - layers of the active animation can be selected, dragged (`layer.x/y`) and
+ *     transformed (`layer.width/height`);
+ *   - every other animation is dimmed and only responds to a click that makes
+ *     it active.
  */
 import type Konva from "konva";
 import { Fragment, useCallback, useEffect, useMemo, useRef } from "react";
 import {
 	Ellipse,
+	Group,
 	Image as KonvaImage,
 	Layer as KonvaLayer,
 	Line,
@@ -19,69 +32,147 @@ import {
 } from "react-konva";
 
 import { interpolate } from "../../shared/binding";
-import type { Layer, LayerStyle, TitleData, TitleTemplate } from "../../shared/types";
-import { resolveAssetUrl, resolveText, round, useElementSize, useHtmlImage } from "./ui";
+import type {
+	Layer,
+	LayerStyle,
+	Out,
+	OutItem,
+	TitleData,
+	TitleTemplate,
+} from "../../shared/types";
+import {
+	resolveAssetUrl,
+	resolveText,
+	round,
+	sortByZ,
+	useElementSize,
+	useHtmlImage,
+} from "./ui";
 
 type KonvaEvent<T extends Event> = Konva.KonvaEventObject<T>;
 
+/** Screen-px size of the placement handles (constant, never scaled). */
+const HANDLE = 18;
+
 export interface EditorCanvasProps {
-	template: TitleTemplate;
-	data: TitleData;
+	out: Out;
+	/** Saved templates (used for every animation except the active draft). */
+	templates: TitleTemplate[];
+	/** Unsaved working copy of the active animation's template. */
+	draft: TitleTemplate | null;
+	activeItemId: string | null;
 	selectedLayerId: string | null;
-	onSelectLayer: (id: string | null) => void;
-	onLayerChange: (id: string, patch: Partial<Layer>) => void;
+	data: TitleData;
+	onSelectItem: (itemId: string | null) => void;
+	onSelectLayer: (layerId: string | null) => void;
+	onLayerChange: (layerId: string, patch: Partial<Layer>) => void;
+	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
+}
+
+interface Geometry {
+	item: OutItem;
+	template: TitleTemplate;
+	scale: number;
+	boxX: number;
+	boxY: number;
+	boxW: number;
+	boxH: number;
+	k: number;
 }
 
 export function EditorCanvas({
-	template,
-	data,
+	out,
+	templates,
+	draft,
+	activeItemId,
 	selectedLayerId,
+	data,
+	onSelectItem,
 	onSelectLayer,
 	onLayerChange,
+	onItemChange,
 }: EditorCanvasProps) {
 	const { ref, width, height } = useElementSize<HTMLDivElement>();
 
-	const designW = template.width > 0 ? template.width : 1920;
-	const designH = template.height > 0 ? template.height : 1080;
+	const designW = out.width > 0 ? out.width : 1920;
+	const designH = out.height > 0 ? out.height : 1080;
 	const availableW = Math.max(0, width - 24);
 	const availableH = Math.max(0, height - 24);
-	const fit = Math.min(availableW / designW, availableH / designH);
-	const scale = Number.isFinite(fit) && fit > 0 ? fit : 0;
+	const fitRaw = Math.min(availableW / designW, availableH / designH);
+	const fit = Number.isFinite(fitRaw) && fitRaw > 0 ? fitRaw : 0;
 
-	const stageW = Math.max(1, Math.round(designW * scale));
-	const stageH = Math.max(1, Math.round(designH * scale));
-	const kx = stageW / designW;
-	const ky = stageH / designH;
+	const stageW = Math.max(1, Math.round(designW * fit));
+	const stageH = Math.max(1, Math.round(designH * fit));
 
+	const items = useMemo(
+		() => [...(out.items ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+		[out.items],
+	);
+
+	const byId = useMemo(() => {
+		const map = new Map<string, TitleTemplate>();
+		for (const template of templates) map.set(template.id, template);
+		if (draft) map.set(draft.id, draft);
+		return map;
+	}, [templates, draft]);
+
+	const geoms = useMemo<Geometry[]>(() => {
+		const list: Geometry[] = [];
+		for (const item of items) {
+			const template = byId.get(item.templateId);
+			if (!template) continue;
+			const scale = item.scale && item.scale > 0 ? item.scale : 1;
+			const k = scale * fit;
+			list.push({
+				item,
+				template,
+				scale,
+				boxX: ((item.x ?? 0) / 100) * stageW,
+				boxY: ((item.y ?? 0) / 100) * stageH,
+				boxW: Math.max(1, template.width * k),
+				boxH: Math.max(1, template.height * k),
+				k,
+			});
+		}
+		return list;
+	}, [items, byId, fit, stageW, stageH]);
+
+	const activeGeom = geoms.find((g) => g.item.id === activeItemId) ?? null;
+
+	// --- node refs (only the active animation's layers matter for the transformer)
 	const nodeRefs = useRef(new Map<string, Konva.Node>());
 	const refSetters = useRef(new Map<string, (node: Konva.Node | null) => void>());
 	const transformerRef = useRef<Konva.Transformer | null>(null);
 
-	const nodeRefFor = useCallback((id: string) => {
-		let setter = refSetters.current.get(id);
+	const registerRef = useCallback((itemId: string, layerId: string) => {
+		const key = `${itemId}::${layerId}`;
+		let setter = refSetters.current.get(key);
 		if (!setter) {
 			setter = (node: Konva.Node | null) => {
-				if (node) nodeRefs.current.set(id, node);
-				else nodeRefs.current.delete(id);
+				if (node) nodeRefs.current.set(key, node);
+				else nodeRefs.current.delete(key);
 			};
-			refSetters.current.set(id, setter);
+			refSetters.current.set(key, setter);
 		}
 		return setter;
 	}, []);
 
-	const layers = useMemo(
-		() => [...(template.layers ?? [])].sort((a, b) => (a.z ?? 0) - (b.z ?? 0)),
-		[template.layers],
-	);
+	const selectedLayer =
+		activeGeom && activeGeom.template.kind === "layers"
+			? (activeGeom.template.layers ?? []).find((layer) => layer.id === selectedLayerId) ?? null
+			: null;
 
 	useEffect(() => {
 		const transformer = transformerRef.current;
 		if (!transformer) return;
-		const node = selectedLayerId ? nodeRefs.current.get(selectedLayerId) : undefined;
+		const key =
+			activeItemId && selectedLayerId ? `${activeItemId}::${selectedLayerId}` : "";
+		const node = key ? nodeRefs.current.get(key) : undefined;
 		transformer.nodes(node ? [node] : []);
 		transformer.getLayer()?.batchDraw();
-	}, [selectedLayerId, layers, scale]);
+	}, [activeItemId, selectedLayerId, geoms, fit]);
 
+	// 5% grid + centre crosshair.
 	const verticals = useMemo(() => {
 		const out: number[] = [];
 		for (let percent = 5; percent < 100; percent += 5) out.push((percent / 100) * stageW);
@@ -93,32 +184,24 @@ export function EditorCanvas({
 		return out;
 	}, [stageH]);
 
-	const selectedLayer = layers.find((layer) => layer.id === selectedLayerId) ?? null;
+	const stageSummary = `${designW}×${designH} · анимаций ${geoms.length}`;
 
 	return (
 		<div className="ed-center">
 			<div className="ed-canvas-wrap" ref={ref}>
-				{scale > 0 ? (
-					<div
-						className="ed-canvas-stage"
-						style={{ width: stageW, height: stageH }}
-					>
+				{fit > 0 ? (
+					<div className="ed-canvas-stage" style={{ width: stageW, height: stageH }}>
 						<Stage
 							width={stageW}
 							height={stageH}
 							onMouseDown={(event: KonvaEvent<MouseEvent>) => {
-								if (event.target === event.target.getStage()) onSelectLayer(null);
+								if (event.target === event.target.getStage()) {
+									onSelectItem(null);
+									onSelectLayer(null);
+								}
 							}}
 						>
 							<KonvaLayer>
-								<Rect
-									x={0}
-									y={0}
-									width={stageW}
-									height={stageH}
-									fill="#0d141c"
-									listening={false}
-								/>
 								{verticals.map((x) => (
 									<Line
 										key={`v${x}`}
@@ -145,6 +228,7 @@ export function EditorCanvas({
 										listening={false}
 									/>
 								))}
+								{/* 5% safe area + centre marker */}
 								<Rect
 									x={stageW * 0.05}
 									y={stageH * 0.05}
@@ -165,25 +249,60 @@ export function EditorCanvas({
 									listening={false}
 								/>
 
-								{layers.map((layer) => (
-									<LayerNode
-										key={layer.id}
-										layer={layer}
-										data={data}
+								{/* Click-catchers for the dimmed animations. They are drawn
+								    *below* every animation's content so they can never steal a
+								    drag from the active one; the active box is instead clickable
+								    through its own frame. */}
+								{geoms
+									.filter((geom) => geom.item.id !== activeItemId)
+									.map((geom) => (
+										<Rect
+											key={`catcher:${geom.item.id}`}
+											x={geom.boxX}
+											y={geom.boxY}
+											width={geom.boxW}
+											height={geom.boxH}
+											fill="rgba(0,0,0,0.001)"
+											onMouseDown={(event: KonvaEvent<MouseEvent>) => {
+												event.cancelBubble = true;
+												onSelectItem(geom.item.id);
+												onSelectLayer(null);
+											}}
+										/>
+									))}
+
+								{geoms.map((geom) => (
+									<AnimatedItem
+										key={geom.item.id}
+										geom={geom}
 										stageW={stageW}
 										stageH={stageH}
-										k={kx}
-										ky={ky}
-										onSelect={() => onSelectLayer(layer.id)}
-										onChange={(patch) => onLayerChange(layer.id, patch)}
-										registerRef={nodeRefFor(layer.id)}
+										active={geom.item.id === activeItemId}
+										selectedLayerId={selectedLayerId}
+										data={data}
+										onSelectItem={onSelectItem}
+										onSelectLayer={onSelectLayer}
+										onLayerChange={onLayerChange}
+										onItemChange={onItemChange}
+										registerRef={registerRef}
 									/>
 								))}
 
+								{/* Handles are drawn last so they stay usable even when the
+								    active animation sits below a later one. */}
+								{activeGeom ? (
+									<PlacementHandles
+										geom={activeGeom}
+										stageW={stageW}
+										stageH={stageH}
+										onItemChange={onItemChange}
+									/>
+								) : null}
+
 								<Transformer
 									ref={transformerRef}
-									rotateEnabled={!selectedLayer?.locked}
-									resizeEnabled={!selectedLayer?.locked}
+									rotateEnabled={Boolean(selectedLayer && !selectedLayer.locked)}
+									resizeEnabled={Boolean(selectedLayer && !selectedLayer.locked)}
 									keepRatio={false}
 									anchorSize={9}
 									anchorStroke="#4aa8ff"
@@ -206,21 +325,244 @@ export function EditorCanvas({
 
 			<div className="ed-canvas-status">
 				<span>
-					Холст {designW}×{designH}
+					Out: {out.name} ({stageSummary})
 				</span>
-				<span>Масштаб {Math.round(scale * 100)}%</span>
-				<span>Слоёв: {layers.length}</span>
-				{selectedLayer ? (
+				<span>Масштаб {Math.round(fit * 100)}%</span>
+				{activeGeom ? (
 					<span className="ed-ok">
-						{selectedLayer.name || selectedLayer.id}: x {round(selectedLayer.x)}% · y{" "}
-						{round(selectedLayer.y)}%
+						{activeGeom.template.name}: x {round(activeGeom.item.x)}% · y{" "}
+						{round(activeGeom.item.y)}% · scale {round(activeGeom.scale, 3)}
 					</span>
 				) : (
-					<span>Клик — выбрать слой · стрелки — сдвиг · Shift+стрелки — крупный шаг</span>
+					<span>
+						Клик по анимации — выбрать · рамка/маркер — переместить · угол — масштаб
+					</span>
 				)}
 			</div>
 		</div>
 	);
+}
+
+// -------------------------------------------------------------- one animation
+
+function AnimatedItem({
+	geom,
+	stageW,
+	stageH,
+	active,
+	selectedLayerId,
+	data,
+	onSelectItem,
+	onSelectLayer,
+	onLayerChange,
+	onItemChange,
+	registerRef,
+}: {
+	geom: Geometry;
+	stageW: number;
+	stageH: number;
+	active: boolean;
+	selectedLayerId: string | null;
+	data: TitleData;
+	onSelectItem: (itemId: string | null) => void;
+	onSelectLayer: (layerId: string | null) => void;
+	onLayerChange: (layerId: string, patch: Partial<Layer>) => void;
+	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
+	registerRef: (itemId: string, layerId: string) => (node: Konva.Node | null) => void;
+}) {
+	const { item, template, boxX, boxY, boxW, boxH, k } = geom;
+	const interactive = active && item.enabled !== false;
+	const dim = active ? 1 : item.enabled === false ? 0.22 : 0.45;
+
+	const moveTo = (node: Konva.Node) => {
+		onItemChange(item.id, {
+			x: round((item.x ?? 0) + (stageW > 0 ? (node.x() / stageW) * 100 : 0)),
+			y: round((item.y ?? 0) + (stageH > 0 ? (node.y() / stageH) * 100 : 0)),
+		});
+		node.position({ x: 0, y: 0 });
+	};
+
+	return (
+		<Group x={boxX} y={boxY} opacity={dim}>
+			{/* Placement frame: transparent hit area behind the layers, so dragging
+			    an empty part of the box moves the whole animation. */}
+			{active ? (
+				<Rect
+					width={boxW}
+					height={boxH}
+					fill="rgba(0,0,0,0.001)"
+					stroke="rgba(74,168,255,0.9)"
+					strokeWidth={1}
+					dash={[5, 4]}
+					hitStrokeWidth={14}
+					draggable
+					onMouseDown={() => {
+						onSelectItem(item.id);
+						onSelectLayer(null);
+					}}
+					onDragEnd={(event: KonvaEvent<DragEvent>) => moveTo(event.target)}
+				/>
+			) : null}
+
+			{template.kind === "code" ? (
+				<CodePlaceholder template={template} boxW={boxW} boxH={boxH} />
+			) : (
+				sortByZ(template.layers ?? []).map((layer) => (
+					<LayerNode
+						key={layer.id}
+						layer={layer}
+						data={data}
+						stageW={template.width * k}
+						stageH={template.height * k}
+						k={k}
+						ky={k}
+						interactive={interactive}
+						listening={active}
+						onSelect={() => onSelectLayer(layer.id)}
+						onChange={(patch) => onLayerChange(layer.id, patch)}
+						registerRef={registerRef(item.id, layer.id)}
+					/>
+				))
+			)}
+		</Group>
+	);
+}
+
+function CodePlaceholder({
+	template,
+	boxW,
+	boxH,
+}: {
+	template: TitleTemplate;
+	boxW: number;
+	boxH: number;
+}) {
+	const label = `${template.name} — код ${template.width}×${template.height}`;
+	return (
+		<Fragment>
+			<Rect
+				width={boxW}
+				height={boxH}
+				fill="rgba(255,190,90,0.06)"
+				stroke="rgba(255,190,90,0.65)"
+				strokeWidth={1}
+				dash={[8, 6]}
+				listening={false}
+			/>
+			<Text
+				text={label}
+				x={8}
+				y={8}
+				width={Math.max(10, boxW - 16)}
+				fontSize={12}
+				fill="rgba(255,200,120,0.95)"
+				listening={false}
+			/>
+		</Fragment>
+	);
+}
+
+// --------------------------------------------------------------- move + scale
+
+function PlacementHandles({
+	geom,
+	stageW,
+	stageH,
+	onItemChange,
+}: {
+	geom: Geometry;
+	stageW: number;
+	stageH: number;
+	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
+}) {
+	const { item, template, boxW, boxH, boxX, boxY } = geom;
+
+	return (
+		<Group x={boxX} y={boxY}>
+			{/* Move handle (top-left). */}
+			<Group
+				x={0}
+				y={0}
+				draggable
+				onDragEnd={(event: KonvaEvent<DragEvent>) => {
+					const node = event.target;
+					onItemChange(item.id, {
+						x: round((item.x ?? 0) + (stageW > 0 ? (node.x() / stageW) * 100 : 0)),
+						y: round((item.y ?? 0) + (stageH > 0 ? (node.y() / stageH) * 100 : 0)),
+					});
+					node.position({ x: 0, y: 0 });
+				}}
+			>
+				<Rect
+					width={HANDLE}
+					height={HANDLE}
+					fill="rgba(74,168,255,0.95)"
+					cornerRadius={3}
+					stroke="#0d141c"
+					strokeWidth={1}
+				/>
+				<Text
+					text="✥"
+					x={2}
+					y={2}
+					width={HANDLE - 4}
+					height={HANDLE - 4}
+					align="center"
+					verticalAlign="middle"
+					fontSize={11}
+					fill="#0d141c"
+					listening={false}
+				/>
+			</Group>
+
+			{/* Scale handle (bottom-right). */}
+			<Group
+				x={Math.max(0, boxW - HANDLE)}
+				y={Math.max(0, boxH - HANDLE)}
+				draggable
+				onDragEnd={(event: KonvaEvent<DragEvent>) => {
+					const node = event.target;
+					const fit = fitOf(geom);
+					const nextW = Math.max(8, node.x() + HANDLE);
+					const nextScale =
+						template.width > 0 ? nextW / (template.width * fit) : geom.scale;
+					const clamped = Math.min(20, Math.max(0.02, nextScale));
+					onItemChange(item.id, { scale: round(clamped, 4) });
+					node.position({
+						x: Math.max(0, template.width * clamped * fit - HANDLE),
+						y: Math.max(0, template.height * clamped * fit - HANDLE),
+					});
+				}}
+			>
+				<Rect
+					width={HANDLE}
+					height={HANDLE}
+					fill="rgba(255,209,102,0.95)"
+					cornerRadius={3}
+					stroke="#0d141c"
+					strokeWidth={1}
+				/>
+				<Text
+					text="⤡"
+					x={1}
+					y={1}
+					width={HANDLE - 2}
+					height={HANDLE - 2}
+					align="center"
+					verticalAlign="middle"
+					fontSize={12}
+					fill="#0d141c"
+					listening={false}
+				/>
+			</Group>
+		</Group>
+	);
+}
+
+/** `fit` back out of the geometry (boxW = template.width * scale * fit). */
+function fitOf(geom: Geometry): number {
+	if (geom.template.width > 0 && geom.scale > 0) return geom.k / geom.scale;
+	return 1;
 }
 
 // --------------------------------------------------------------- layer nodes
@@ -232,6 +574,10 @@ interface LayerNodeProps {
 	stageH: number;
 	k: number;
 	ky: number;
+	/** Belongs to the active placement and is neither locked nor hidden. */
+	interactive: boolean;
+	/** Belongs to the active placement (false = click-select only). */
+	listening: boolean;
 	onSelect: () => void;
 	onChange: (patch: Partial<Layer>) => void;
 	registerRef: (node: Konva.Node | null) => void;
@@ -260,6 +606,8 @@ function LayerNode({
 	stageH,
 	k,
 	ky,
+	interactive,
+	listening,
 	onSelect,
 	onChange,
 	registerRef,
@@ -286,7 +634,7 @@ function LayerNode({
 
 	const opacity = layer.hidden ? 0.25 : style.opacity ?? 1;
 	const rotation = style.rotation ?? 0;
-	const interactive = !layer.locked && !layer.hidden;
+	const draggable = interactive && !layer.locked && !layer.hidden;
 	const shadowColor = style.shadowColor ? style.shadowColor : undefined;
 
 	const toPctX = (px: number) => (stageW > 0 ? (px / stageW) * 100 : 0);
@@ -334,11 +682,11 @@ function LayerNode({
 		offsetY: originY,
 		opacity,
 		rotation,
-		draggable: interactive,
-		listening: !layer.hidden,
-		onMouseDown: onSelect,
-		onTouchStart: onSelect,
-		onDragStart: onSelect,
+		draggable,
+		listening,
+		onMouseDown: listening ? onSelect : undefined,
+		onTouchStart: listening ? onSelect : undefined,
+		onDragStart: listening ? onSelect : undefined,
 		onDragEnd: handleDragEnd,
 		onTransformEnd: handleTransformEnd,
 	};
