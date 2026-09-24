@@ -403,12 +403,35 @@ function updateDebug(out: Out | undefined, desired: Instance[]): void {
 	if (!debug) return;
 	debugEl.style.display = "block";
 	const playing = out ? (runtimeRep.value?.playing?.[out.id] ?? []) : [];
-	debugEl.textContent = [
-		`out: ${out ? out.id : `(none${explicitOut ? `: ${explicitOut}` : ""})`}`,
+	const lines = [
+		`out: ${out ? out.id : `НЕ НАЙДЕН (${explicitOut ?? "?"})`}`,
 		`revision: ${runtimeRep.value?.revision ?? 0}`,
 		`playing: ${playing.length ? playing.join(", ") : "-"}`,
 		`slots: ${desired.map((d) => d.key).join(", ") || "-"}`,
-	].join("\n");
+	];
+
+	// Point at the likely cause instead of leaving an empty transparent frame.
+	if (!out) {
+		lines.push("", "→ такого out'а нет. Проверьте ?out= в URL источника.");
+	} else if (desired.length === 0) {
+		lines.push("", "→ на этом out'е сейчас ничего не показывается.");
+		lines.push("  Покажите анимацию (Показать в редакторе) или включите");
+		lines.push("  «показать» / autoStart у размещения в панели Control.");
+	}
+
+	// Video layers fail silently on air, so report them explicitly.
+	const videos = [...document.querySelectorAll("video.notgt-layer")] as HTMLVideoElement[];
+	if (videos.length > 0) {
+		const broken = videos.filter((v) => v.error || v.readyState === 0);
+		lines.push(
+			`video: ${videos.length} шт., проблемных ${broken.length}` +
+				(broken.length
+					? ` — код ${broken.map((v) => v.error?.code ?? "нет данных").join(", ")}`
+					: ` (${videos.map((v) => v.videoWidth).join("x")})`),
+		);
+	}
+
+	debugEl.textContent = lines.join("\n");
 }
 
 // --------------------------------------------------------------------- wiring
