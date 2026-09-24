@@ -7,7 +7,7 @@
  *
  * Paths are dot separated and may contain array indexes: `panel.items[0].title`.
  */
-import type { TitleData, TitleTemplate } from "./types";
+import type { TitleData, TitleTemplate, VariableSelection } from "./types";
 
 export function parsePath(path: string): Array<string | number> {
 	const out: Array<string | number> = [];
@@ -20,12 +20,55 @@ export function parsePath(path: string): Array<string | number> {
 	return out;
 }
 
-export function getByPath(data: unknown, path: string): unknown {
+/**
+ * Resolves `path` against `data`.
+ *
+ * Arrays are "pick one" collections: when the walk lands on an array and the
+ * next token is not an explicit numeric index, the element chosen in
+ * `selection` (default 0) is used. So with
+ * `{ speakers: [{name:"A"},{name:"B"}] }` and `selection.speakers = 1`, both
+ * `speakers.name` and `speakers` resolve to `B`. An explicit index
+ * (`speakers[0].name`) always wins.
+ */
+export function getByPath(
+	data: unknown,
+	path: string,
+	selection: VariableSelection = {},
+): unknown {
+	const segments = parsePath(path);
 	let cur: unknown = data;
-	for (const seg of parsePath(path)) {
-		if (cur === null || cur === undefined) return undefined;
-		if (typeof cur !== "object") return undefined;
-		cur = (cur as Record<string | number, unknown>)[seg as never];
+	let key = "";
+	let i = 0;
+
+	while (i < segments.length) {
+		if (Array.isArray(cur)) {
+			const seg = segments[i]!;
+			let index: number;
+			if (typeof seg === "number") {
+				index = seg;
+				i++;
+			} else {
+				index = selection[key] ?? 0;
+			}
+			key = `${key}[${index}]`;
+			cur = cur[index];
+			continue; // the element itself may be an array again
+		}
+		if (typeof segments[i] === "number") return undefined; // index on a non-array
+		if (cur === null || cur === undefined || typeof cur !== "object") {
+			return undefined;
+		}
+		const seg = String(segments[i]!);
+		i++;
+		key = key ? `${key}.${seg}` : seg;
+		cur = (cur as Record<string, unknown>)[seg];
+	}
+
+	// A path may end exactly on an array: yield the selected element.
+	while (Array.isArray(cur)) {
+		const index = selection[key] ?? 0;
+		key = `${key}[${index}]`;
+		cur = cur[index];
 	}
 	return cur;
 }
@@ -78,14 +121,32 @@ function stringify(value: unknown): string {
 
 const TOKEN = /\{\{\s*([^}]+?)\s*\}\}/g;
 
+/**
+ * Like `getByPath`, but never auto-indexes arrays: returns the container
+ * exactly as stored. Use this when you need to manipulate a collection.
+ */
+export function getByPathRaw(data: unknown, path: string): unknown {
+	let cur: unknown = data;
+	for (const seg of parsePath(path)) {
+		if (cur === null || cur === undefined) return undefined;
+		if (typeof cur !== "object") return undefined;
+		cur = (cur as Record<string | number, unknown>)[seg as never];
+	}
+	return cur;
+}
+
 /** Replaces every `{{path}}` / `{{path ?? fallback}}` token in `input`. */
-export function interpolate(input: string, data: TitleData): string {
+export function interpolate(
+	input: string,
+	data: TitleData,
+	selection: VariableSelection = {},
+): string {
 	if (!input) return "";
 	return input.replace(TOKEN, (_full, expr: string) => {
 		const [rawPath, ...fallbackParts] = expr.split("??");
 		const path = (rawPath ?? "").trim();
 		const fallback = fallbackParts.join("??").trim();
-		const value = getByPath(data, path);
+		const value = getByPath(data, path, selection);
 		const str = stringify(value);
 		if (str === "" && fallback) return fallback;
 		return str;
@@ -117,6 +178,35 @@ export function collectBindingPaths(template: TitleTemplate): string[] {
 		for (const p of bindingPathsIn(template.code.js)) paths.add(p);
 	}
 	return [...paths].sort();
+}
+
+/**
+ * Returns a copy of `data` where every array is replaced by its selected
+ * element, recursively. Used for code-authored animations, whose iframe should
+ * see "the current speaker" directly rather than the whole collection.
+ * Selection keys follow the same convention as `getByPath`.
+ */
+export function materializeSelection(
+	value: unknown,
+	selection: VariableSelection,
+	prefix = "",
+): unknown {
+	if (Array.isArray(value)) {
+		const index = selection[prefix] ?? 0;
+		return materializeSelection(value[index], selection, `${prefix}[${index}]`);
+	}
+	if (value !== null && typeof value === "object") {
+		const out: Record<string, unknown> = {};
+		for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+			out[key] = materializeSelection(
+				child,
+				selection,
+				prefix ? `${prefix}.${key}` : key,
+			);
+		}
+		return out;
+	}
+	return value;
 }
 
 /** Flattens a data object into `{ path, value }` rows for form UIs. */

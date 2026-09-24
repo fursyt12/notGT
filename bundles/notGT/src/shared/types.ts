@@ -19,6 +19,13 @@ export const REPLICANTS = {
 	activeTitle: "activeTitle",
 	/** Derived, volatile playback state. Not persistent. */
 	runtime: "runtime",
+	/**
+	 * Chosen element per array-valued variable, e.g. `{ speakers: 1 }`.
+	 * Arrays in the variable store behave as "pick one" collections: a binding
+	 * that walks through an array resolves against the selected element (or
+	 * element 0 when nothing is selected).
+	 */
+	selection: "selection",
 	/** Bookkeeping (first-run seeding, schema version). Persistent. */
 	meta: "meta",
 } as const;
@@ -186,6 +193,9 @@ export interface Out {
 
 export type TitleData = Record<string, unknown>;
 
+/** arrayPath -> chosen element index. */
+export type VariableSelection = Record<string, number>;
+
 export interface ActiveTitleState {
 	templateId: string | null;
 	visible: boolean;
@@ -222,6 +232,8 @@ export interface PublicState {
 	activeOutId: string | null;
 	playing: Record<string, string[]>;
 	revision: number;
+	/** arrayPath -> chosen element index. */
+	selection: VariableSelection;
 	outs?: Array<{ id: string; name: string; width: number; height: number; url: string }>;
 	templates?: Array<{ id: string; name: string; kind: TemplateKind }>;
 }

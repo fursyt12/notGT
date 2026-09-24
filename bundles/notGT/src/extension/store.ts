@@ -22,6 +22,7 @@ import {
 	type RuntimeState,
 	type TitleData,
 	type TitleTemplate,
+	type VariableSelection,
 } from "../shared/types";
 export interface BundleConfig {
 	apiToken?: string;
@@ -41,6 +42,7 @@ export interface Store {
 	readonly titleData: Rep<TitleData>;
 	readonly activeTitle: Rep<ActiveTitleState>;
 	readonly runtime: Rep<RuntimeState>;
+	readonly selection: Rep<VariableSelection>;
 	readonly meta: Rep<MetaState>;
 
 	listTemplates(): TitleTemplate[];
@@ -68,6 +70,10 @@ export interface Store {
 	setData(patch: TitleData, mode: "merge" | "replace"): TitleData;
 	deleteData(path: string): TitleData;
 	readPath(path: string): unknown;
+
+	readSelection(): VariableSelection;
+	setSelection(patch: VariableSelection): VariableSelection;
+	clearSelection(path: string): VariableSelection;
 
 	show(
 		templateId: string,
@@ -119,6 +125,11 @@ export function createStore(nodecg: ServerAPI): Store {
 		defaultValue: { playing: {}, triggers: {}, revision: 0 },
 		persistent: false,
 	});
+	const selection = nodecg.Replicant<VariableSelection>(
+		REPLICANTS.selection,
+		BUNDLE_NAME,
+		{ defaultValue: {}, persistent: true },
+	);
 	const meta = nodecg.Replicant<MetaState>(REPLICANTS.meta, BUNDLE_NAME, {
 		defaultValue: { initialized: false, schemaVersion: 1 },
 		persistent: true,
@@ -295,7 +306,26 @@ export function createStore(nodecg: ServerAPI): Store {
 		return next;
 	}
 	function readPath(path: string): unknown {
-		return getByPath(readData(), path);
+		return getByPath(readData(), path, readSelection());
+	}
+
+	function readSelection(): VariableSelection {
+		return selection.value ?? {};
+	}
+	function setSelection(patch: VariableSelection): VariableSelection {
+		const next: VariableSelection = { ...readSelection() };
+		for (const [path, index] of Object.entries(patch ?? {})) {
+			const value = Number(index);
+			if (Number.isFinite(value) && value >= 0) next[path] = Math.floor(value);
+		}
+		selection.value = next;
+		return next;
+	}
+	function clearSelection(path: string): VariableSelection {
+		const next: VariableSelection = { ...readSelection() };
+		delete next[path];
+		selection.value = next;
+		return next;
 	}
 
 	function show(
@@ -374,6 +404,7 @@ export function createStore(nodecg: ServerAPI): Store {
 		titleData,
 		activeTitle,
 		runtime,
+		selection,
 		meta,
 		listTemplates,
 		getTemplate,
@@ -396,6 +427,9 @@ export function createStore(nodecg: ServerAPI): Store {
 		setData,
 		deleteData,
 		readPath,
+		readSelection,
+		setSelection,
+		clearSelection,
 		show,
 		hide,
 		toggle,

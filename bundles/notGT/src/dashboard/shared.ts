@@ -5,6 +5,7 @@ import {
 	coerce,
 	deleteByPath,
 	flattenData,
+	getByPathRaw,
 	setByPath,
 } from "../shared/binding";
 import { getNodecg, type ClientReplicant } from "../shared/client";
@@ -25,6 +26,7 @@ import {
 	type RuntimeState,
 	type TitleData,
 	type TitleTemplate,
+	type VariableSelection,
 	defaultPlayback,
 	defaultTransition,
 	newId,
@@ -39,6 +41,7 @@ export interface Db {
 	titleData: ClientReplicant<TitleData>;
 	activeTitle: ClientReplicant<ActiveTitleState>;
 	runtime: ClientReplicant<RuntimeState>;
+	selection: ClientReplicant<VariableSelection>;
 }
 
 let db: Db | undefined;
@@ -78,6 +81,11 @@ export function getDb(): Db {
 			BUNDLE_NAME,
 			{ defaultValue: { playing: {}, triggers: {}, revision: 0 } },
 		) as ClientReplicant<RuntimeState>,
+		selection: nodecg.Replicant<VariableSelection>(
+			REPLICANTS.selection,
+			BUNDLE_NAME,
+			{ defaultValue: {} },
+		) as ClientReplicant<VariableSelection>,
 	};
 	return db;
 }
@@ -319,6 +327,96 @@ export function triggerTemplate(templateId: string, outId?: string | null): void
 	void getNodecg().sendMessage(MESSAGES.trigger, { templateId, outId: outId ?? null });
 }
 
+// ---------------------------------------------------------------- selection
+
+export function readSelection(): VariableSelection {
+	return getDb().selection.value ?? {};
+}
+
+/** Chooses which element of an array-valued variable is "the current" one. */
+export function setSelection(path: string, index: number): void {
+	getDb().selection.value = { ...readSelection(), [path]: Math.max(0, Math.floor(index)) };
+}
+
+export function clearSelection(path: string): void {
+	const next = { ...readSelection() };
+	delete next[path];
+	getDb().selection.value = next;
+}
+
+/** The stored array at `path` (never auto-indexed). */
+export function readArray(path: string): unknown[] {
+	const raw = getByPathRaw(readData(), path);
+	return Array.isArray(raw) ? raw : [];
+}
+
+function writeArray(path: string, list: unknown[]): void {
+	const next = clone(readData());
+	setByPath(next, path, list);
+	getDb().titleData.value = next;
+	// Keep the chosen index inside the new bounds.
+	const current = readSelection()[path];
+	if (current !== undefined) {
+		if (list.length === 0) clearSelection(path);
+		else if (current > list.length - 1) setSelection(path, list.length - 1);
+	}
+}
+
+export function setArrayItem(path: string, index: number, value: unknown): void {
+	const list = [...readArray(path)];
+	if (index < 0 || index >= list.length) return;
+	list[index] = value;
+	writeArray(path, list);
+}
+
+/** Appends a value; defaults to a copy of the last element (or an empty object). */
+export function appendArrayItem(path: string, value?: unknown): number {
+	const list = [...readArray(path)];
+	const last = list[list.length - 1];
+	const next =
+		value !== undefined
+			? value
+			: last !== undefined && last !== null && typeof last === "object"
+				? clone(last)
+				: "";
+	list.push(next);
+	writeArray(path, list);
+	return list.length - 1;
+}
+
+export function duplicateArrayItem(path: string, index: number): void {
+	const list = [...readArray(path)];
+	if (index < 0 || index >= list.length) return;
+	list.splice(index + 1, 0, clone(list[index]));
+	writeArray(path, list);
+}
+
+export function removeArrayItem(path: string, index: number): void {
+	const list = [...readArray(path)];
+	if (index < 0 || index >= list.length) return;
+	list.splice(index, 1);
+	writeArray(path, list);
+}
+
+export function moveArrayItem(path: string, index: number, delta: number): void {
+	const list = [...readArray(path)];
+	const target = index + delta;
+	if (index < 0 || index >= list.length || target < 0 || target >= list.length) return;
+	const [moved] = list.splice(index, 1);
+	list.splice(target, 0, moved);
+	writeArray(path, list);
+	if (readSelection()[path] === index) setSelection(path, target);
+	else if (readSelection()[path] === target) setSelection(path, index);
+}
+
+/** Creates an array variable from a scalar (or from nothing). */
+export function makeArray(path: string, seed: unknown = {}): void {
+	if (readArray(path).length > 0) return;
+	const existing = getByPathRaw(readData(), path);
+	writeArray(path, [existing !== undefined ? existing : seed]);
+	setSelection(path, 0);
+}
+
 // -------------------------------------------------------------------- hooks
 
 export function useReplicantValue<T>(
@@ -362,6 +460,7 @@ const EMPTY_ACTIVE: ActiveTitleState = {
 	updatedAt: 0,
 };
 const EMPTY_RUNTIME: RuntimeState = { playing: {}, triggers: {}, revision: 0 };
+const EMPTY_SELECTION: VariableSelection = {};
 
 export function useTemplates(): TitleTemplate[] {
 	return useReplicantValue(() => getDb().templates, EMPTY_TEMPLATES);
@@ -377,6 +476,9 @@ export function useActiveTitle(): ActiveTitleState {
 }
 export function useRuntime(): RuntimeState {
 	return useReplicantValue(() => getDb().runtime, EMPTY_RUNTIME);
+}
+export function useSelection(): VariableSelection {
+	return useReplicantValue(() => getDb().selection, EMPTY_SELECTION);
 }
 
 /** Re-renders the caller whenever any notGT replicant changes. */

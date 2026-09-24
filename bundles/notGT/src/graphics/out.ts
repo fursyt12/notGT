@@ -1,4 +1,9 @@
-import { clone, flattenData, setByPath } from "../shared/binding";
+import {
+	clone,
+	flattenData,
+	materializeSelection,
+	setByPath,
+} from "../shared/binding";
 import {
 	getNodecg,
 	waitForReplicants,
@@ -12,6 +17,7 @@ import {
 	type TitleData,
 	type TitleTemplate,
 	type ActiveTitleState,
+	type VariableSelection,
 } from "../shared/types";
 import {
 	buildCodeDocument,
@@ -86,6 +92,11 @@ const runtimeRep = nodecg.Replicant<RuntimeState>(
 	BUNDLE_NAME,
 	{ defaultValue: { playing: {}, triggers: {}, revision: 0 } },
 ) as ClientReplicant<RuntimeState>;
+const selectionRep = nodecg.Replicant<VariableSelection>(
+	REPLICANTS.selection,
+	BUNDLE_NAME,
+	{ defaultValue: {} },
+) as ClientReplicant<VariableSelection>;
 
 const slots = new Map<string, Slot>();
 
@@ -99,6 +110,16 @@ function outs(): Out[] {
 
 function baseData(): TitleData {
 	return titleDataRep.value ?? {};
+}
+
+/** Chosen element per array-valued variable. */
+function currentSelection(): VariableSelection {
+	return selectionRep.value ?? {};
+}
+
+/** Data with arrays collapsed to their selected element (for code iframes). */
+function codeData(data: TitleData): TitleData {
+	return materializeSelection(data, currentSelection()) as TitleData;
 }
 
 function outConfig(): Out | undefined {
@@ -246,7 +267,7 @@ function setupCodeIframe(
 
 	if (codeSource(template) === "file" && template.code?.src) {
 		const src = template.code.src;
-		buildSourcedDocument(src, data)
+		buildSourcedDocument(src, codeData(data))
 			.then((document) => {
 				if (slot.iframe === iframe && slot.renderToken === token) {
 					iframe.srcdoc = document;
@@ -291,13 +312,17 @@ function rebuildSlot(slot: Slot, template: TitleTemplate, data: TitleData): void
 function updateSlotData(slot: Slot, template: TitleTemplate, data: TitleData): void {
 	if (template.kind === "code") {
 		if (slot.iframeReady) {
-			slot.iframe?.contentWindow?.postMessage({ type: "notgt:data", data }, "*");
+			slot.iframe?.contentWindow?.postMessage(
+				{ type: "notgt:data", data: codeData(data) },
+				"*",
+			);
 		}
 		return;
 	}
+	const selection = currentSelection();
 	for (const layer of template.layers ?? []) {
 		const el = slot.layerEls.get(layer.id);
-		if (el) updateLayerContent(el, layer, data);
+		if (el) updateLayerContent(el, layer, data, selection);
 	}
 }
 
@@ -383,6 +408,7 @@ outsRep.on("change", scheduleRender);
 titleDataRep.on("change", scheduleRender);
 activeTitleRep.on("change", scheduleRender);
 runtimeRep.on("change", scheduleRender);
+selectionRep.on("change", scheduleRender);
 
 // Top-level `await` would force the bundler to target ES2022; a promise chain
 // keeps the output valid for older CEF builds used by OBS.
@@ -392,6 +418,7 @@ void waitForReplicants(
 	titleDataRep,
 	activeTitleRep,
 	runtimeRep,
+	selectionRep,
 ).then(() => {
 	if (!outConfig()) {
 		console.warn(

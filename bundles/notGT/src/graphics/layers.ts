@@ -1,5 +1,10 @@
 import { getByPath, interpolate } from "../shared/binding";
-import type { Layer, LayerStyle, TitleData } from "../shared/types";
+import type {
+	Layer,
+	LayerStyle,
+	TitleData,
+	VariableSelection,
+} from "../shared/types";
 
 export function stringifyValue(value: unknown): string {
 	if (value === null || value === undefined) return "";
@@ -13,12 +18,16 @@ export function stringifyValue(value: unknown): string {
 }
 
 /** Value of a text layer: explicit `binding` first, then `{{...}}` interpolation. */
-export function resolveLayerText(layer: Layer, data: TitleData): string {
+export function resolveLayerText(
+	layer: Layer,
+	data: TitleData,
+	selection: VariableSelection = {},
+): string {
 	if (layer.binding) {
-		const direct = stringifyValue(getByPath(data, layer.binding));
+		const direct = stringifyValue(getByPath(data, layer.binding, selection));
 		if (direct !== "") return direct;
 	}
-	return interpolate(layer.text ?? "", data);
+	return interpolate(layer.text ?? "", data, selection);
 }
 
 export function createLayerElement(layer: Layer): HTMLElement {
@@ -109,14 +118,15 @@ export function updateLayerContent(
 	el: HTMLElement,
 	layer: Layer,
 	data: TitleData,
+	selection: VariableSelection = {},
 ): void {
 	if (layer.type === "text") {
-		const next = resolveLayerText(layer, data);
+		const next = resolveLayerText(layer, data, selection);
 		if (el.textContent !== next) el.textContent = next;
 		return;
 	}
 	if (layer.type === "image" || layer.type === "gif") {
-		const next = layer.src ? interpolate(layer.src, data) : "";
+		const next = layer.src ? interpolate(layer.src, data, selection) : "";
 		const img = el as HTMLImageElement;
 		const current = img.getAttribute("src") ?? "";
 		if (next && current !== next) img.setAttribute("src", next);

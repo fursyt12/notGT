@@ -1,3 +1,4 @@
+import { getByPathRaw } from "../shared/binding";
 import {
 	defaultPlayback,
 	defaultTransition,
@@ -61,7 +62,14 @@ export function createApiRouter(
 	router.get("/data", (req, res) => {
 		const path = pickString(req.query["path"]);
 		if (path) {
-			json(res, 200, { path, value: store.readPath(path) });
+			// By default the value is resolved the way bindings resolve it (arrays
+			// collapse to the selected element); `?raw=1` returns the stored node.
+			const raw = pickString(req.query["raw"]) === "1";
+			json(res, 200, {
+				path,
+				raw,
+				value: raw ? getByPathRaw(store.readData(), path) : store.readPath(path),
+			});
 			return;
 		}
 		json(res, 200, { data: store.readData() });
@@ -84,6 +92,41 @@ export function createApiRouter(
 			return;
 		}
 		json(res, 200, { ok: true, data: store.deleteData(path) });
+	});
+
+	// ----------------------------------------------------------- selection
+	router.get("/selection", (_req, res) => {
+		json(res, 200, { selection: store.readSelection() });
+	});
+
+	router.post("/selection", (req, res) => {
+		const body = asObject(req.body);
+		// Either { path, index } for one array, or a map of path -> index.
+		const single = pickString(body["path"]);
+		const patch: Record<string, number> = {};
+		if (single) {
+			const index = pickNumber(body["index"] ?? req.query["index"]);
+			if (index === undefined) {
+				json(res, 400, { error: "bad_request", message: "Missing numeric `index`" });
+				return;
+			}
+			patch[single] = index;
+		} else {
+			for (const [path, index] of Object.entries(body)) {
+				const value = pickNumber(index);
+				if (value !== undefined) patch[path] = value;
+			}
+		}
+		json(res, 200, { ok: true, selection: store.setSelection(patch) });
+	});
+
+	router.delete("/selection/:path(*)", (req, res) => {
+		const path = req.params["path"];
+		if (!path) {
+			json(res, 400, { error: "bad_request", message: "Missing selection path" });
+			return;
+		}
+		json(res, 200, { ok: true, selection: store.clearSelection(path) });
 	});
 
 	// ------------------------------------------------- animation files on disk
@@ -325,6 +368,7 @@ export function buildPublicState(store: Store, config: BundleConfig): PublicStat
 		activeOutId: active.outId,
 		playing: runtime.playing,
 		revision: runtime.revision,
+		selection: store.readSelection(),
 	};
 	if (!config.hideApiState) {
 		state.outs = store.listOuts().map((out) => ({

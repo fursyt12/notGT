@@ -318,6 +318,78 @@ async function main() {
 		await api("POST", "/api/titles/hide", {});
 		await sleep(300);
 
+		// --- 4d. array variables resolve through the selected element -----
+		await api("POST", "/api/titles/hide", {});
+		await sleep(400);
+		await api("POST", "/api/templates", {
+			id: "e2e-array",
+			name: "E2E array",
+			kind: "layers",
+			width: 1920,
+			height: 1080,
+			layers: [
+				{
+					id: "a_text",
+					type: "text",
+					x: 10,
+					y: 40,
+					width: 60,
+					binding: "e2e_guests.name",
+					style: { fontSize: 70, color: "#ffffff", opacity: 1, rotation: 0 },
+					z: 1,
+				},
+			],
+			inTransition: { type: "none", durationMs: 0 },
+			outTransition: { type: "none", durationMs: 0 },
+			playback: { mode: "once", intervalMs: 10000, holdMs: 30000, autoStart: false },
+		});
+		await api("POST", "/api/data?mode=merge", {
+			e2e_guests: [{ name: "Первый" }, { name: "Второй" }],
+		});
+		await api("POST", "/api/selection", { path: "e2e_guests", index: 0 });
+		await api("POST", "/api/titles/e2e-array/show", {});
+
+		const showsText = (text) =>
+			page.waitForFunction(
+				(needle) =>
+					[...document.querySelectorAll(".notgt-slot .notgt-layer")].some(
+						(el) => (el.textContent ?? "").trim() === needle,
+					),
+				{ timeout: 8000 },
+				text,
+			);
+
+		await showsText("Первый");
+		check("array binding resolves the selected element (index 0)", true);
+
+		await page.evaluate(() => {
+			window.__notgtArrayMarker = "alive";
+		});
+		const selectionStarted = Date.now();
+		await api("POST", "/api/selection", { path: "e2e_guests", index: 1 });
+		await showsText("Второй");
+		const selectionLatency = Date.now() - selectionStarted;
+		check(
+			"changing the selected element switches the on-air value",
+			true,
+			`${selectionLatency} ms`,
+		);
+		check(
+			"selection switch latency under 500 ms",
+			selectionLatency < 500,
+			`${selectionLatency} ms`,
+		);
+		check(
+			"no reload on selection change (JS context survived)",
+			await page.evaluate(() => window.__notgtArrayMarker === "alive"),
+		);
+
+		await api("POST", "/api/titles/hide", {});
+		await api("DELETE", "/api/selection/e2e_guests");
+		await api("DELETE", "/api/data/e2e_guests");
+		await api("DELETE", "/api/templates/e2e-array");
+		await sleep(300);
+
 		// --- 5. loop scheduler -------------------------------------------
 		await api("POST", "/api/titles/hide", {});
 		const created = await api("POST", "/api/outs/main/items", {
