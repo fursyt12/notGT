@@ -18,6 +18,30 @@ NodeCG is a broadcast graphics framework and application. It enables you to writ
 
 Have questions about NodeCG, or just want to say 'hi'? [Join our Discord server](https://discord.gg/nsXXDFGBEt)!
 
+## notGT
+
+This fork runs a titling / broadcast-animation bundle named **`notGT`** (project name **notGT**).
+It adds multiple independent graphics outputs (`out.html?out=<id>`, one OBS Browser Source each),
+a set of animations authored either from primitives (text / image / gif / shape) or as raw
+HTML/CSS/JS, and a REST API for the dashboard, Bitfocus Companion and other integrations.
+
+The operator manual — mental model, dashboard panels, the full REST API reference, OBS and
+Companion setup, persistence and troubleshooting — lives in
+**[`bundles/notGT/README.md`](bundles/notGT/README.md)**.
+
+Build and run it locally (the bundle is **not** an npm workspace of this monorepo, so it has its
+own `node_modules` and is installed and built separately):
+
+```bash
+npm ci
+npm run build
+cd bundles/notGT && npm install && npm run build && cd ../..
+node index.js      # http://localhost:9090/dashboard/
+```
+
+For a containerised deployment with Traefik and persistent volumes, use
+`docker-compose.yml` plus `.env.example` in the repository root.
+
 ## Documentation & API Reference
 
 Full docs and API reference are available at https://nodecg.dev
