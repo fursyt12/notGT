@@ -58,6 +58,61 @@ async function main() {
 	if (!CHROME) throw new Error("No Chromium binary found; set CHROME_PATH");
 	fs.mkdirSync(outDir, { recursive: true });
 
+	// The graphics suite builds its own fixtures instead of leaning on the seeded
+	// templates: those are ordinary operator data and may be renamed, re-laid out
+	// or turned into something else entirely (one operator replaced the lower
+	// third's text with a video layer, which used to break this suite).
+	await api("POST", "/api/templates", {
+		id: "e2e-text",
+		name: "E2E text",
+		kind: "layers",
+		width: 1920,
+		height: 1080,
+		layers: [
+			{
+				id: "t_name",
+				type: "text",
+				x: 10,
+				y: 30,
+				width: 60,
+				binding: "speaker.name",
+				text: "{{speaker.name ?? —}}",
+				style: { fontSize: 64, color: "#ffffff", opacity: 1, rotation: 0 },
+				z: 1,
+			},
+			{
+				id: "t_role",
+				type: "text",
+				x: 10,
+				y: 45,
+				width: 60,
+				binding: "speaker.role",
+				text: "{{speaker.role ?? —}}",
+				style: { fontSize: 40, color: "#8fd3ff", opacity: 1, rotation: 0 },
+				z: 2,
+			},
+		],
+		inTransition: { type: "none", durationMs: 0 },
+		outTransition: { type: "none", durationMs: 0 },
+		playback: { mode: "once", intervalMs: 10000, holdMs: 8000, autoStart: false },
+	});
+	await api("POST", "/api/templates", {
+		id: "e2e-code",
+		name: "E2E code",
+		kind: "code",
+		width: 1920,
+		height: 1080,
+		layers: [],
+		code: {
+			html: '<div class="t"><span class="badge" data-bind="ticker.label">LIVE</span><span class="text">{{ticker.text}}</span></div>',
+			css: ".t{position:absolute;left:4%;bottom:8%;display:flex;font-family:Arial}.badge{background:#ff3b30;color:#fff;padding:10px 18px;font-weight:700}.text{background:rgba(0,0,0,.9);color:#fff;padding:10px 18px}",
+			js: "onData(function(){ if (window.__e2eCodeRuns === undefined) window.__e2eCodeRuns = 1; });",
+		},
+		inTransition: { type: "none", durationMs: 0 },
+		outTransition: { type: "none", durationMs: 0 },
+		playback: { mode: "once", intervalMs: 10000, holdMs: 8000, autoStart: false },
+	});
+
 	// Deterministic starting state. `merge` (not `replace`) so running the suite
 	// never wipes variables the operator added.
 	await api("POST", "/api/titles/hide", {});
@@ -114,7 +169,7 @@ async function main() {
 
 		// --- 2. show through the API -------------------------------------
 		const showStarted = Date.now();
-		await api("POST", "/api/titles/lower-third/show", { label: "e2e" });
+		await api("POST", "/api/titles/e2e-text/show", { label: "e2e" });
 		await page.waitForSelector(".notgt-slot", { timeout: 10_000 });
 		const showLatency = Date.now() - showStarted;
 		check(
@@ -188,12 +243,12 @@ async function main() {
 		check("text node reused, not re-created (no flicker)", sameNode);
 		await nameHandleBefore.dispose();
 
-		await page.screenshot({ path: path.join(outDir, "lower-third.png") });
+		await page.screenshot({ path: path.join(outDir, "bound-text.png") });
 
 		// --- 4. code animation -------------------------------------------
 		await api("POST", "/api/titles/hide", {});
 		await sleep(600);
-		await api("POST", "/api/titles/code-sample/show", {});
+		await api("POST", "/api/titles/e2e-code/show", {});
 		await page.waitForSelector(".notgt-code-frame", { timeout: 10_000 });
 		await sleep(900);
 
@@ -214,7 +269,7 @@ async function main() {
 			iframeInfo.badgeText === "LIVE" && iframeInfo.tickerText.includes("notGT"),
 			JSON.stringify(iframeInfo),
 		);
-		await page.screenshot({ path: path.join(outDir, "code-sample.png") });
+		await page.screenshot({ path: path.join(outDir, "code-template.png") });
 
 		// --- 4b. animation authored as a FILE ----------------------------
 		await api("POST", "/api/titles/hide", {});
@@ -394,7 +449,7 @@ async function main() {
 		await api("POST", "/api/titles/hide", {});
 		await sleep(400);
 		const heldItem = await api("POST", "/api/outs/main/items", {
-			templateId: "lower-third",
+			templateId: "e2e-text",
 			held: true,
 			// A deliberately tiny hold: a held placement must ignore it.
 			playback: { mode: "once", intervalMs: 10000, holdMs: 300, autoStart: false },
@@ -537,6 +592,11 @@ async function main() {
 			pageErrors.length === 0,
 			pageErrors.slice(0, 3).join(" | "),
 		);
+
+		// --- remove the fixtures -----------------------------------------
+		await api("DELETE", "/api/templates/e2e-text");
+		await api("DELETE", "/api/templates/e2e-code");
+		await sleep(200);
 
 		// --- restore the seeded values the suite overwrote ----------------
 		await api("POST", "/api/titles/hide", {});
