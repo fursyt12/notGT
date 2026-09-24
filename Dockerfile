@@ -64,11 +64,18 @@ RUN npm ci --omit=dev
 
 FROM base AS runtime
 
-RUN apt-get update \
-	&& apt-get install -y git \
-	&& rm -rf /var/lib/apt/lists/*
-
 WORKDIR /opt/nodecg
+
+# ffmpeg powers the drag-and-drop conversion in the editor (ProRes/HEVC .mov ->
+# WebM/WebP with alpha). Build with --build-arg INSTALL_FFMPEG=false to skip it;
+# the editor then reports that server-side conversion is unavailable.
+ARG INSTALL_FFMPEG=true
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends git \
+	&& if [ "$INSTALL_FFMPEG" = "true" ]; then \
+		apt-get install -y --no-install-recommends ffmpeg; \
+	fi \
+	&& rm -rf /var/lib/apt/lists/*
 
 RUN mkdir cfg bundles logs db assets
 

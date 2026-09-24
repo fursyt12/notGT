@@ -1,5 +1,9 @@
+import path from "node:path";
+
 import { BUNDLE_NAME, MESSAGES } from "../shared/types";
 import { createApiRouter } from "./api";
+import type { Handler } from "./auth";
+import { createMediaRouter } from "./media";
 import { syncFileAnimations } from "./file-animations";
 import { Scheduler } from "./scheduler";
 import { playTemplateOnce } from "./trigger";
@@ -32,6 +36,24 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	const router = createApiRouter(nodecg, store, scheduler, { syncAnimations });
 	mount("/api", router);
 	mount(`/bundles/${BUNDLE_NAME}/api`, router);
+
+	// Drag-and-dropped media for the `video` layer. Lives in the NodeCG assets
+	// tree (a Docker volume), so uploads survive a container rebuild. Guarded by
+	// NodeCG's own session check, not by the API token: the dashboard panel has
+	// no token and must not need one.
+	const assetsRoot = path.resolve(__dirname, "..", "..", "..", "assets");
+	const mediaDir = nodecg.bundleConfig?.mediaDir
+		? path.resolve(nodecg.bundleConfig.mediaDir)
+		: path.join(assetsRoot, BUNDLE_NAME, "media");
+	const mediaUrlPrefix = `/assets/${BUNDLE_NAME}/media/`;
+	const mediaRouter = createMediaRouter(
+		nodecg,
+		mediaDir,
+		mediaUrlPrefix,
+		nodecg.util.authCheck as unknown as Handler,
+	);
+	mount(`/bundles/${BUNDLE_NAME}/media`, mediaRouter);
+	nodecg.log.info("Media drop zone: %s → %s", mediaUrlPrefix, mediaDir);
 
 	// One-shot triggers from the dashboard / other bundles.
 	nodecg.listenFor(MESSAGES.trigger, ((data: any, ack: any) => {

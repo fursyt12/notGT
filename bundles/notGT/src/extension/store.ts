@@ -29,6 +29,8 @@ export interface BundleConfig {
 	allowUnauthenticatedApi?: boolean;
 	hideApiState?: boolean;
 	defaultOutId?: string;
+	/** Where uploaded/converted media is stored. Default: <runtimeRoot>/assets/notGT/media */
+	mediaDir?: string;
 }
 
 export type ServerAPI = NodeCGTypes.ServerAPI<BundleConfig>;

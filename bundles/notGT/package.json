@@ -64,7 +64,7 @@
 		"build": "node scripts/build.mjs",
 		"watch": "node scripts/build.mjs --watch",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test:e2e": "node scripts/e2e-out.mjs && node scripts/e2e-panels.mjs",
+		"test:e2e": "node scripts/e2e-out.mjs && node scripts/e2e-panels.mjs && node scripts/e2e-media.mjs",
 		"convert-alpha": "node scripts/convert-alpha.mjs"
 	},
 	"devDependencies": {

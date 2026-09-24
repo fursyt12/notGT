@@ -17,7 +17,7 @@
  *   node scripts/convert-alpha.mjs overlay.mov --max-width 960 --format webm
  *   node scripts/convert-alpha.mjs overlay.mov --dry-run
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,7 +47,7 @@ const FORMATS = {
 };
 
 function usage() {
-	console.log(`
+	log(`
 convert-alpha — конвертация alpha-видео для OBS Browser Source
 
   node scripts/convert-alpha.mjs <input.mov> [options]
@@ -89,6 +89,8 @@ function parseArgs(argv) {
 		crop: undefined,
 		noCrop: false,
 		dryRun: false,
+		jsonProgress: false,
+		urlPrefix: URL_PREFIX,
 	};
 	const need = (i, name) => {
 		if (i + 1 >= argv.length) fail(`Опция ${name} требует значение`);
@@ -150,6 +152,13 @@ function parseArgs(argv) {
 			case "--dry-run":
 				opts.dryRun = true;
 				break;
+			case "--json-progress":
+				opts.jsonProgress = true;
+				break;
+			case "--url-prefix":
+				opts.urlPrefix = need(i, a);
+				i++;
+				break;
 			default:
 				if (a.startsWith("-")) fail(`Неизвестная опция: ${a}`);
 				else if (!opts.input) opts.input = path.resolve(a);
@@ -166,7 +175,24 @@ function parseArgs(argv) {
 	return opts;
 }
 
+/**
+ * In `--json-progress` mode stdout carries machine-readable lines only and all
+ * human output moves to stderr, so a caller can parse stdout line by line.
+ */
+function log(message = "") {
+	if (JSON_MODE.enabled) console.error(message);
+	else log(message);
+}
+
+function emit(payload) {
+	// Must go straight to stdout: `log()` is redirected to stderr in json mode.
+	if (JSON_MODE.enabled) process.stdout.write(`${JSON.stringify(payload)}\n`);
+}
+
+const JSON_MODE = { enabled: false };
+
 function fail(message) {
+	emit({ type: "error", message });
 	console.error(`\n  ✖ ${message}\n`);
 	process.exit(1);
 }
@@ -244,6 +270,7 @@ function buildFilters(opts, crop) {
 
 function buildArgs(opts, format, filters, output) {
 	const args = ["-hide_banner", "-loglevel", "warning", "-y", "-i", opts.input];
+	if (opts.jsonProgress) args.push("-nostats", "-progress", "pipe:1");
 	if (filters.length) args.push("-vf", filters.join(","));
 	if (format === "webp") {
 		args.push(
@@ -278,6 +305,36 @@ function buildArgs(opts, format, filters, output) {
 	return args;
 }
 
+/** Runs ffmpeg and streams `{"type":"progress","percent":N}` lines on stdout. */
+function runWithProgress(args, duration, _opts) {
+	return new Promise((resolve) => {
+		const child = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "inherit"] });
+		let buffer = "";
+		let lastPercent = -1;
+		child.stdout.setEncoding("utf8");
+		child.stdout.on("data", (chunk) => {
+			buffer += chunk;
+			const lines = buffer.split("\n");
+			buffer = lines.pop() ?? "";
+			for (const line of lines) {
+				// ffmpeg reports microseconds as out_time_us (older builds: out_time_ms).
+				const match = /^out_time_(?:us|ms)=(\d+)/.exec(line.trim());
+				if (!match || !duration) continue;
+				const seconds = Number(match[1]) / 1_000_000;
+				const percent = Math.max(
+					0,
+					Math.min(100, Math.round((seconds / duration) * 100)),
+				);
+				if (percent === lastPercent) continue;
+				lastPercent = percent;
+				emit({ type: "progress", percent });
+			}
+		});
+		child.on("close", (code) => resolve(code ?? 1));
+		child.on("error", () => resolve(1));
+	});
+}
+
 /**
  * ffmpeg's decoder does not expose the alpha plane of WebM, so a decode-based
  * check there is meaningless (it reports the clip as opaque even when Chromium
@@ -302,8 +359,9 @@ function verifyAlpha(file, format) {
 	return min === 0 && max === 255 ? "yes" : "no";
 }
 
-function main() {
+async function main() {
 	const opts = parseArgs(process.argv.slice(2));
+	JSON_MODE.enabled = opts.jsonProgress;
 	which("ffmpeg");
 
 	if (!fs.existsSync(opts.input)) fail(`Файл не найден: ${opts.input}`);
@@ -311,8 +369,8 @@ function main() {
 	const info = ffprobe(opts.input);
 	const hasAlpha = ALPHA_PIX_FMT.test(info.pixFmt ?? "");
 
-	console.log(`\n  Вход:  ${path.basename(opts.input)}`);
-	console.log(
+	log(`\n  Вход:  ${path.basename(opts.input)}`);
+	log(
 		`         ${info.codec} ${info.pixFmt} ${info.width}x${info.height} ` +
 			`${info.fps ? `${info.fps.toFixed(2)} fps` : ""} ` +
 			`${info.duration ? `${info.duration.toFixed(2)} c` : ""} ` +
@@ -320,55 +378,55 @@ function main() {
 	);
 
 	if (!hasAlpha) {
-		console.log(
+		log(
 			"\n  ⚠ В источнике нет alpha-канала — прозрачности в результате не будет.\n" +
 				"    Если она ожидалась, проверьте экспорт (нужен ProRes 4444 / HEVC+alpha / yuva).",
 		);
 	} else if (!/^(yuva|rgba|bgra|argb|abgr)/i.test(info.pixFmt ?? "")) {
-		console.log(`\n  ⚠ alpha есть, но формат ${info.pixFmt} — конвертация всё равно возможна.`);
+		log(`\n  ⚠ alpha есть, но формат ${info.pixFmt} — конвертация всё равно возможна.`);
 	}
 
 	// ---- choose the target format -------------------------------------
 	let format = opts.format;
 	if (format === "auto") {
 		format = info.duration > 0 && info.duration <= opts.threshold ? "webp" : "webm";
-		console.log(
+		log(
 			`\n  Формат: auto → ${FORMATS[format].label} ` +
 				`(${info.duration.toFixed(1)} c ${info.duration <= opts.threshold ? "≤" : ">"} ${opts.threshold} c)`,
 		);
 	} else {
-		console.log(`\n  Формат: ${FORMATS[format].label}`);
+		log(`\n  Формат: ${FORMATS[format].label}`);
 	}
 
 	// ---- crop / scale --------------------------------------------------
 	let crop;
 	if (opts.crop) {
 		crop = opts.crop;
-		console.log(`  Обрезка: задана вручную — ${crop}`);
+		log(`  Обрезка: задана вручную — ${crop}`);
 	} else if (!opts.noCrop) {
 		crop = detectCrop(opts.input, info.duration);
 		if (crop) {
 			const [w, h] = crop.split(":").map(Number);
 			const share = ((w * h) / (info.width * info.height)) * 100;
-			console.log(
+			log(
 				`  Обрезка: ${crop} — ${w}x${h}, это ${share.toFixed(0)}% площади кадра` +
 					(share < 70 ? " (крупный выигрыш)" : ""),
 			);
 			const fullFrame = w >= info.width && h >= info.height;
 			if (w <= 2 || h <= 2) {
-				console.log("  ⚠ cropdetect вернул почти пустой бокс — обрезка отключена");
+				log("  ⚠ cropdetect вернул почти пустой бокс — обрезка отключена");
 				crop = undefined;
 			} else if (fullFrame) {
-				console.log("  Обрезка: содержимое занимает весь кадр — фильтр не нужен");
+				log("  Обрезка: содержимое занимает весь кадр — фильтр не нужен");
 				crop = undefined;
 			}
 		} else {
-			console.log("  Обрезка: содержимое не определено, оставляю как есть");
+			log("  Обрезка: содержимое не определено, оставляю как есть");
 		}
 	}
 
 	const filters = buildFilters(opts, crop);
-	if (filters.length) console.log(`  Фильтры: ${filters.join(", ")}`);
+	if (filters.length) log(`  Фильтры: ${filters.join(", ")}`);
 
 	// ---- run -----------------------------------------------------------
 	fs.mkdirSync(opts.outDir, { recursive: true });
@@ -377,45 +435,61 @@ function main() {
 	const args = buildArgs(opts, format, filters, output);
 
 	if (opts.dryRun) {
-		console.log(`\n  [dry-run] ffmpeg ${args.join(" ")}\n`);
+		log(`\n  [dry-run] ffmpeg ${args.join(" ")}\n`);
 		return;
 	}
 
-	console.log(`\n  Кодирую → ${path.relative(process.cwd(), output)} ...`);
+	log(`\n  Кодирую → ${path.relative(process.cwd(), output)} ...`);
 	const started = Date.now();
-	const run = spawnSync("ffmpeg", args, { stdio: "inherit" });
+	const status = opts.jsonProgress
+		? await runWithProgress(args, info.duration, opts)
+		: spawnSync("ffmpeg", args, { stdio: "inherit" }).status;
 	const elapsed = ((Date.now() - started) / 1000).toFixed(1);
-	if (run.status !== 0 || !fs.existsSync(output)) {
-		fail(`ffmpeg завершился с ошибкой (код ${run.status}). Смотрите вывод выше.`);
+	if (status !== 0 || !fs.existsSync(output)) {
+		fail(`ffmpeg завершился с ошибкой (код ${status}). Смотрите вывод выше.`);
 	}
 
 	// ---- report --------------------------------------------------------
 	const outSize = fs.statSync(output).size;
 	const ratio = info.size ? outSize / info.size : 0;
-	console.log(`\n  Готово за ${elapsed} c`);
-	console.log(
+	log(`\n  Готово за ${elapsed} c`);
+	log(
 		`  Размер:  ${humanSize(info.size)} → ${humanSize(outSize)}` +
 			(ratio ? `  (×${ratio.toFixed(ratio < 0.1 ? 3 : 1)})` : ""),
 	);
 
 	const alpha = verifyAlpha(output, format);
-	if (alpha === "yes") console.log("  Alpha:   проверено — прозрачность на месте ✔");
-	else if (alpha === "no") console.log("  Alpha:   ⚠ прозрачность не обнаружена, проверьте исходник");
+	if (alpha === "yes") log("  Alpha:   проверено — прозрачность на месте ✔");
+	else if (alpha === "no") log("  Alpha:   ⚠ прозрачность не обнаружена, проверьте исходник");
 	else {
-		console.log(
+		log(
 			"  Alpha:   у WebM ffmpeg не показывает alpha-план (это нормально — он лежит\n" +
 				"           отдельным auxiliary-планом). Проверяйте в OBS или Chromium, не в ffprobe.",
 		);
 	}
 	if (outSize > info.size) {
-		console.log("  ⚠ Результат больше исходника — попробуйте --crf больше, --max-width меньше");
-		console.log("    --threshold меньше (чтобы выбрался webp).");
+		log("  ⚠ Результат больше исходника — попробуйте --crf больше, --max-width меньше");
+		log("    --threshold меньше (чтобы выбрался webp).");
 	}
 
 	const rel = path.relative(opts.outDir, output);
-	console.log(`\n  Слой:  src = "${URL_PREFIX}${rel}"`);
-	console.log(`  Тип:   ${format === "webp" ? "gif / image (или <img> в code)" : "video (или <video> в code)"}`);
-	console.log(`  ${FORMATS[format].note}\n`);
+	const src = `${opts.urlPrefix}${rel}`;
+	log(`\n  Слой:  src = "${src}"`);
+	log(`  Тип:   ${format === "webp" ? "gif / image (или <img> в code)" : "video (или <video> в code)"}`);
+	log(`  ${FORMATS[format].note}\n`);
+
+	emit({
+		type: "done",
+		src,
+		file: output,
+		format,
+		bytes: outSize,
+		inputBytes: info.size,
+		alpha,
+		durationSec: info.duration,
+		width: info.width,
+		height: info.height,
+	});
 }
 
-main();
+await main();

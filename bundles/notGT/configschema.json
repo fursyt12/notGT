@@ -21,6 +21,11 @@
 			"type": "string",
 			"default": "main",
 			"description": "Id of the out created on first run."
+		},
+		"mediaDir": {
+			"type": "string",
+			"default": "",
+			"description": "Каталог для медиа, загруженного перетаскиванием в редакторе. Пусто = <runtimeRoot>/assets/notGT/media (том assets в Docker)."
 		}
 	},
 	"required": []
