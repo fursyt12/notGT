@@ -63,9 +63,10 @@ function alphaStats(file) {
 	return { min, max };
 }
 
-async function upload(name, file) {
+async function upload(name, file, kind) {
 	const body = fs.readFileSync(file);
-	const response = await fetch(`${MEDIA}/upload?name=${encodeURIComponent(name)}`, {
+	const query = `name=${encodeURIComponent(name)}${kind ? `&kind=${kind}` : ""}`;
+	const response = await fetch(`${MEDIA}/upload?${query}`, {
 		method: "POST",
 		headers: { "content-type": "application/octet-stream" },
 		body,
@@ -158,6 +159,21 @@ async function main() {
 			(converted.bytes ?? 0) > 0 && (converted.bytes ?? 0) < (converted.inputBytes ?? Infinity),
 			`${converted.inputBytes} -> ${converted.bytes}`,
 		);
+
+		// --- 1b. a short clip dropped into a VIDEO layer must be WebM ----
+		// A <video> cannot play animated WebP, so the video drop zone asks for
+		// `kind=video` and the server must skip its usual short-clip WebP choice.
+		const forVideo = await upload("E2E Для Видео.mov", mov, "video");
+		const videoJob = await waitForJob(forVideo.jobId);
+		check(
+			"kind=video forces a WebM (a <video> cannot play WebP)",
+			videoJob.state === "done" && /\.webm$/.test(videoJob.src ?? ""),
+			`${videoJob.state} / ${videoJob.src} (${videoJob.format})`,
+		);
+		created.push(decodeURIComponent((videoJob.src ?? "").split("/").pop()));
+
+		const videoServed = await fetch(`${BASE}${videoJob.src}`);
+		check("video-layer file is served", videoServed.status === 200, `HTTP ${videoServed.status}`);
 
 		// --- 2. a browser-ready file is published as-is -------------------
 		const ready = await upload("e2e-ready.webm", webm);

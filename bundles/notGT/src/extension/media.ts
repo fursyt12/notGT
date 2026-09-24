@@ -185,6 +185,11 @@ export function createMediaRouter(
 	router.post("/upload", (req: ApiRequest, res: ApiResponse) => {
 		prune();
 		const originalName = pickString(req.query["name"]) ?? "upload.bin";
+		// `kind=video` means the file is going into a `video` layer, which renders
+		// a <video>. That can only play WebM, so an animated WebP/GIF/PNG — or a
+		// short clip the converter would normally turn into WebP — must be forced
+		// to WebM. Without the hint we keep the automatic choice.
+		const wantVideo = pickString(req.query["kind"]) === "video";
 		const ext = safeExt(originalName);
 		const base = safeBase(originalName);
 		const short = newId("m").slice(-6);
@@ -239,7 +244,7 @@ export function createMediaRouter(
 				job.inputBytes = received;
 				job.updatedAt = Date.now();
 				res.status(202).json({ ok: true, jobId: job.id, bytes: received });
-				void processJob(job, tmpFile, ext, stem);
+				void processJob(job, tmpFile, ext, stem, wantVideo);
 			});
 		});
 		stream.pipe(out);
@@ -251,9 +256,11 @@ export function createMediaRouter(
 		tmpFile: string,
 		ext: string,
 		stem: string,
+		wantVideo: boolean,
 	): Promise<void> {
 		try {
-			if (BROWSER_READY.has(ext)) {
+			// A video layer can only play WebM, so nothing else counts as ready.
+			if (BROWSER_READY.has(ext) && !(wantVideo && ext !== ".webm")) {
 				// Already playable in a browser source: just publish it.
 				job.message = "Публикация";
 				job.progress = 0.5;
@@ -272,7 +279,7 @@ export function createMediaRouter(
 			}
 
 			job.message = "Конвертация";
-			const outPath = await runConverter(job, tmpFile);
+			const outPath = await runConverter(job, tmpFile, wantVideo ? "webm" : undefined);
 			finish(job, outPath.file, outPath.format);
 		} catch (error) {
 			job.state = "error";
@@ -328,6 +335,7 @@ export function createMediaRouter(
 	function runConverter(
 		job: MediaJob,
 		input: string,
+		forceFormat?: string,
 	): Promise<{ file: string; format: string }> {
 		return new Promise((resolve, reject) => {
 			const args = [
@@ -339,6 +347,7 @@ export function createMediaRouter(
 				"--url-prefix",
 				urlPrefix,
 			];
+			if (forceFormat) args.push("--format", forceFormat);
 			const child = spawn(process.execPath, args, {
 				stdio: ["ignore", "pipe", "pipe"],
 			});

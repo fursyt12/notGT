@@ -571,6 +571,16 @@ function LayerList({
 // ---------------------------------------------------------------- media drop
 
 const MEDIA_BASE = `/bundles/${BUNDLE_NAME}/media`;
+
+/** A `<video>` element can only play WebM, so only that counts for this panel. */
+function isVideoFile(name: string): boolean {
+	return /\.webm$/i.test(name);
+}
+
+function mediaExt(name: string): string {
+	const match = /\.([a-z0-9]+)$/i.exec(name);
+	return match ? match[1]!.toLowerCase() : "файл";
+}
 const MEDIA_ACCEPT =
 	"video/*,image/*,.mov,.mp4,.mkv,.webm,.webp,.gif,.m4v,.avi";
 const MEDIA_LIST_LIMIT = 8;
@@ -759,7 +769,12 @@ function MediaDropZone({
 
 			const xhr = new XMLHttpRequest();
 			xhrRef.current = xhr;
-			xhr.open("POST", `${MEDIA_BASE}/upload?name=${encodeURIComponent(file.name)}`);
+			// `kind=video`: this drop zone lives in the video inspector, so the
+			// server must produce a WebM (a <video> cannot play WebP/GIF).
+			xhr.open(
+				"POST",
+				`${MEDIA_BASE}/upload?kind=video&name=${encodeURIComponent(file.name)}`,
+			);
 			xhr.setRequestHeader("Content-Type", "application/octet-stream");
 			xhr.upload.onprogress = (event) => {
 				if (!aliveRef.current || !event.lengthComputable || event.total <= 0) return;
@@ -980,13 +995,29 @@ function MediaDropZone({
 								<button
 									type="button"
 									className="ed-media__pick"
-									title={`Подставить: ${file.src}`}
+									title={
+										isVideoFile(file.name)
+											? `Подставить: ${file.src}`
+											: "Картинка — видео-слой её не проиграет"
+									}
 									onClick={() => {
+										if (!isVideoFile(file.name)) {
+											setNotice(
+												`«${file.name}» — это картинка (${mediaExt(file.name)}). ` +
+													"Видео-слой играет только .webm, поэтому поле src не меняю. " +
+													"Перетащите исходник сюда — сервер сконвертирует его в видео; " +
+													"а картинку положите в слой «Картинка» или «GIF».",
+											);
+											return;
+										}
 										setNotice("");
 										onPick(file.src);
 									}}
 								>
 									<span className="ed-media__name">{file.name}</span>
+									{!isVideoFile(file.name) ? (
+										<span className="ed-media__tag">картинка</span>
+									) : null}
 									<span className="ed-media__size">{formatBytes(file.bytes)}</span>
 								</button>
 								<button
