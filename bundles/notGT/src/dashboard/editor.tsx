@@ -30,6 +30,7 @@ import type {
 	TemplateKind,
 	TitleData,
 	TitleTemplate,
+	VariableSelection,
 } from "../shared/types";
 import { EditorCanvas } from "./editor/canvas";
 import {
@@ -78,6 +79,7 @@ import {
 	updateItemPlayback,
 	useOuts,
 	useRuntime,
+	useSelection,
 	useTemplates,
 	useTitleData,
 } from "./shared";
@@ -89,6 +91,7 @@ const LAYER_ICON: Record<LayerType, string> = {
 	shape: "◻",
 	image: "▣",
 	gif: "▶",
+	video: "🎞",
 };
 
 const TEXT_ALIGNS: Array<{ value: NonNullable<LayerStyle["align"]>; label: string }> = [
@@ -163,6 +166,24 @@ function makeLayer(type: LayerType, z: number): Layer {
 			width: 30,
 			height: 12,
 			style: { ...base.style, fill: "#4aa8ff", radius: 8 },
+		};
+	}
+	if (type === "video") {
+		// A fresh video layer has a visible 16:9 box and the runtime defaults
+		// spelled out, so it is selectable/visible even before a `src` is set.
+		return {
+			...base,
+			name: "Видео",
+			src: "",
+			width: 32,
+			height: 18,
+			style: {
+				...base.style,
+				videoLoop: true,
+				videoAutoplay: true,
+				videoMuted: true,
+				videoRate: 1,
+			},
 		};
 	}
 	return {
@@ -466,6 +487,9 @@ function LayerList({
 				<button type="button" onClick={() => onAdd("gif")}>
 					+ GIF
 				</button>
+				<button type="button" onClick={() => onAdd("video")}>
+					+ Видео
+				</button>
 			</div>
 			{ordered.length === 0 ? (
 				<p className="ed-hint">Слоёв пока нет — добавьте текст, фигуру или картинку.</p>
@@ -547,19 +571,21 @@ function LayerList({
 function LayerInspector({
 	layer,
 	data,
+	selection,
 	dataPaths,
 	onPatch,
 	onStyle,
 }: {
 	layer: Layer;
 	data: TitleData;
+	selection: VariableSelection;
 	dataPaths: string[];
 	onPatch: (patch: Partial<Layer>) => void;
 	onStyle: (patch: Partial<LayerStyle>) => void;
 }) {
 	const style = layer.style ?? {};
 	const srcPreview = layer.src
-		? resolveAssetUrl(interpolate(layer.src, data))
+		? resolveAssetUrl(interpolate(layer.src, data, selection))
 		: "";
 
 	return (
@@ -882,6 +908,59 @@ function LayerInspector({
 							value={style.shadowOffsetY ?? 0}
 							onChange={(value) => onStyle({ shadowOffsetY: value })}
 						/>
+					</div>
+				</Section>
+			) : null}
+
+			{layer.type === "video" ? (
+				<Section title="Видео">
+					<TextField
+						label="URL или путь"
+						mono
+						value={layer.src}
+						placeholder="media/clip.mp4 или https://…"
+						onChange={(value) => onPatch({ src: value })}
+					/>
+					<div className="ed-hint">
+						Файлы из <code>graphics/media/</code> отдаются напрямую:{" "}
+						<code>/bundles/notGT/graphics/media/&lt;файл&gt;</code>. Относительные
+						пути ищутся в /bundles/notGT/graphics/. Поддерживаются {"{{...}}"}.
+					</div>
+					<div className="ed-grid2">
+						<CheckField
+							label="videoAutoplay — автозапуск"
+							checked={style.videoAutoplay ?? true}
+							onChange={(value) => onStyle({ videoAutoplay: value })}
+						/>
+						<CheckField
+							label="videoLoop — цикл"
+							checked={style.videoLoop ?? true}
+							onChange={(value) => onStyle({ videoLoop: value })}
+						/>
+						<CheckField
+							label="videoMuted — без звука"
+							checked={style.videoMuted ?? true}
+							onChange={(value) => onStyle({ videoMuted: value })}
+						/>
+						<NumField
+							label="videoRate — скорость"
+							step={0.05}
+							min={0.05}
+							max={4}
+							value={style.videoRate ?? 1}
+							onChange={(value) => onStyle({ videoRate: clamp(value, 0.05, 4) })}
+						/>
+						<NumField
+							label="Скругление"
+							suffix="px"
+							step={1}
+							value={style.radius ?? 0}
+							onChange={(value) => onStyle({ radius: Math.max(0, value) })}
+						/>
+					</div>
+					<div className="ed-hint">
+						Воспроизведением управляет графика; в редакторе показывается статичный
+						кадр.
 					</div>
 				</Section>
 			) : null}
@@ -1289,6 +1368,7 @@ export function EditorApp() {
 	const outs = useOuts();
 	const data = useTitleData();
 	const runtime = useRuntime();
+	const selection = useSelection();
 
 	const [outId, setOutId] = useState<string>("");
 	const [activeItemId, setActiveItemId] = useState<string | null>(null);
@@ -1764,6 +1844,9 @@ export function EditorApp() {
 				<button type="button" onClick={() => addLayer("gif")}>
 					+ GIF
 				</button>
+				<button type="button" onClick={() => addLayer("video")}>
+					+ Видео
+				</button>
 				<span className="ed-vline" />
 				<button type="button" className="primary" onClick={persist} disabled={!draft}>
 					Сохранить
@@ -1888,6 +1971,7 @@ export function EditorApp() {
 						activeItemId={activeItemId}
 						selectedLayerId={selectedLayerId}
 						data={data}
+						selection={selection}
 						onSelectItem={handleSelectItem}
 						onSelectLayer={setSelectedLayerId}
 						onLayerChange={updateLayer}
@@ -1912,6 +1996,7 @@ export function EditorApp() {
 									<LayerInspector
 										layer={selectedLayer}
 										data={data}
+										selection={selection}
 										dataPaths={dataPaths}
 										onPatch={(patch) => updateLayer(selectedLayer.id, patch)}
 										onStyle={(patch) => updateStyle(selectedLayer.id, patch)}

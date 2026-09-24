@@ -333,8 +333,13 @@ export function readSelection(): VariableSelection {
 	return getDb().selection.value ?? {};
 }
 
-/** Chooses which element of an array-valued variable is "the current" one. */
+/**
+ * Chooses which element of an array-valued variable is "the current" one.
+ * Ignored for paths that are not collections, so a stray click cannot leave a
+ * meaningless entry behind.
+ */
 export function setSelection(path: string, index: number): void {
+	if (!Array.isArray(getByPathRaw(readData(), path))) return;
 	getDb().selection.value = { ...readSelection(), [path]: Math.max(0, Math.floor(index)) };
 }
 

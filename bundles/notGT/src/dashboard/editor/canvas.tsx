@@ -39,6 +39,7 @@ import type {
 	OutItem,
 	TitleData,
 	TitleTemplate,
+	VariableSelection,
 } from "../../shared/types";
 import {
 	resolveAssetUrl,
@@ -47,6 +48,7 @@ import {
 	sortByZ,
 	useElementSize,
 	useHtmlImage,
+	useHtmlVideo,
 } from "./ui";
 
 type KonvaEvent<T extends Event> = Konva.KonvaEventObject<T>;
@@ -63,6 +65,7 @@ export interface EditorCanvasProps {
 	activeItemId: string | null;
 	selectedLayerId: string | null;
 	data: TitleData;
+	selection: VariableSelection;
 	onSelectItem: (itemId: string | null) => void;
 	onSelectLayer: (layerId: string | null) => void;
 	onLayerChange: (layerId: string, patch: Partial<Layer>) => void;
@@ -87,6 +90,7 @@ export function EditorCanvas({
 	activeItemId,
 	selectedLayerId,
 	data,
+	selection,
 	onSelectItem,
 	onSelectLayer,
 	onLayerChange,
@@ -280,6 +284,7 @@ export function EditorCanvas({
 										active={geom.item.id === activeItemId}
 										selectedLayerId={selectedLayerId}
 										data={data}
+										selection={selection}
 										onSelectItem={onSelectItem}
 										onSelectLayer={onSelectLayer}
 										onLayerChange={onLayerChange}
@@ -352,6 +357,7 @@ function AnimatedItem({
 	active,
 	selectedLayerId,
 	data,
+	selection,
 	onSelectItem,
 	onSelectLayer,
 	onLayerChange,
@@ -364,6 +370,7 @@ function AnimatedItem({
 	active: boolean;
 	selectedLayerId: string | null;
 	data: TitleData;
+	selection: VariableSelection;
 	onSelectItem: (itemId: string | null) => void;
 	onSelectLayer: (layerId: string | null) => void;
 	onLayerChange: (layerId: string, patch: Partial<Layer>) => void;
@@ -412,6 +419,7 @@ function AnimatedItem({
 						key={layer.id}
 						layer={layer}
 						data={data}
+						selection={selection}
 						stageW={template.width * k}
 						stageH={template.height * k}
 						k={k}
@@ -570,6 +578,7 @@ function fitOf(geom: Geometry): number {
 interface LayerNodeProps {
 	layer: Layer;
 	data: TitleData;
+	selection: VariableSelection;
 	stageW: number;
 	stageH: number;
 	k: number;
@@ -599,9 +608,18 @@ function applyTextTransform(text: string, mode: LayerStyle["textTransform"]): st
 	return text;
 }
 
+/** Short `видео — <file>` label for the empty/404 placeholder. */
+function videoPlaceholderLabel(src: string): string {
+	if (!src) return "видео";
+	if (/^data:/i.test(src)) return "видео — data URI";
+	const name = src.split(/[?#]/)[0]?.split("/").pop();
+	return name ? `видео — ${name}` : "видео";
+}
+
 function LayerNode({
 	layer,
 	data,
+	selection,
 	stageW,
 	stageH,
 	k,
@@ -614,16 +632,40 @@ function LayerNode({
 }: LayerNodeProps) {
 	const style: LayerStyle = layer.style ?? {};
 	const isImage = layer.type === "image" || layer.type === "gif";
-	const rawSrc = isImage ? resolveAssetUrl(interpolate(layer.src ?? "", data)) : "";
-	const image = useHtmlImage(rawSrc);
+	const imageSrc = isImage ? resolveAssetUrl(interpolate(layer.src ?? "", data, selection)) : "";
+	const videoSrc =
+		layer.type === "video" ? resolveAssetUrl(interpolate(layer.src ?? "", data, selection)) : "";
+	const image = useHtmlImage(imageSrc);
+	const { video, frame } = useHtmlVideo(videoSrc, {
+		loop: style.videoLoop ?? true,
+		muted: style.videoMuted ?? true,
+		rate: style.videoRate ?? 1,
+	});
+
+	// The editor only paints a single video frame; Konva does not watch the
+	// element, so force a redraw whenever a new picture is decoded.
+	const videoNodeRef = useRef<Konva.Image | null>(null);
+	const setVideoNode = useCallback(
+		(node: Konva.Image | null) => {
+			videoNodeRef.current = node;
+			registerRef(node);
+		},
+		[registerRef],
+	);
+	useEffect(() => {
+		if (!video) return;
+		videoNodeRef.current?.getLayer()?.batchDraw();
+	}, [video, frame]);
 
 	// --- geometry (percent -> stage px)
 	let w: number | undefined;
 	let h: number | undefined;
 	if (layer.width !== undefined) w = (layer.width / 100) * stageW;
 	else if (isImage && image) w = (image.naturalWidth || image.width) * k;
+	else if (layer.type === "video" && video) w = (video.videoWidth || 320) * k;
 	if (layer.height !== undefined) h = (layer.height / 100) * stageH;
 	else if (isImage && image) h = (image.naturalHeight || image.height) * ky;
+	else if (layer.type === "video" && video) h = (video.videoHeight || 180) * ky;
 
 	// Konva rotates/scales around (offsetX, offsetY); matching CSS means using
 	// the box centre whenever we know the box.
@@ -692,7 +734,7 @@ function LayerNode({
 	};
 
 	if (layer.type === "text") {
-		const text = applyTextTransform(resolveText(layer, data), style.textTransform);
+		const text = applyTextTransform(resolveText(layer, data, selection), style.textTransform);
 		const hasBox = w !== undefined && h !== undefined;
 		return (
 			<Fragment>
@@ -789,6 +831,58 @@ function LayerNode({
 				shadowOffsetY={(style.shadowOffsetY ?? 0) * k}
 				perfectDrawEnabled={false}
 			/>
+		);
+	}
+
+	// video: a Konva.Image paints the paused frame; until one is available (no
+	// src, still loading or a 404) a dashed placeholder keeps the layer visible
+	// and selectable. Konva's hit area follows width/height, so an image-less
+	// node is still clickable.
+	if (layer.type === "video") {
+		const boxW = w ?? 320 * k;
+		const boxH = h ?? 180 * k;
+		return (
+			<Fragment>
+				{!video ? (
+					<Fragment>
+						<Rect
+							x={posX}
+							y={posY}
+							offsetX={originX}
+							offsetY={originY}
+							width={boxW}
+							height={boxH}
+							rotation={rotation}
+							opacity={opacity}
+							fill="rgba(74,168,255,0.06)"
+							stroke="rgba(74,168,255,0.65)"
+							strokeWidth={1}
+							dash={[8, 6]}
+							cornerRadius={(style.radius ?? 0) * k}
+							listening={false}
+							perfectDrawEnabled={false}
+						/>
+						<Text
+							text={videoPlaceholderLabel(videoSrc)}
+							x={posX - originX + 8}
+							y={posY - originY + 8}
+							width={Math.max(10, boxW - 16)}
+							fontSize={12}
+							fill="rgba(143,211,255,0.95)"
+							listening={false}
+						/>
+					</Fragment>
+				) : null}
+				<KonvaImage
+					ref={setVideoNode}
+					{...common}
+					image={video}
+					width={boxW}
+					height={boxH}
+					cornerRadius={(style.radius ?? 0) * k}
+					perfectDrawEnabled={false}
+				/>
+			</Fragment>
 		);
 	}
 

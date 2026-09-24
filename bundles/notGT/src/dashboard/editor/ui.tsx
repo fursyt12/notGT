@@ -13,6 +13,7 @@ import {
 	type LayerType,
 	type TitleData,
 	type TransitionType,
+	type VariableSelection,
 } from "../../shared/types";
 
 // ------------------------------------------------------------------ helpers
@@ -45,12 +46,16 @@ export function stringifyValue(value: unknown): string {
  * `binding` wins, otherwise `{{path}}` tokens are interpolated. The raw string
  * is kept when a token resolves to nothing, so the operator still sees it.
  */
-export function resolveText(layer: Layer, data: TitleData): string {
+export function resolveText(
+	layer: Layer,
+	data: TitleData,
+	selection: VariableSelection = {},
+): string {
 	if (layer.binding) {
-		const direct = stringifyValue(getByPath(data, layer.binding));
+		const direct = stringifyValue(getByPath(data, layer.binding, selection));
 		if (direct !== "") return direct;
 	}
-	return interpolate(layer.text ?? "", data);
+	return interpolate(layer.text ?? "", data, selection);
 }
 
 export function sortByZ(layers: Layer[]): Layer[] {
@@ -83,6 +88,7 @@ export const LAYER_TYPE_LABEL: Record<LayerType, string> = {
 	shape: "Фигура",
 	image: "Картинка",
 	gif: "GIF",
+	video: "видео",
 };
 
 export const TRANSITION_TYPES: TransitionType[] = [
@@ -149,6 +155,93 @@ export function useHtmlImage(src: string): HTMLImageElement | undefined {
 	}, [src]);
 
 	return image;
+}
+
+/**
+ * Loads a *paused* video element for Konva's `image` prop.
+ *
+ * The editor never plays clips: the element is only used to paint a single
+ * frame, so it is muted/playsinline, `preload="metadata"` and paused as soon as
+ * a frame is available. A missing, undecodable or 404 src simply yields
+ * `undefined`, letting the caller draw a placeholder instead of crashing.
+ *
+ * `frame` is bumped on every media event that may produce a new picture
+ * (`loadedmetadata` / `loadeddata` / `seeked`) so the canvas can force a redraw
+ * — Konva does not observe a video element's frames by itself.
+ */
+export function useHtmlVideo(
+	src: string,
+	options: { loop?: boolean; muted?: boolean; rate?: number } = {},
+): { video: HTMLVideoElement | undefined; frame: number } {
+	const { loop = true, muted = true, rate = 1 } = options;
+	const [video, setVideo] = useState<HTMLVideoElement | undefined>(undefined);
+	const [frame, setFrame] = useState(0);
+
+	useEffect(() => {
+		if (!src) {
+			setVideo(undefined);
+			return;
+		}
+		let alive = true;
+		const el = document.createElement("video");
+		el.muted = muted;
+		el.defaultMuted = muted;
+		el.playsInline = true;
+		el.loop = loop;
+		el.autoplay = false;
+		el.controls = false;
+		el.preload = "metadata";
+		if (Number.isFinite(rate) && rate > 0) el.playbackRate = rate;
+
+		const bump = () => {
+			if (alive) setFrame((value) => value + 1);
+		};
+		const onMeta = () => {
+			if (!alive) return;
+			// Nudge off frame 0 so the browser actually decodes a picture, then
+			// stop: the editor must not consume CPU playing the clip.
+			try {
+				if (el.duration > 0) el.currentTime = Math.min(0.1, el.duration / 2);
+			} catch {
+				// Not seekable yet — `loadeddata` will still yield frame 0.
+			}
+			setVideo(el);
+			bump();
+		};
+		const onData = () => {
+			if (!alive) return;
+			setVideo(el);
+			el.pause();
+			bump();
+		};
+		const onError = () => {
+			if (alive) setVideo(undefined);
+		};
+
+		el.addEventListener("loadedmetadata", onMeta);
+		el.addEventListener("loadeddata", onData);
+		el.addEventListener("seeked", bump);
+		el.addEventListener("error", onError);
+		el.src = src;
+		el.load();
+
+		return () => {
+			alive = false;
+			el.removeEventListener("loadedmetadata", onMeta);
+			el.removeEventListener("loadeddata", onData);
+			el.removeEventListener("seeked", bump);
+			el.removeEventListener("error", onError);
+			el.pause();
+			el.removeAttribute("src");
+			try {
+				el.load();
+			} catch {
+				// Detached element — nothing to release.
+			}
+		};
+	}, [src, loop, muted, rate]);
+
+	return { video, frame };
 }
 
 /** Tracks the content-box size of an element (for "fit to available area"). */
