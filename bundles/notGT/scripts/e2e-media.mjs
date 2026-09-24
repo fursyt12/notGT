@@ -97,6 +97,20 @@ async function waitForJob(jobId, timeoutMs = 90_000) {
 	throw new Error(`job ${jobId} did not finish: ${JSON.stringify(job)}`);
 }
 
+async function api(method, url, body) {
+	const response = await fetch(`${BASE}${url}`, {
+		method,
+		headers: body ? { "content-type": "application/json" } : undefined,
+		body: body ? JSON.stringify(body) : undefined,
+	});
+	const text = await response.text();
+	try {
+		return JSON.parse(text);
+	} catch {
+		throw new Error(`${method} ${url} -> ${response.status}: ${text.slice(0, 200)}`);
+	}
+}
+
 async function remove(name) {
 	await fetch(`${MEDIA}/file/${encodeURIComponent(name)}`, { method: "DELETE" }).catch(() => {});
 }
@@ -174,6 +188,91 @@ async function main() {
 
 		const videoServed = await fetch(`${BASE}${videoJob.src}`);
 		check("video-layer file is served", videoServed.status === 200, `HTTP ${videoServed.status}`);
+
+		// --- 1c. holdMode "video" keeps the title up for the clip's length --
+		// Measured with ffprobe rather than our own probe endpoint, so the test
+		// checks the behaviour independently of the code under test.
+		const clipSeconds = Number(
+			spawnSync("ffprobe", ["-v", "error", "-show_entries", "format=duration",
+				"-of", "default=nw=1:nk=1", mov], { encoding: "utf8" }).stdout.trim(),
+		);
+		const videoSrc = videoJob.src;
+		await api("POST", "/api/templates", {
+			id: "e2e-hold-video",
+			name: "E2E hold video",
+			kind: "layers",
+			width: 1920,
+			height: 1080,
+			layers: [
+				{
+					id: "hv",
+					type: "video",
+					x: 0,
+					y: 0,
+					width: 100,
+					height: 100,
+					src: videoSrc,
+					style: { opacity: 1, rotation: 0, videoAutoplay: true, videoLoop: true, videoMuted: true },
+					z: 1,
+				},
+			],
+			inTransition: { type: "none", durationMs: 0 },
+			outTransition: { type: "none", durationMs: 0 },
+			playback: { mode: "once", intervalMs: 10000, holdMs: 6000, autoStart: false, holdMode: "video" },
+		});
+		await api("POST", "/api/outs", {
+			id: "e2e-hold-out",
+			name: "E2E hold out",
+			width: 1920,
+			height: 1080,
+		});
+		const holdItem = await api("POST", "/api/outs/e2e-hold-out/items", {
+			templateId: "e2e-hold-video",
+			// Deliberately tiny: if holdMode is ignored the title vanishes at once.
+			playback: { mode: "once", intervalMs: 10000, holdMs: 200, autoStart: false, holdMode: "video" },
+		});
+
+		const storedItem = (await api("GET", "/api/outs/e2e-hold-out")).out.items[0];
+		check(
+			"holdMode survives an API round-trip",
+			storedItem?.playback?.holdMode === "video",
+			JSON.stringify(storedItem?.playback),
+		);
+
+		const probe = await api("GET", "/api/media/probe?templateId=e2e-hold-video");
+		check(
+			"the probe endpoint reports the clip length",
+			Math.abs((probe.durationMs ?? 0) - clipSeconds * 1000) < 300,
+			`${probe.durationMs} ms vs ffprobe ${Math.round(clipSeconds * 1000)} ms`,
+		);
+
+		const itemId = holdItem.item.id;
+		await api("POST", `/api/outs/e2e-hold-out/items/${itemId}/trigger`);
+		const started = Date.now();
+		let onAirFor = 0;
+		let droppedAt = null;
+		while (Date.now() - started < clipSeconds * 1000 + 2500) {
+			await sleep(100);
+			const state = await api("GET", "/api/state");
+			const on = (state.playing?.["e2e-hold-out"] ?? []).includes(itemId);
+			if (on) onAirFor = Date.now() - started;
+			else if (droppedAt === null && onAirFor > 0) {
+				droppedAt = Date.now() - started;
+				break;
+			}
+		}
+		check(
+			"the title outlives the configured holdMs",
+			onAirFor > 900,
+			`${onAirFor} ms on air with holdMs 200`,
+		);
+		check(
+			"it is taken off air with the clip",
+			droppedAt !== null && Math.abs(droppedAt - clipSeconds * 1000) < 900,
+			`dropped ${droppedAt} ms vs clip ${Math.round(clipSeconds * 1000)} ms`,
+		);
+		await api("DELETE", "/api/outs/e2e-hold-out");
+		await api("DELETE", "/api/templates/e2e-hold-video");
 
 		// --- 2. a browser-ready file is published as-is -------------------
 		const ready = await upload("e2e-ready.webm", webm);

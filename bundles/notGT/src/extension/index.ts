@@ -4,6 +4,7 @@ import { BUNDLE_NAME, MESSAGES } from "../shared/types";
 import { createApiRouter } from "./api";
 import type { Handler } from "./auth";
 import { createMediaRouter } from "./media";
+import { probeDurationMs } from "./video-duration";
 import { syncFileAnimations } from "./file-animations";
 import { Scheduler } from "./scheduler";
 import { playTemplateOnce } from "./trigger";
@@ -22,7 +23,21 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	scheduler: Scheduler;
 } {
 	const store = createStore(nodecg);
-	const scheduler = new Scheduler(nodecg, store);
+
+	// Where served media lives on disk, so the scheduler can measure a clip.
+	const assetsRoot = path.resolve(__dirname, "..", "..", "..", "assets");
+	const mediaRoots = {
+		assetsDir: assetsRoot,
+		graphicsDir: path.resolve(__dirname, "..", "graphics"),
+	};
+	/** Length of the template's first video layer, if it has a local one. */
+	const videoDuration = (templateId: string): number | undefined => {
+		const template = store.getTemplate(templateId);
+		const layer = template?.layers?.find((l) => l.type === "video" && l.src);
+		return layer ? probeDurationMs(layer.src, mediaRoots) : undefined;
+	};
+
+	const scheduler = new Scheduler(nodecg, store, videoDuration);
 
 	// Mount under both the canonical `/api` (short, Companion friendly) and the
 	// bundle-scoped path, so it also works behind a path-prefixed reverse proxy.
@@ -33,7 +48,10 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	const syncResult = syncAnimations();
 
 	const mount = nodecg.mount as unknown as (path: string, handler: unknown) => void;
-	const router = createApiRouter(nodecg, store, scheduler, { syncAnimations });
+	const router = createApiRouter(nodecg, store, scheduler, {
+		syncAnimations,
+		videoDuration,
+	});
 	mount("/api", router);
 	mount(`/bundles/${BUNDLE_NAME}/api`, router);
 
@@ -41,7 +59,6 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	// tree (a Docker volume), so uploads survive a container rebuild. Guarded by
 	// NodeCG's own session check, not by the API token: the dashboard panel has
 	// no token and must not need one.
-	const assetsRoot = path.resolve(__dirname, "..", "..", "..", "assets");
 	const mediaDir = nodecg.bundleConfig?.mediaDir
 		? path.resolve(nodecg.bundleConfig.mediaDir)
 		: path.join(assetsRoot, BUNDLE_NAME, "media");

@@ -138,6 +138,13 @@ export interface PlaybackConfig {
 	holdMs: number;
 	/** Start looping automatically when the extension boots. */
 	autoStart: boolean;
+	/**
+	 * `video` keeps the animation on air for exactly as long as its video layer
+	 * plays, instead of the configured `holdMs` (and never restarts a loop
+	 * before the clip has finished). Falls back to `holdMs` when the length
+	 * cannot be determined. Default: `fixed`.
+	 */
+	holdMode?: "fixed" | "video";
 }
 
 /** Code-authored animation (`kind: "code"`). */

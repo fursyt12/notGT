@@ -34,6 +34,8 @@ interface Router {
 export interface ApiHooks {
 	/** Re-scans `graphics/animations/` for file-authored animations. */
 	syncAnimations?: () => { added: number; total: number };
+	/** Length of a template's video layer in ms, when it has one. */
+	videoDuration?: (templateId: string) => number | undefined;
 }
 
 export function createApiRouter(
@@ -92,6 +94,15 @@ export function createApiRouter(
 			return;
 		}
 		json(res, 200, { ok: true, data: store.deleteData(path) });
+	});
+
+	// --------------------------------------------------- video length probe
+	router.get("/media/probe", (req, res) => {
+		const templateId = pickString(req.query["templateId"]);
+		const durationMs = templateId
+			? (hooks.videoDuration?.(templateId) ?? null)
+			: null;
+		json(res, 200, { templateId: templateId ?? null, durationMs });
 	});
 
 	// ----------------------------------------------------------- selection
@@ -471,6 +482,9 @@ function mergePlayback(value: unknown, base: OutItem["playback"]) {
 		intervalMs: pickNumber(value["intervalMs"]) ?? base.intervalMs,
 		holdMs: pickNumber(value["holdMs"]) ?? base.holdMs,
 		autoStart: typeof value["autoStart"] === "boolean" ? value["autoStart"] : base.autoStart,
+		holdMode: (value["holdMode"] === "video" ? "video" : "fixed") as
+			| "video"
+			| "fixed",
 	};
 }
 

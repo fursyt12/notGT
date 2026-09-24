@@ -19,6 +19,8 @@ export class Scheduler {
 	constructor(
 		private readonly nodecg: ServerAPI,
 		private readonly store: Store,
+		/** Length of a template's video layer, when it has one. */
+		private readonly durationOf?: (templateId: string) => number | undefined,
 	) {
 		store.outs.on("change", () => this.sync());
 		store.templates.on("change", () => this.sync());
@@ -61,8 +63,7 @@ export class Scheduler {
 	trigger(outId: string, itemId: string, holdMs?: number): boolean {
 		const found = this.store.getItem(outId, itemId);
 		if (!found) return false;
-		const duration = clampDuration(holdMs ?? found.item.playback.holdMs ?? 4000);
-		this.play(outId, itemId, duration);
+		this.play(outId, itemId, this.holdFor(outId, itemId, holdMs));
 		return true;
 	}
 
@@ -97,6 +98,47 @@ export class Scheduler {
 		for (const key of [...this.timers.keys()]) this.stop(key);
 	}
 
+	/**
+	 * On-air time for a placement: the clip's own length when `holdMode` asks for
+	 * it, otherwise the configured `holdMs`. An explicit value (a manual trigger)
+	 * always wins.
+	 */
+	private holdFor(outId: string, itemId: string, explicit?: number): number {
+		if (explicit !== undefined) return clampDuration(explicit);
+		const found = this.store.getItem(outId, itemId);
+		if (!found) return 4000;
+		const template = this.store.getTemplate(found.item.templateId);
+		const playback = found.item.playback ?? template?.playback;
+		if (playback?.holdMode === "video") {
+			const duration = this.durationOf?.(found.item.templateId);
+			if (duration && duration > 0) return clampDuration(duration);
+		}
+		return clampDuration(playback?.holdMs ?? 4000);
+	}
+
+	/** A looping clip must be allowed to finish before the next pass starts. */
+	private intervalFor(outId: string, itemId: string): number {
+		const found = this.store.getItem(outId, itemId);
+		if (!found) return 10_000;
+		const playback = found.item.playback;
+		let interval = playback.intervalMs ?? 10_000;
+		if (playback.holdMode === "video") {
+			interval = Math.max(interval, this.holdFor(outId, itemId));
+		}
+		return clampInterval(interval);
+	}
+
+	/** On-air time implied by a template's own playback settings. */
+	holdForTemplate(templateId: string): number {
+		const template = this.store.getTemplate(templateId);
+		const playback = template?.playback;
+		if (playback?.holdMode === "video") {
+			const duration = this.durationOf?.(templateId);
+			if (duration && duration > 0) return clampDuration(duration);
+		}
+		return clampDuration(playback?.holdMs ?? 4000);
+	}
+
 	private key(outId: string, itemId: string): string {
 		return `${outId}::${itemId}`;
 	}
@@ -112,14 +154,11 @@ export class Scheduler {
 				this.stop(key);
 				return;
 			}
-			const playback = found.item.playback;
-			this.play(outId, itemId, clampDuration(playback.holdMs));
+			this.play(outId, itemId, this.holdFor(outId, itemId));
 		};
 
 		tick();
-		const found = this.store.getItem(outId, itemId);
-		const interval = clampInterval(found?.item.playback.intervalMs ?? 10_000);
-		entry.interval = setInterval(tick, interval);
+		entry.interval = setInterval(tick, this.intervalFor(outId, itemId));
 	}
 
 	/**

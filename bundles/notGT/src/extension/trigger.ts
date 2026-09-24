@@ -44,7 +44,10 @@ export function playTemplateOnce(
 		data: options.data,
 		label: options.label,
 	});
-	const holdMs = Math.max(250, options.holdMs ?? template.playback.holdMs ?? 4000);
+	const holdMs = Math.max(
+		250,
+		options.holdMs ?? scheduler.holdForTemplate(templateId),
+	);
 	const timer = setTimeout(() => {
 		// Only hide if nothing else has taken over the program output meanwhile.
 		if (store.activeTitle.value?.templateId === templateId) {
