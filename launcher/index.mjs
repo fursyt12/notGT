@@ -64,7 +64,8 @@ const appDir = path.resolve(args.app ?? path.join(__dirname, ".."));
 
 /** Map a bind host to a host that can actually be dialled from this machine. */
 function openHostFor(host) {
-	if (host === "0.0.0.0" || host === "::" || host === "0:0:0:0:0:0:0:0") return "127.0.0.1";
+	if (host === "0.0.0.0" || host === "::" || host === "0:0:0:0:0:0:0:0")
+		return "127.0.0.1";
 	return host;
 }
 
@@ -165,7 +166,11 @@ function readPersisted() {
 
 function persistSettings(host, port) {
 	try {
-		fs.writeFileSync(PERSIST_PATH, JSON.stringify({ host, port }, null, 2) + "\n", "utf8");
+		fs.writeFileSync(
+			PERSIST_PATH,
+			JSON.stringify({ host, port }, null, 2) + "\n",
+			"utf8",
+		);
 	} catch {
 		/* ignore write failures - persistence is best effort */
 	}
@@ -249,7 +254,9 @@ function attachLogs(child) {
 function checkPortFree(host, port) {
 	return new Promise((resolve) => {
 		const probe = net.createServer();
-		probe.once("error", (err) => resolve({ ok: false, code: err.code, message: err.message }));
+		probe.once("error", (err) =>
+			resolve({ ok: false, code: err.code, message: err.message }),
+		);
 		probe.once("listening", () => probe.close(() => resolve({ ok: true })));
 		try {
 			probe.listen({ host, port, exclusive: true });
@@ -271,10 +278,13 @@ function probeHttp(host, port) {
 		};
 		let req;
 		try {
-			req = http.get({ host: openHostFor(host), port, path: "/", timeout: 2000 }, (res) => {
-				res.resume();
-				done(true);
-			});
+			req = http.get(
+				{ host: openHostFor(host), port, path: "/", timeout: 2000 },
+				(res) => {
+					res.resume();
+					done(true);
+				},
+			);
 		} catch {
 			done(false);
 			return;
@@ -289,7 +299,8 @@ function probeHttp(host, port) {
 
 /** Wait for a child to exit, up to `ms`. Returns true if it exited. */
 function waitExit(child, ms) {
-	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+	if (child.exitCode !== null || child.signalCode !== null)
+		return Promise.resolve(true);
 	return new Promise((resolve) => {
 		const timer = setTimeout(() => {
 			child.removeListener("exit", onExit);
@@ -311,10 +322,14 @@ function waitExit(child, ms) {
 function killTree(child) {
 	if (process.platform === "win32") {
 		try {
-			const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-				stdio: "ignore",
-				windowsHide: true,
-			});
+			const killer = spawn(
+				"taskkill",
+				["/PID", String(child.pid), "/T", "/F"],
+				{
+					stdio: "ignore",
+					windowsHide: true,
+				},
+			);
 			killer.on("error", () => {
 				try {
 					child.kill();
@@ -345,7 +360,9 @@ function hardKillChild() {
 	if (!child || child.exitCode !== null || child.signalCode !== null) return;
 	try {
 		if (process.platform === "win32") {
-			spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+			spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+				stdio: "ignore",
+			});
 		} else {
 			child.kill("SIGKILL");
 		}
@@ -364,7 +381,8 @@ async function writeNodecgConfig(host, port) {
 		const raw = await fsp.readFile(cfgPath, "utf8");
 		try {
 			const parsed = JSON.parse(raw);
-			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) existing = parsed;
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+				existing = parsed;
 		} catch {
 			/* tolerate invalid config; start from scratch */
 		}
@@ -378,19 +396,29 @@ async function writeNodecgConfig(host, port) {
 }
 
 async function startServer(requestedHost, requestedPort) {
-	if (state.status === "starting" || state.status === "running" || state.status === "stopping") {
+	if (
+		state.status === "starting" ||
+		state.status === "running" ||
+		state.status === "stopping"
+	) {
 		return {
 			http: 409,
 			body: { ...statePayload(), error: "Сервер уже запущен или запускается." },
 		};
 	}
 
-	const host = typeof requestedHost === "string" && requestedHost.trim() ? requestedHost.trim() : "0.0.0.0";
+	const host =
+		typeof requestedHost === "string" && requestedHost.trim()
+			? requestedHost.trim()
+			: "0.0.0.0";
 	const port = Number(requestedPort);
 	if (!isValidPort(port)) {
 		return {
 			http: 400,
-			body: { ...statePayload(), error: "Некорректный порт: укажите число от 1 до 65535." },
+			body: {
+				...statePayload(),
+				error: "Некорректный порт: укажите число от 1 до 65535.",
+			},
 		};
 	}
 
@@ -421,7 +449,9 @@ async function startServer(requestedHost, requestedPort) {
 
 	state.status = "starting";
 	state.statusText = `Запуск сервера на ${host}:${port}…`;
-	pushLog(`[launcher] Запуск: ${process.execPath} index.js (cwd=${appDir}, ${host}:${port})`);
+	pushLog(
+		`[launcher] Запуск: ${process.execPath} index.js (cwd=${appDir}, ${host}:${port})`,
+	);
 
 	let child;
 	try {
@@ -460,7 +490,9 @@ async function startServer(requestedHost, requestedPort) {
 				state.statusText = `Сервер неожиданно завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}).`;
 			}
 		}
-		pushLog(`[launcher] Процесс завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}).`);
+		pushLog(
+			`[launcher] Процесс завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}).`,
+		);
 	});
 
 	// Poll until the HTTP server answers, the child dies, or we time out.
@@ -610,7 +642,9 @@ async function handleRequest(req, res) {
 		try {
 			html = await fsp.readFile(path.join(__dirname, "ui.html"), "utf8");
 		} catch (err) {
-			sendJson(res, 500, { error: `Не удалось прочитать ui.html: ${err.message}` });
+			sendJson(res, 500, {
+				error: `Не удалось прочитать ui.html: ${err.message}`,
+			});
 			return;
 		}
 		res.writeHead(200, {
@@ -653,7 +687,10 @@ async function handleRequest(req, res) {
 
 	if (method === "POST" && pathname === "/api/open") {
 		const body = await readJsonBody(req);
-		const target = typeof body.url === "string" && body.url ? body.url : guiUrlFor(state.host, state.port);
+		const target =
+			typeof body.url === "string" && body.url
+				? body.url
+				: guiUrlFor(state.host, state.port);
 		const ok = openUrl(target);
 		sendJson(res, 200, { ok });
 		return;
@@ -706,7 +743,10 @@ process.on("exit", () => hardKillChild());
 // Boot
 // ---------------------------------------------------------------------------
 
-const listenPort = isValidPort(args.controlPort) || args.controlPort === 0 ? args.controlPort : 0;
+const listenPort =
+	isValidPort(args.controlPort) || args.controlPort === 0
+		? args.controlPort
+		: 0;
 
 controlServer.listen(listenPort, "127.0.0.1", () => {
 	const actualPort = controlServer.address().port;

@@ -89,7 +89,9 @@ function parseArgs(argv) {
 		}
 	}
 	if (opts.nodeVersion && !/^\d+\.\d+\.\d+$/.test(opts.nodeVersion)) {
-		throw new Error(`--node-version must look like x.y.z (got ${opts.nodeVersion})`);
+		throw new Error(
+			`--node-version must look like x.y.z (got ${opts.nodeVersion})`,
+		);
 	}
 	return opts;
 }
@@ -128,8 +130,14 @@ function winQuote(value) {
  * On Windows commands are invoked through cmd.exe so `npm` (npm.cmd) and
  * paths containing spaces work; on POSIX arguments are passed verbatim.
  */
-function run(command, args, { cwd = REPO_ROOT, env = {}, optional = false, label } = {}) {
-	log(`$ ${[command, ...args].join(" ")}${cwd === REPO_ROOT ? "" : `   (cwd: ${cwd})`}`);
+function run(
+	command,
+	args,
+	{ cwd = REPO_ROOT, env = {}, optional = false, label } = {},
+) {
+	log(
+		`$ ${[command, ...args].join(" ")}${cwd === REPO_ROOT ? "" : `   (cwd: ${cwd})`}`,
+	);
 	const result = IS_WINDOWS
 		? spawnSync([command, ...args].map(winQuote).join(" "), {
 				cwd,
@@ -154,14 +162,19 @@ function run(command, args, { cwd = REPO_ROOT, env = {}, optional = false, label
 			warn(`${label ?? command} exited with code ${result.status}`);
 			return false;
 		}
-		throw new Error(`Command failed with code ${result.status}: ${command} ${args.join(" ")}`);
+		throw new Error(
+			`Command failed with code ${result.status}: ${command} ${args.join(" ")}`,
+		);
 	}
 	return true;
 }
 
 function commandExists(command) {
 	const probe = IS_WINDOWS
-		? spawnSync(winQuote(command) + " --version", { stdio: "ignore", shell: true })
+		? spawnSync(winQuote(command) + " --version", {
+				stdio: "ignore",
+				shell: true,
+			})
 		: spawnSync(command, ["--version"], { stdio: "ignore" });
 	return !probe.error && probe.status === 0;
 }
@@ -280,7 +293,8 @@ async function fetchText(url) {
 
 async function downloadFile(url, dest) {
 	const res = await fetch(url);
-	if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} while downloading ${url}`);
+	if (!res.ok || !res.body)
+		throw new Error(`HTTP ${res.status} while downloading ${url}`);
 	await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(dest));
 }
 
@@ -367,8 +381,13 @@ function listWorkspaces() {
  */
 function stageProductionNodeModules() {
 	const stage = fs.mkdtempSync(path.join(os.tmpdir(), "notgt-win-stage-"));
-	log(`Staging production dependencies in ${stage} (root node_modules untouched)…`);
-	fs.copyFileSync(path.join(REPO_ROOT, "package.json"), path.join(stage, "package.json"));
+	log(
+		`Staging production dependencies in ${stage} (root node_modules untouched)…`,
+	);
+	fs.copyFileSync(
+		path.join(REPO_ROOT, "package.json"),
+		path.join(stage, "package.json"),
+	);
 	fs.copyFileSync(
 		path.join(REPO_ROOT, "package-lock.json"),
 		path.join(stage, "package-lock.json"),
@@ -403,7 +422,10 @@ function assembleApp(stagedModules) {
 
 	// Runtime entry point + root manifest (needed: nodecgRoot: true).
 	fs.copyFileSync(path.join(REPO_ROOT, "index.js"), path.join(app, "index.js"));
-	fs.copyFileSync(path.join(REPO_ROOT, "package.json"), path.join(app, "package.json"));
+	fs.copyFileSync(
+		path.join(REPO_ROOT, "package.json"),
+		path.join(app, "package.json"),
+	);
 
 	// Built workspaces (dist/, types/, schemas/, …) — no nested node_modules.
 	fs.mkdirSync(path.join(app, "workspaces"), { recursive: true });
@@ -419,7 +441,9 @@ function assembleApp(stagedModules) {
 		skipNames: ["node_modules", ".e2e"],
 	});
 	// Never ship a real bundle config (apiToken lives there).
-	fs.rmSync(path.join(app, "bundles", "notGT", "cfg", "notGT.json"), { force: true });
+	fs.rmSync(path.join(app, "bundles", "notGT", "cfg", "notGT.json"), {
+		force: true,
+	});
 
 	// Production-only dependency tree, symlinks dereferenced so the zip is
 	// portable to Windows without needing symlink support.
@@ -430,7 +454,11 @@ function assembleApp(stagedModules) {
 	for (const dir of ["cfg", "db", "assets", "logs"]) {
 		fs.mkdirSync(path.join(app, dir), { recursive: true });
 	}
-	fs.writeFileSync(path.join(app, "cfg", "README.txt"), cfgReadmeText(), "utf8");
+	fs.writeFileSync(
+		path.join(app, "cfg", "README.txt"),
+		cfgReadmeText(),
+		"utf8",
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +541,9 @@ async function ensureNodeRuntime(destDir, version) {
 
 function buildLauncherExe() {
 	if (!exists(LAUNCHER_C_SRC)) {
-		warn(`${path.relative(REPO_ROOT, LAUNCHER_C_SRC)} not found — skipping the .exe`);
+		warn(
+			`${path.relative(REPO_ROOT, LAUNCHER_C_SRC)} not found — skipping the .exe`,
+		);
 		return false;
 	}
 	const candidates = [];
@@ -562,7 +592,7 @@ function writeCmdFallback() {
 		'"node\\node.exe" "launcher\\index.mjs" --app "app" %*',
 		"set NOTGT_EXIT=%ERRORLEVEL%",
 		"popd",
-		"if not \"%NOTGT_EXIT%\"==\"0\" (",
+		'if not "%NOTGT_EXIT%"=="0" (',
 		"  echo.",
 		"  echo notGT launcher завершился с кодом %NOTGT_EXIT%.",
 		"  pause",
@@ -665,9 +695,13 @@ function makeZip() {
 	if (IS_WINDOWS && !commandExists("zip")) {
 		// Windows 10+ ships bsdtar, which can write zip via -a.
 		log(`Creating ${path.relative(REPO_ROOT, zipPath)} with tar (bsdtar)…`);
-		run("tar", ["-a", "-c", "-f", `${PACKAGE_DIR_NAME}.zip`, PACKAGE_DIR_NAME], {
-			cwd: OUT_ROOT,
-		});
+		run(
+			"tar",
+			["-a", "-c", "-f", `${PACKAGE_DIR_NAME}.zip`, PACKAGE_DIR_NAME],
+			{
+				cwd: OUT_ROOT,
+			},
+		);
 	} else {
 		log(`Creating ${path.relative(REPO_ROOT, zipPath)}…`);
 		run("zip", ["-r", "-q", `${PACKAGE_DIR_NAME}.zip`, PACKAGE_DIR_NAME], {
@@ -686,8 +720,21 @@ function printSummary(zipPath, exeBuilt) {
 		["launcher/ui.html", path.join(PACKAGE_DIR, "launcher", "ui.html")],
 		["node/node.exe", path.join(PACKAGE_DIR, "node", "node.exe")],
 		["app/index.js", path.join(PACKAGE_DIR, "app", "index.js")],
-		["app/bundles/notGT/extension/index.js", path.join(PACKAGE_DIR, "app", "bundles", "notGT", "extension", "index.js")],
-		["app/workspaces/nodecg/dist", path.join(PACKAGE_DIR, "app", "workspaces", "nodecg", "dist")],
+		[
+			"app/bundles/notGT/extension/index.js",
+			path.join(
+				PACKAGE_DIR,
+				"app",
+				"bundles",
+				"notGT",
+				"extension",
+				"index.js",
+			),
+		],
+		[
+			"app/workspaces/nodecg/dist",
+			path.join(PACKAGE_DIR, "app", "workspaces", "nodecg", "dist"),
+		],
 	];
 	console.log("");
 	log(`Package: ${PACKAGE_DIR}`);
@@ -697,15 +744,21 @@ function printSummary(zipPath, exeBuilt) {
 	}
 	console.log("");
 	log("Top-level contents:");
-	for (const entry of fs.readdirSync(PACKAGE_DIR, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+	for (const entry of fs
+		.readdirSync(PACKAGE_DIR, { withFileTypes: true })
+		.sort((a, b) => a.name.localeCompare(b.name))) {
 		const full = path.join(PACKAGE_DIR, entry.name);
 		const size = entry.isDirectory() ? dirSize(full) : fs.statSync(full).size;
-		console.log(`  ${entry.isDirectory() ? "d" : "f"} ${entry.name.padEnd(24)} ${human(size)}`);
+		console.log(
+			`  ${entry.isDirectory() ? "d" : "f"} ${entry.name.padEnd(24)} ${human(size)}`,
+		);
 	}
 	log(`Total package size: ${human(dirSize(PACKAGE_DIR))}`);
 	if (zipPath) log(`Zip: ${zipPath} (${human(fs.statSync(zipPath).size)})`);
 	if (!exeBuilt) {
-		warn(`No "${LAUNCHER_EXE_NAME}": ship notGT.cmd as the entry point (or rebuild with mingw-w64).`);
+		warn(
+			`No "${LAUNCHER_EXE_NAME}": ship notGT.cmd as the entry point (or rebuild with mingw-w64).`,
+		);
 	}
 }
 
@@ -722,7 +775,9 @@ async function main() {
 		return;
 	}
 
-	log(`notGT Windows package builder (Node ${process.version}, ${process.platform})`);
+	log(
+		`notGT Windows package builder (Node ${process.version}, ${process.platform})`,
+	);
 	log(`Node runtime version: ${opts.nodeVersion}`);
 	log(`Output root: ${OUT_ROOT}`);
 

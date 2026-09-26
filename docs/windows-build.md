@@ -38,7 +38,7 @@ single top-level entry.
 
 1. **Builds** (unless `--skip-build`): `npm run build` at the repo root and
    `npm ci && npm run build` inside `bundles/notGT` (the bundle has its own
-   lockfile and is *not* an npm workspace).
+   lockfile and is _not_ an npm workspace).
 2. **Production dependencies** — mirrored from the `Dockerfile`: the manifests
    and the built `workspaces/*` are copied to a throwaway staging directory in
    the OS temp dir, where `npm ci --omit=dev` runs. The developer's own root
@@ -89,12 +89,12 @@ node scripts/build-windows.mjs --node-version 22.14.0
 
 Flags:
 
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--node-version <x.y.z>` | `22.14.0` | Windows Node runtime version |
-| `--out <dir>` | `dist` | Output root (`notGT-win-x64/`, the zip and `.cache/` live here) |
-| `--skip-build` | off | Reuse existing root/bundle build output |
-| `--no-zip` | off | Assemble the folder only |
+| Flag                     | Default   | Meaning                                                         |
+| ------------------------ | --------- | --------------------------------------------------------------- |
+| `--node-version <x.y.z>` | `22.14.0` | Windows Node runtime version                                    |
+| `--out <dir>`            | `dist`    | Output root (`notGT-win-x64/`, the zip and `.cache/` live here) |
+| `--skip-build`           | off       | Reuse existing root/bundle build output                         |
+| `--no-zip`               | off       | Assemble the folder only                                        |
 
 > Run the packaging **on Windows** for a shippable build: `npm ci --omit=dev`
 > installs platform-specific native modules (e.g. `better-sqlite3`), so a build

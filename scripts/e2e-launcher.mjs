@@ -26,7 +26,10 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = path.resolve(
+	path.dirname(fileURLToPath(import.meta.url)),
+	"..",
+);
 const launcherPath = path.join(repoRoot, "launcher", "index.mjs");
 const cfgDir = path.join(repoRoot, "cfg");
 const cfgPath = path.join(cfgDir, "nodecg.json");
@@ -40,7 +43,9 @@ const CONTROL_TIMEOUT_MS = 15_000;
 const checks = [];
 function check(name, ok, detail = "") {
 	checks.push({ name, ok: !!ok, detail });
-	console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok || !detail ? "" : `  -> ${detail}`}`);
+	console.log(
+		`${ok ? "PASS" : "FAIL"}  ${name}${ok || !detail ? "" : `  -> ${detail}`}`,
+	);
 }
 function sleep(ms) {
 	return new Promise((r) => setTimeout(r, ms));
@@ -108,13 +113,16 @@ let seededBase = {};
 if (cfgOriginal) {
 	try {
 		const parsed = JSON.parse(cfgOriginal.toString("utf8"));
-		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) seededBase = parsed;
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+			seededBase = parsed;
 	} catch {
 		seededBase = {};
 	}
 }
 // Unrelated keys that MUST survive the launcher's merge.
-const preservedKeys = Object.keys(seededBase).filter((k) => k !== "host" && k !== "port");
+const preservedKeys = Object.keys(seededBase).filter(
+	(k) => k !== "host" && k !== "port",
+);
 const seed = { ...seededBase, launcherTestKeep: "keep-me" };
 preservedKeys.push("launcherTestKeep");
 
@@ -167,24 +175,36 @@ function startLauncher() {
 		launcher.on("exit", (code, signal) => {
 			launcherExited = true;
 			if (code !== 0 && code !== null) {
-				console.error(`[e2e] launcher exited early code=${code} signal=${signal}`);
+				console.error(
+					`[e2e] launcher exited early code=${code} signal=${signal}`,
+				);
 			}
 		});
 		launcher.on("error", reject);
 
 		const deadline = Date.now() + CONTROL_TIMEOUT_MS;
 		const poll = () => {
-			const m = launcherStdout.match(/notGT launcher on (http:\/\/127\.0\.0\.1:(\d+))/);
+			const m = launcherStdout.match(
+				/notGT launcher on (http:\/\/127\.0\.0\.1:(\d+))/,
+			);
 			if (m) {
 				resolve({ url: m[1], port: Number(m[2]), raw: m[0] });
 				return;
 			}
 			if (launcherExited) {
-				reject(new Error(`launcher exited before printing its URL.\n${launcherStderr}`));
+				reject(
+					new Error(
+						`launcher exited before printing its URL.\n${launcherStderr}`,
+					),
+				);
 				return;
 			}
 			if (Date.now() > deadline) {
-				reject(new Error(`timed out waiting for control URL.\nstdout=${launcherStdout}\nstderr=${launcherStderr}`));
+				reject(
+					new Error(
+						`timed out waiting for control URL.\nstdout=${launcherStdout}\nstderr=${launcherStderr}`,
+					),
+				);
 				return;
 			}
 			setTimeout(poll, 100);
@@ -233,7 +253,8 @@ async function main() {
 		const stdoutLines = launcherStdout.trim().split(/\r?\n/).filter(Boolean);
 		check(
 			"launcher prints exactly one stdout line with the 127.0.0.1 control URL",
-			stdoutLines.length === 1 && /^notGT launcher on http:\/\/127\.0\.0\.1:\d+$/.test(stdoutLines[0]),
+			stdoutLines.length === 1 &&
+				/^notGT launcher on http:\/\/127\.0\.0\.1:\d+$/.test(stdoutLines[0]),
 			`stdout=${JSON.stringify(launcherStdout)}`,
 		);
 
@@ -241,17 +262,37 @@ async function main() {
 		const stateRes = await httpReq(`${control.url}/api/state`);
 		const st = stateRes.json ?? {};
 		const ifaces = Array.isArray(st.interfaces) ? st.interfaces : [];
-		check("GET /api/state returns 200 JSON", stateRes.status === 200, `status=${stateRes.status}`);
-		check("state.interfaces is a non-empty list", ifaces.length > 0, `length=${ifaces.length}`);
-		const hasAll = ifaces.some((i) => i.address === "0.0.0.0" || i.id === "0.0.0.0");
-		const hasLocal = ifaces.some((i) => i.address === "127.0.0.1" || i.id === "127.0.0.1");
+		check(
+			"GET /api/state returns 200 JSON",
+			stateRes.status === 200,
+			`status=${stateRes.status}`,
+		);
+		check(
+			"state.interfaces is a non-empty list",
+			ifaces.length > 0,
+			`length=${ifaces.length}`,
+		);
+		const hasAll = ifaces.some(
+			(i) => i.address === "0.0.0.0" || i.id === "0.0.0.0",
+		);
+		const hasLocal = ifaces.some(
+			(i) => i.address === "127.0.0.1" || i.id === "127.0.0.1",
+		);
 		check("interfaces include a 0.0.0.0 entry", hasAll);
 		check("interfaces include a 127.0.0.1 entry", hasLocal);
-		check("initial status is stopped", st.status === "stopped", `status=${st.status}`);
+		check(
+			"initial status is stopped",
+			st.status === "stopped",
+			`status=${st.status}`,
+		);
 		check(
 			"state exposes node version / platform / appDir / configPath",
 			!!st.nodeVersion && !!st.platform && !!st.appDir && !!st.configPath,
-			JSON.stringify({ nodeVersion: st.nodeVersion, platform: st.platform, appDir: st.appDir }),
+			JSON.stringify({
+				nodeVersion: st.nodeVersion,
+				platform: st.platform,
+				appDir: st.appDir,
+			}),
 		);
 
 		// -- 2b. UI is served, self-contained and Russian -----------------------
@@ -259,7 +300,10 @@ async function main() {
 		const uiHtml = uiRes.text || "";
 		check(
 			"GET / serves the launcher UI HTML with the interface/port controls",
-			uiRes.status === 200 && /<html/i.test(uiHtml) && uiHtml.includes('id="iface"') && uiHtml.includes('id="port"'),
+			uiRes.status === 200 &&
+				/<html/i.test(uiHtml) &&
+				uiHtml.includes('id="iface"') &&
+				uiHtml.includes('id="port"'),
 			`status=${uiRes.status} bytes=${uiHtml.length}`,
 		);
 		check(
@@ -268,14 +312,21 @@ async function main() {
 		);
 		check(
 			"UI contains the required Russian controls",
-			["Запустить", "Остановить", "Открыть GUI", "Копировать", "Интерфейс", "Порт"].every((s) =>
-				uiHtml.includes(s),
-			),
+			[
+				"Запустить",
+				"Остановить",
+				"Открыть GUI",
+				"Копировать",
+				"Интерфейс",
+				"Порт",
+			].every((s) => uiHtml.includes(s)),
 		);
 
 		// -- 3. POST /api/start -------------------------------------------------
 		serverPort = await findFreePort(9095, 9199);
-		console.log(`[e2e] starting NodeCG via launcher on 127.0.0.1:${serverPort}`);
+		console.log(
+			`[e2e] starting NodeCG via launcher on 127.0.0.1:${serverPort}`,
+		);
 		const startRes = await postJson(
 			`${control.url}/api/start`,
 			{ host: "127.0.0.1", port: serverPort },
@@ -293,7 +344,11 @@ async function main() {
 			started.guiUrl === expectedGuiUrl,
 			`guiUrl=${started.guiUrl} expected=${expectedGuiUrl}`,
 		);
-		check("running flag is true", started.running === true, `running=${started.running}`);
+		check(
+			"running flag is true",
+			started.running === true,
+			`running=${started.running}`,
+		);
 
 		// cfg/nodecg.json merged host/port and preserved unrelated keys.
 		let writtenCfg = {};
@@ -302,8 +357,16 @@ async function main() {
 		} catch (err) {
 			/* leave empty -> checks fail */
 		}
-		check("cfg/nodecg.json contains the chosen host", writtenCfg.host === "127.0.0.1", `host=${writtenCfg.host}`);
-		check("cfg/nodecg.json contains the chosen port", writtenCfg.port === serverPort, `port=${writtenCfg.port}`);
+		check(
+			"cfg/nodecg.json contains the chosen host",
+			writtenCfg.host === "127.0.0.1",
+			`host=${writtenCfg.host}`,
+		);
+		check(
+			"cfg/nodecg.json contains the chosen port",
+			writtenCfg.port === serverPort,
+			`port=${writtenCfg.port}`,
+		);
 		// Deep-compare so nested objects from a pre-existing developer config survive too.
 		const preservedOk = preservedKeys.every((k) => {
 			const expected = k === "launcherTestKeep" ? "keep-me" : seededBase[k];
@@ -317,7 +380,11 @@ async function main() {
 
 		// -- 4. GUI answers + startup banner in logs ----------------------------
 		const guiRes = await httpReq(expectedGuiUrl, { redirect: "manual" }, 8000);
-		check("GUI URL answers with HTTP status < 500", guiRes.status < 500, `status=${guiRes.status}`);
+		check(
+			"GUI URL answers with HTTP status < 500",
+			guiRes.status < 500,
+			`status=${guiRes.status}`,
+		);
 
 		let bannerSeen = false;
 		let logSample = "";
@@ -335,7 +402,9 @@ async function main() {
 			bannerSeen ? "" : `last logs:\n${logSample.slice(-800)}`,
 		);
 		if (bannerSeen) {
-			const banner = logSample.split("\n").find((l) => /Starting NodeCG/i.test(l));
+			const banner = logSample
+				.split("\n")
+				.find((l) => /Starting NodeCG/i.test(l));
 			console.log(`      banner: ${banner.trim()}`);
 		}
 
@@ -345,12 +414,18 @@ async function main() {
 		const logsRes3 = await httpReq(`${control.url}/api/logs?since=${next}`);
 		check(
 			"GET /api/logs?since=<next> returns an incremental slice",
-			logsRes3.status === 200 && Array.isArray(logsRes3.json?.lines) && typeof logsRes3.json?.next === "number",
+			logsRes3.status === 200 &&
+				Array.isArray(logsRes3.json?.lines) &&
+				typeof logsRes3.json?.next === "number",
 			JSON.stringify(logsRes3.json)?.slice(0, 200),
 		);
 
 		// -- 5. double start rejected, stop returns to stopped ------------------
-		const secondStart = await postJson(`${control.url}/api/start`, { host: "127.0.0.1", port: serverPort }, 10_000);
+		const secondStart = await postJson(
+			`${control.url}/api/start`,
+			{ host: "127.0.0.1", port: serverPort },
+			10_000,
+		);
 		check(
 			"second POST /api/start while running is rejected with 409",
 			secondStart.status === 409,
@@ -358,7 +433,11 @@ async function main() {
 		);
 
 		const stopRes = await postJson(`${control.url}/api/stop`, {}, 15_000);
-		check("POST /api/stop returns status stopped", stopRes.json?.status === "stopped", `body=${stopRes.text?.slice(0, 200)}`);
+		check(
+			"POST /api/stop returns status stopped",
+			stopRes.json?.status === "stopped",
+			`body=${stopRes.text?.slice(0, 200)}`,
+		);
 
 		let portFreed = false;
 		const freeDeadline = Date.now() + 8000;
@@ -388,14 +467,24 @@ async function main() {
 		);
 		check(
 			"occupied-port error statusText is helpful (mentions the port / busy)",
-			typeof busy.statusText === "string" && busy.statusText.includes(String(occupiedPort)) && /занят/i.test(busy.statusText),
+			typeof busy.statusText === "string" &&
+				busy.statusText.includes(String(occupiedPort)) &&
+				/занят/i.test(busy.statusText),
 			`statusText=${JSON.stringify(busy.statusText)}`,
 		);
-		check("occupied-port request is a 4xx", busyRes.status >= 400 && busyRes.status < 500, `status=${busyRes.status}`);
+		check(
+			"occupied-port request is a 4xx",
+			busyRes.status >= 400 && busyRes.status < 500,
+			`status=${busyRes.status}`,
+		);
 
 		// stop while stopped/error is a safe no-op
 		const stopAgain = await postJson(`${control.url}/api/stop`, {}, 10_000);
-		check("POST /api/stop while not running is a safe 200 no-op", stopAgain.status === 200, `status=${stopAgain.status}`);
+		check(
+			"POST /api/stop while not running is a safe 200 no-op",
+			stopAgain.status === 200,
+			`status=${stopAgain.status}`,
+		);
 	} finally {
 		// Clean up the occupier, the launcher and the developer's config.
 		if (occupier) {
@@ -418,7 +507,9 @@ async function main() {
 		console.log(`ALL CHECKS PASSED (${checks.length}/${checks.length})`);
 		return 0;
 	}
-	console.log(`${failed.length} CHECKS FAILED (${checks.length - failed.length}/${checks.length} passed)`);
+	console.log(
+		`${failed.length} CHECKS FAILED (${checks.length - failed.length}/${checks.length} passed)`,
+	);
 	return 1;
 }
 

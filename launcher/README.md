@@ -10,13 +10,13 @@ No `package.json`, no `node_modules`: run it with a bare `node`.
 node launcher/index.mjs [--app <dir>] [--control-port <n>] [--no-open] [--host <ip>] [--port <n>]
 ```
 
-| flag | default | meaning |
-| --- | --- | --- |
-| `--app <dir>` | repo root (`launcher/..`) | NodeCG runtime root (`index.js`, `cfg/`, `bundles/`, …) |
-| `--control-port <n>` | `0` | port for the launcher's own UI; `0` = ephemeral. Always bound to `127.0.0.1` |
-| `--no-open` | off | do not open the launcher window (used by tests) |
-| `--host <ip>` | first non-internal IPv4, else `127.0.0.1` | initial «Интерфейс» selection |
-| `--port <n>` | `9090` | initial «Порт» selection |
+| flag                 | default                                   | meaning                                                                      |
+| -------------------- | ----------------------------------------- | ---------------------------------------------------------------------------- |
+| `--app <dir>`        | repo root (`launcher/..`)                 | NodeCG runtime root (`index.js`, `cfg/`, `bundles/`, …)                      |
+| `--control-port <n>` | `0`                                       | port for the launcher's own UI; `0` = ephemeral. Always bound to `127.0.0.1` |
+| `--no-open`          | off                                       | do not open the launcher window (used by tests)                              |
+| `--host <ip>`        | first non-internal IPv4, else `127.0.0.1` | initial «Интерфейс» selection                                                |
+| `--port <n>`         | `9090`                                    | initial «Порт» selection                                                     |
 
 On startup it prints exactly one line to stdout:
 
@@ -47,14 +47,14 @@ the launcher exits (`SIGINT`, `SIGTERM`, `exit`).
 
 ## HTTP API (127.0.0.1 only, JSON)
 
-| method | path | notes |
-| --- | --- | --- |
-| `GET` | `/` | the launcher UI (`ui.html`) |
-| `GET` | `/api/state` | full state: version, appDir, interfaces, status, guiUrl, logs, … |
-| `POST` | `/api/start` | body `{ host, port }`; `409` while running, `400` on bad port, `409` if port busy |
-| `POST` | `/api/stop` | safe no-op `200` when already stopped |
-| `POST` | `/api/open` | optional body `{ url }` (defaults to `guiUrl`) |
-| `GET` | `/api/logs?since=<n>` | `{ lines, next }` for incremental log appends |
+| method | path                  | notes                                                                             |
+| ------ | --------------------- | --------------------------------------------------------------------------------- |
+| `GET`  | `/`                   | the launcher UI (`ui.html`)                                                       |
+| `GET`  | `/api/state`          | full state: version, appDir, interfaces, status, guiUrl, logs, …                  |
+| `POST` | `/api/start`          | body `{ host, port }`; `409` while running, `400` on bad port, `409` if port busy |
+| `POST` | `/api/stop`           | safe no-op `200` when already stopped                                             |
+| `POST` | `/api/open`           | optional body `{ url }` (defaults to `guiUrl`)                                    |
+| `GET`  | `/api/logs?since=<n>` | `{ lines, next }` for incremental log appends                                     |
 
 `status` ∈ `stopped | starting | running | stopping | error`.
 `guiUrl` is `http://<openHost>:<port>/dashboard/`, where `0.0.0.0` is dialled as `127.0.0.1`.

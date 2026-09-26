@@ -32,7 +32,11 @@
 				padding: 0;
 				background: var(--bg);
 				color: var(--text);
-				font: 13px/1.45 "Segoe UI", Tahoma, Verdana, sans-serif;
+				font:
+					13px/1.45 "Segoe UI",
+					Tahoma,
+					Verdana,
+					sans-serif;
 			}
 			.wrap {
 				max-width: 720px;
@@ -284,7 +288,14 @@
 					</div>
 					<div class="field port">
 						<label for="port">Порт</label>
-						<input id="port" type="number" min="1024" max="65535" step="1" value="9090" />
+						<input
+							id="port"
+							type="number"
+							min="1024"
+							max="65535"
+							step="1"
+							value="9090"
+						/>
 					</div>
 				</div>
 				<div class="buttons">
@@ -301,9 +312,9 @@
 					<button id="btnCopy">Копировать</button>
 				</div>
 				<div class="note">
-					Панель управления для оператора — откройте этот адрес в браузере (кнопка
-					«Открыть GUI»). В OBS добавляется <b>другая</b> ссылка: источник «Браузер»
-					с адресом <code id="obsUrl"></code>
+					Панель управления для оператора — откройте этот адрес в браузере
+					(кнопка «Открыть GUI»). В OBS добавляется <b>другая</b> ссылка:
+					источник «Браузер» с адресом <code id="obsUrl"></code>
 				</div>
 			</div>
 
@@ -366,7 +377,9 @@
 
 			/** The URL that goes into an OBS Browser Source. */
 			function obsUrlFor(host, port) {
-				return originFor(host, port) + "/bundles/notGT/graphics/out.html?out=main";
+				return (
+					originFor(host, port) + "/bundles/notGT/graphics/out.html?out=main"
+				);
 			}
 
 			function currentSelection() {
@@ -393,7 +406,8 @@
 					opt.value = item.id;
 					opt.textContent = item.label;
 					if (item.address === "0.0.0.0") groups.all.appendChild(opt);
-					else if (item.address === "127.0.0.1" || item.address === "::1") groups.local.appendChild(opt);
+					else if (item.address === "127.0.0.1" || item.address === "::1")
+						groups.local.appendChild(opt);
 					else groups.net.appendChild(opt);
 				});
 
@@ -405,7 +419,11 @@
 					var found = Array.prototype.some.call(sel.options, function (o) {
 						return o.value === selected;
 					});
-					sel.value = found ? selected : interfaces.length ? interfaces[0].id : "0.0.0.0";
+					sel.value = found
+						? selected
+						: interfaces.length
+							? interfaces[0].id
+							: "0.0.0.0";
 				}
 			}
 
@@ -419,21 +437,31 @@
 				if (!state) return;
 
 				$("about").textContent =
-					"лончер v" + state.version + " · Node " + state.nodeVersion + " · " + state.platform;
+					"лончер v" +
+					state.version +
+					" · Node " +
+					state.nodeVersion +
+					" · " +
+					state.platform;
 
 				setPill(state.status);
 				$("statusText").textContent = state.statusText || "";
 
-				var ifacesKey = JSON.stringify(state.interfaces.map(function (i) {
-					return [i.id, i.label];
-				}));
+				var ifacesKey = JSON.stringify(
+					state.interfaces.map(function (i) {
+						return [i.id, i.label];
+					}),
+				);
 				if (ifacesKey !== interfacesKey) {
 					interfacesKey = ifacesKey;
 					buildInterfaces(state.interfaces, state.host);
 				} else {
-					var hasHost = Array.prototype.some.call($("iface").options, function (o) {
-						return o.value === state.host;
-					});
+					var hasHost = Array.prototype.some.call(
+						$("iface").options,
+						function (o) {
+							return o.value === state.host;
+						},
+					);
 					if (hasHost && !userTouched) $("iface").value = state.host;
 				}
 
@@ -444,14 +472,17 @@
 
 				var busy = state.status === "starting" || state.status === "stopping";
 				$("btnStart").disabled = busy || state.status === "running";
-				$("btnStop").disabled = state.status === "stopped" || state.status === "error";
+				$("btnStop").disabled =
+					state.status === "stopped" || state.status === "error";
 				$("btnOpen").disabled = state.status !== "running";
 
 				// When running, show the real address reported by the launcher.
 				// Otherwise preview the current selection.
 				var sel = currentSelection();
 				$("guiUrl").value =
-					state.status === "running" ? state.guiUrl : previewUrl(sel.host, sel.port);
+					state.status === "running"
+						? state.guiUrl
+						: previewUrl(sel.host, sel.port);
 				var obs = $("obsUrl");
 				if (obs) obs.textContent = obsUrlFor(sel.host, sel.port);
 			}
@@ -478,7 +509,8 @@
 							if (logLines.length > 400) logLines = logLines.slice(-400);
 							logSince = typeof body.next === "number" ? body.next : logSince;
 							var pre = $("log");
-							var atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 24;
+							var atBottom =
+								pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 24;
 							pre.textContent = logLines.join("\n");
 							if (atBottom) pre.scrollTop = pre.scrollHeight;
 							$("logCount").textContent = String(logSince);
@@ -500,7 +532,8 @@
 			function start() {
 				var sel = currentSelection();
 				if (sel.port < 1024 || sel.port > 65535) {
-					$("statusText").textContent = "Порт должен быть в диапазоне 1024–65535.";
+					$("statusText").textContent =
+						"Порт должен быть в диапазоне 1024–65535.";
 					return;
 				}
 				$("btnStart").disabled = true;
