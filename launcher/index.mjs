@@ -30,8 +30,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const VERSION = "1.0.0";
 const LOG_BUFFER_MAX = 400; // keep the last ~400 log lines
-const READY_TIMEOUT_MS = 30_000; // how long we wait for the HTTP server to answer
+// The first launch on Windows can be slow: Defender scans the ~44k extracted
+// files, SQLite initialises and chokidar walks the tree. 30 s proved too tight,
+// so the default is generous and `--ready-timeout` can override it.
+let READY_TIMEOUT_MS = 120_000;
 const READY_POLL_MS = 400;
+const READY_NOTICE_MS = 10_000; // how often to say "still waiting" in the log
 const KILL_GRACE_MS = 5_000; // SIGTERM -> wait -> SIGKILL grace period
 const DEFAULT_PORT = 9090;
 const PERSIST_PATH = path.join(__dirname, "launcher-config.json");
@@ -41,7 +45,14 @@ const PERSIST_PATH = path.join(__dirname, "launcher-config.json");
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-	const out = { app: null, controlPort: 0, open: true, host: null, port: null };
+	const out = {
+		app: null,
+		controlPort: 0,
+		open: true,
+		host: null,
+		port: null,
+		readyTimeout: null,
+	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--app") out.app = argv[++i];
@@ -49,11 +60,16 @@ function parseArgs(argv) {
 		else if (arg === "--no-open") out.open = false;
 		else if (arg === "--host") out.host = argv[++i];
 		else if (arg === "--port") out.port = Number(argv[++i]);
+		else if (arg === "--ready-timeout") out.readyTimeout = Number(argv[++i]);
 	}
 	return out;
 }
 
 const args = parseArgs(process.argv.slice(2));
+
+if (Number.isFinite(args.readyTimeout) && args.readyTimeout > 0) {
+	READY_TIMEOUT_MS = args.readyTimeout * 1000;
+}
 
 // Default app dir is the repo root (one level above launcher/).
 const appDir = path.resolve(args.app ?? path.join(__dirname, ".."));
@@ -81,6 +97,76 @@ function guiUrlFor(host, port) {
 
 function delay(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Turns a log tail into a concrete, actionable hint when we can recognise it. */
+function hintForLogTail(tail) {
+	const text = tail || "";
+	if (/EADDRINUSE/i.test(text)) {
+		return "Похоже, порт уже занят другим процессом — выберите другой порт.";
+	}
+	if (/NODE_MODULE_VERSION|compiled against a different Node/i.test(text)) {
+		return (
+			"Нативный модуль собран под другую версию Node. Пересоберите пакет тем же " +
+			"Node.js, который лежит в папке node\\."
+		);
+	}
+	if (/Cannot find module/i.test(text)) {
+		return (
+			"Сервер не нашёл модуль: скорее всего архив распакован не полностью. " +
+			"Распакуйте ZIP целиком в пустую папку."
+		);
+	}
+	if (/EACCES|EPERM/i.test(text)) {
+		return (
+			"Нет прав на запись. Не запускайте из Program Files и не распаковывайте " +
+			"в системные папки."
+		);
+	}
+	if (/ENOENT/i.test(text) && /(cfg|nodecg\.json|SQLITE|sqlite)/i.test(text)) {
+		return "Не читается app\\cfg или app\\db — проверьте, что папки распакованы.";
+	}
+	return "";
+}
+
+/**
+ * Explains a failed start instead of just saying "no answer".
+ * Probes the loopback and the default port so we can tell apart
+ * "not listening on this interface", "started on the wrong port" and
+ * "did not start at all".
+ */
+async function startFailureReport(host, port, tail) {
+	const openHost = openHostFor(host);
+	const parts = [
+		`Сервер не ответил за ${Math.round(READY_TIMEOUT_MS / 1000)} с.`,
+	];
+
+	const choseInterface = openHost !== "127.0.0.1" && openHost !== "::1";
+	if (choseInterface) {
+		const onChosen = await probeHttp(host, port);
+		const onLoopback = await probeHttp("127.0.0.1", port);
+		if (onLoopback && !onChosen) {
+			parts.push(
+				`При этом на 127.0.0.1:${port} он отвечает. Значит, сервер работает, но ` +
+					`недоступен на ${openHost}:${port} — обычно это брандмауэр Windows. ` +
+					`Разрешите node.exe входящие подключения для частной сети или выберите ` +
+					`интерфейс «Все интерфейсы (0.0.0.0)».`,
+			);
+		}
+	}
+
+	if (port !== DEFAULT_PORT && (await probeHttp("127.0.0.1", DEFAULT_PORT))) {
+		parts.push(
+			`Порт ${DEFAULT_PORT} при этом отвечает: возможно, сервер поднялся на нём, а не ` +
+				`на выбранном ${port} (тогда проверьте app\\cfg\\nodecg.json), либо на ` +
+				`${DEFAULT_PORT} уже запущен другой экземпляр NodeCG.`,
+		);
+	}
+
+	const hint = hintForLogTail(tail);
+	if (hint) parts.push(hint);
+	parts.push("Последние строки журнала:", tail || "(журнал пуст)");
+	return parts.join("\n");
 }
 
 function isValidPort(value) {
@@ -135,14 +221,10 @@ function listInterfaces() {
 }
 
 function defaultHost() {
-	// Prefer the first real, non-internal IPv4 address (skip the synthetic entries).
-	for (const addresses of Object.values(os.networkInterfaces())) {
-		for (const addr of addresses ?? []) {
-			if (addr.internal) continue;
-			if (addr.family === "IPv4" || addr.family === 4) return addr.address;
-		}
-	}
-	return "127.0.0.1";
+	// Listen on every interface by default, exactly like NodeCG itself does.
+	// Binding a single NIC is what makes Windows Firewall block the connection
+	// from the same machine, which looks like "the server never answered".
+	return "0.0.0.0";
 }
 
 // ---------------------------------------------------------------------------
@@ -496,7 +578,9 @@ async function startServer(requestedHost, requestedPort) {
 	});
 
 	// Poll until the HTTP server answers, the child dies, or we time out.
-	const deadline = Date.now() + READY_TIMEOUT_MS;
+	const waitStartedAt = Date.now();
+	const deadline = waitStartedAt + READY_TIMEOUT_MS;
+	let lastNoticeAt = waitStartedAt;
 	while (Date.now() < deadline) {
 		if (state.child !== child) break; // stopped from under us
 		if (await probeHttp(host, port)) {
@@ -507,6 +591,13 @@ async function startServer(requestedHost, requestedPort) {
 		}
 		if (child.exitCode !== null || child.signalCode !== null) break;
 		if (spawnError) break;
+		if (Date.now() - lastNoticeAt >= READY_NOTICE_MS) {
+			lastNoticeAt = Date.now();
+			pushLog(
+				`[launcher] Ждём ответа сервера… ${Math.round((Date.now() - waitStartedAt) / 1000)} с ` +
+					`(первый запуск на Windows бывает долгим)`,
+			);
+		}
 		await delay(READY_POLL_MS);
 	}
 
@@ -515,11 +606,11 @@ async function startServer(requestedHost, requestedPort) {
 		if (state.child === child) {
 			await stopChild(child);
 		}
-		const tail = state.logs.slice(-8).join("\n");
+		const tail = state.logs.slice(-12).join("\n");
 		state.status = "error";
 		state.statusText = spawnError
 			? `Не удалось запустить сервер: ${spawnError.message}`
-			: `Сервер не ответил за ${READY_TIMEOUT_MS / 1000} с. Последние строки журнала:\n${tail}`;
+			: await startFailureReport(host, port, tail);
 		pushLog(`[launcher] ${state.statusText}`);
 	}
 
