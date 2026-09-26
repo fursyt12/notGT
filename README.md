@@ -42,6 +42,31 @@ node index.js      # http://localhost:9090/dashboard/
 For a containerised deployment with Traefik and persistent volumes, use
 `docker-compose.yml` plus `.env.example` in the repository root.
 
+## Windows
+
+A portable Windows build is produced by
+[`scripts/build-windows.mjs`](scripts/build-windows.mjs): it assembles
+`dist/notGT-win-x64/` (bundled Node.js runtime, NodeCG, the built `notGT`
+bundle, a launcher) and `dist/notGT-win-x64.zip`. Nothing has to be installed
+on the target machine.
+
+```powershell
+node scripts/build-windows.mjs --node-version 22.14.0
+```
+
+Unpack the zip and run `notGT Launcher.exe` (or `notGT.cmd` when the `.exe`
+wasn't built). The launcher picks a network interface/port, starts NodeCG and
+opens the dashboard. The OBS Browser Source URL is:
+
+```
+http://<host>:<port>/bundles/notGT/graphics/out.html?out=main
+```
+
+State lives in `app\cfg`, `app\db` and `app\assets`. Tagging a commit `v*`
+builds the package on `windows-latest` and attaches it to a GitHub Release.
+See [`docs/windows-build.md`](docs/windows-build.md) for the full layout,
+flags and release process.
+
 ## Documentation & API Reference
 
 Full docs and API reference are available at https://nodecg.dev
