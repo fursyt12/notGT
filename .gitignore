@@ -12,6 +12,9 @@ node_modules/
 npm-debug.log
 yarn-error.log
 
+# The launcher remembers the last interface/port per machine.
+/launcher/launcher-config.json
+
 # Local bundles
 /bundles/*
 # ...except the notGT application bundle that ships with this fork.

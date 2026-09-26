@@ -1,0 +1,175 @@
+# Builds the portable Windows package for notGT and attaches it to a GitHub
+# Release. Triggered by version tags (v*) or manually from the Actions tab.
+#
+# The heavy lifting lives in scripts/build-windows.mjs so that the exact same
+# packaging can be reproduced locally with:
+#   node scripts/build-windows.mjs --node-version 22.14.0
+name: Release (Windows)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing or new tag to publish (manual runs only, e.g. v1.2.3). Leave empty to only build the artifact."
+        required: false
+        type: string
+
+# contents: write is required to create/update the GitHub Release.
+permissions:
+  contents: write
+
+jobs:
+  windows-package:
+    name: Build notGT-win-x64
+    runs-on: windows-latest
+
+    env:
+      # The root devDependencies include puppeteer, but this job never launches
+      # a browser; skip the Chromium download entirely.
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          # Both lockfiles are used: the monorepo root and the notGT bundle.
+          cache-dependency-path: |
+            package-lock.json
+            bundles/notGT/package-lock.json
+
+      # Build the NodeCG monorepo exactly like local development does.
+      - name: Install monorepo dependencies
+        run: npm ci
+
+      - name: Build NodeCG workspaces
+        run: npm run build
+
+      # The notGT bundle is not an npm workspace: it has its own lockfile and
+      # its own esbuild/Vite build, run from inside the bundle directory.
+      - name: Install bundle dependencies
+        working-directory: bundles/notGT
+        run: npm ci
+
+      - name: Build the notGT bundle
+        working-directory: bundles/notGT
+        run: npm run build
+
+      # Assembles app/, downloads the official Windows Node runtime (SHA-256
+      # checked against nodejs.org), compiles the launcher when mingw-w64 is
+      # available and writes dist/notGT-win-x64.zip. windows-latest usually has
+      # no mingw-w64, in which case the native .exe is skipped and notGT.cmd is
+      # the entry point — that fallback is fully functional on its own.
+      # The native launcher is the point of this package, so make sure a
+      # compiler is actually present instead of silently shipping only the
+      # .cmd fallback. The Windows runner image usually carries MinGW-w64 in
+      # C:\mingw64; Chocolatey covers the case where it does not.
+      - name: Ensure a Windows C compiler for the launcher
+        shell: pwsh
+        run: |
+          $gcc = Get-Command x86_64-w64-mingw32-gcc -ErrorAction SilentlyContinue
+          if (-not $gcc) {
+            foreach ($dir in @("C:\mingw64\bin", "C:\ProgramData\mingw64\mingw64\bin", "C:\tools\mingw64\bin")) {
+              if (Test-Path (Join-Path $dir "x86_64-w64-mingw32-gcc.exe")) {
+                Write-Host "Found MinGW in $dir"
+                Add-Content -Path $env:GITHUB_PATH -Value $dir
+                $gcc = $true
+                break
+              }
+            }
+          }
+          if (-not $gcc) {
+            Write-Host "MinGW not found, installing via Chocolatey"
+            choco install mingw -y --no-progress
+          }
+          & x86_64-w64-mingw32-gcc --version | Select-Object -First 1
+
+      - name: Build the Windows package
+        run: node scripts/build-windows.mjs --node-version 22.14.0
+
+      # Fail loudly rather than publishing a build without the launcher.
+      - name: Assert the launcher executable exists
+        shell: pwsh
+        run: |
+          $exe = "dist/notGT-win-x64/notGT Launcher.exe"
+          if (-not (Test-Path $exe)) { throw "Missing $exe - the native launcher was not built" }
+          Get-Item $exe | Select-Object FullName, Length
+
+      - name: Upload the package as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: notGT-win-x64
+          path: dist/notGT-win-x64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      # Attach the zip to the GitHub Release. Idempotent: a re-run of the same
+      # tag uploads with --clobber instead of failing. `gh` is preinstalled on
+      # GitHub-hosted runners.
+      - name: Publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          ZIP: dist/notGT-win-x64.zip
+        run: |
+          set -euo pipefail
+
+          cat > release-body.md <<'EOF'
+          ## notGT для Windows (x64)
+
+          Портативная сборка: распакуйте ZIP-архив целиком в отдельную папку и
+          запустите `notGT Launcher.exe` (или `notGT.cmd`, если `.exe` не собран).
+          Node.js устанавливать не нужно — он уже внутри.
+
+          ### Что внутри
+
+          - `notGT Launcher.exe` — нативный запуск без окна консоли (если mingw-w64 доступен при сборке);
+          - `notGT.cmd` — запуск через `node\node.exe` (работает всегда, в т.ч. без `.exe`);
+          - `launcher/` — веб-интерфейс лаунчера: выбор интерфейса и порта, запуск/остановка сервера, журнал;
+          - `node/` — официальный Node.js для Windows;
+          - `app/` — сервер NodeCG и собранный бандл `notGT` (`app/bundles/notGT`), а также `cfg/`, `db/`, `assets/`, `logs/`.
+
+          ### Запуск
+
+          1. Распакуйте архив в отдельную папку.
+          2. Запустите `notGT Launcher.exe`.
+          3. Выберите сетевой интерфейс и порт, нажмите «Запустить» — лаунчер сам запишет `app\cfg\nodecg.json` и запустит NodeCG.
+
+          ### OBS Browser Source
+
+          ```
+          http://<выбранный-интерфейс>:<порт>/bundles/notGT/graphics/out.html?out=main
+          ```
+
+          Размер 1920x1080, включите «Прозрачный фон». Для других выходов (outs)
+          используйте `?out=<id>`, например `?out=interview`.
+
+          ### Данные
+
+          Настройки и медиа лежат в `app\cfg`, `app\db` и `app\assets`. При
+          обновлении распакуйте новую версию в новую папку и перенесите эти
+          каталоги — загруженные файлы и база сохранятся.
+          EOF
+
+          # Substitute the tag at the top of the generated notes.
+          BODY="$(printf '# notGT %s — Windows x64\n\n' "$TAG"; cat release-body.md)"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — uploading/updating the asset."
+            gh release upload "$TAG" "$ZIP" --clobber
+          else
+            echo "Creating release $TAG."
+            gh release create "$TAG" "$ZIP" \
+              --title "notGT $TAG" \
+              --notes "$BODY"
+          fi
