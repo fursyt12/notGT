@@ -1,14 +1,12 @@
 name: CI
 
+# Намеренно только ручной запуск: в этом форке автоматический CI — только
+# Windows-сборка (.github/workflows/release.yml). Апстримные проверки NodeCG
+# оставлены доступными из вкладки Actions, если когда-нибудь понадобятся
+# (в том числе release-please, которому нужно разрешение репозитория на
+# создание pull request'ов).
 on:
-  push:
-    branches:
-      - main
-      - next
-  pull_request:
-    branches:
-      - main
-      - next
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}

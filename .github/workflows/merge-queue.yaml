@@ -1,9 +1,8 @@
 name: Merge Queue
 
+# GitHub merge queue здесь не используется; оставлено на ручной запуск.
 on:
-  merge_group:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read

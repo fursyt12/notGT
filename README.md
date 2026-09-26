@@ -62,8 +62,9 @@ opens the dashboard. The OBS Browser Source URL is:
 http://<host>:<port>/bundles/notGT/graphics/out.html?out=main
 ```
 
-State lives in `app\cfg`, `app\db` and `app\assets`. Tagging a commit `v*`
-builds the package on `windows-latest` and attaches it to a GitHub Release.
+State lives in `app\cfg`, `app\db` and `app\assets`. CI here is Windows-only:
+every push to `main` builds the package on `windows-latest` (artifact only), and
+a `v*` tag publishes it as a GitHub Release.
 See [`docs/windows-build.md`](docs/windows-build.md) for the full layout,
 flags and release process.
 

@@ -1,13 +1,22 @@
-# Builds the portable Windows package for notGT and attaches it to a GitHub
-# Release. Triggered by version tags (v*) or manually from the Actions tab.
+# The only CI this fork runs: it builds the portable Windows package and, for a
+# version tag, attaches it to a GitHub Release.
+#
+#   push to main  -> build the package (does it still build?) and upload the artifact
+#   push v* tag   -> build it and publish the Release
+#   manual run    -> same as a push; fill in `tag` to publish as well
+#
+# The upstream NodeCG checks (lint/types/tests/container) are kept in ci.yaml but
+# are manual-only here, so a red badge never comes from code that notGT does not use.
 #
 # The heavy lifting lives in scripts/build-windows.mjs so that the exact same
 # packaging can be reproduced locally with:
 #   node scripts/build-windows.mjs --node-version 22.14.0
-name: Release (Windows)
+name: Windows
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:

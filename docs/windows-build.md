@@ -120,9 +120,21 @@ user presses «Запустить» it writes `host`/`port` into `<appDir>/cfg/n
 and spawns `node index.js` with `cwd = app`. The packager itself never starts
 NodeCG.
 
-## Releasing via GitHub Actions
+## CI и релиз через GitHub Actions
 
-`.github/workflows/release.yml` runs on `windows-latest`:
+Единственный автоматический CI в этом форке — Windows-сборка
+(`.github/workflows/release.yml`, имя workflow `Windows`). Апстримные проверки
+NodeCG (`ci.yaml`: lint, типы, тесты, контейнер) переведены на ручной запуск и
+сами не срабатывают: в notGT они не нужны, а `release-please` вдобавок требует
+разрешения репозитория на создание pull request'ов.
+
+| Событие       | Что происходит                                                         |
+| ------------- | ---------------------------------------------------------------------- |
+| push в `main` | собирается Windows-пакет и кладётся в артефакты (релиз не публикуется) |
+| тег `v*`      | то же плюс публикация/обновление GitHub Release                        |
+| ручной запуск | как push; если заполнить `tag` — ещё и релиз                           |
+
+Шаги на `windows-latest`:
 
 1. `actions/checkout`, `actions/setup-node` (Node 22, npm cache for both
    lockfiles);
@@ -134,16 +146,16 @@ NodeCG.
    (`gh release view` → `gh release create` / `gh release upload --clobber`),
    with a release body listing the contents and the OBS Browser Source URL.
 
-Trigger a release by pushing a version tag:
+Релиз запускается тегом:
 
 ```bash
 git tag v1.2.3
 git push origin v1.2.3
 ```
 
-A manual run (`workflow_dispatch`) builds and uploads the artifact; fill in the
-optional `tag` input to also publish a release. Re-running a job for an existing
-tag is safe: the asset is uploaded with `--clobber`.
+Ручной запуск (`workflow_dispatch`) собирает и загружает артефакт; заполните
+необязательный вход `tag`, чтобы ещё и опубликовать релиз. Перезапуск задачи для
+существующего тега безопасен: файл загружается с `--clobber`.
 
 ## Verification recipe
 
