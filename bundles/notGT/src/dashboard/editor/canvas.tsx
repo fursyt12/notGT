@@ -18,7 +18,7 @@
  *     it active.
  */
 import type Konva from "konva";
-import { Fragment, useCallback, useEffect, useMemo, useRef } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	Ellipse,
 	Group,
@@ -103,6 +103,13 @@ export function EditorCanvas({
 	onItemChange,
 }: EditorCanvasProps) {
 	const { ref, width, height } = useElementSize<HTMLDivElement>();
+
+	// Camera state: position (pan) and scale (zoom)
+	const [cameraX, setCameraX] = useState(0);
+	const [cameraY, setCameraY] = useState(0);
+	const [cameraScale, setCameraScale] = useState(1);
+	const isPanning = useRef(false);
+	const lastMousePos = useRef({ x: 0, y: 0 });
 
 	const designW = out.width > 0 ? out.width : 1920;
 	const designH = out.height > 0 ? out.height : 1080;
@@ -194,6 +201,92 @@ export function EditorCanvas({
 		return out;
 	}, [stageH]);
 
+	// Mouse wheel zoom handler
+	const handleWheel = useCallback(
+		(e: KonvaEvent<WheelEvent>) => {
+			e.evt.preventDefault();
+			const stage = e.target.getStage();
+			if (!stage) return;
+
+			const oldScale = cameraScale;
+			const pointer = stage.getPointerPosition();
+			if (!pointer) return;
+
+			// Zoom factor: wheel down = zoom out, wheel up = zoom in
+			const scaleBy = 1.05;
+			const newScale = e.evt.deltaY > 0 ? oldScale / scaleBy : oldScale * scaleBy;
+			const clampedScale = Math.max(0.1, Math.min(5, newScale));
+
+			// Calculate new camera position to zoom towards cursor
+			const mousePointTo = {
+				x: (pointer.x - cameraX) / oldScale,
+				y: (pointer.y - cameraY) / oldScale,
+			};
+
+			const newX = pointer.x - mousePointTo.x * clampedScale;
+			const newY = pointer.y - mousePointTo.y * clampedScale;
+
+			setCameraScale(clampedScale);
+			setCameraX(newX);
+			setCameraY(newY);
+		},
+		[cameraScale, cameraX, cameraY],
+	);
+
+	// Mouse pan handlers (middle button)
+	const handleMouseDown = useCallback((e: KonvaEvent<MouseEvent>) => {
+		if (e.evt.button === 1) {
+			// Middle mouse button
+			e.evt.preventDefault();
+			isPanning.current = true;
+			lastMousePos.current = { x: e.evt.clientX, y: e.evt.clientY };
+		}
+	}, []);
+
+	const handleMouseMove = useCallback(
+		(e: KonvaEvent<MouseEvent>) => {
+			if (!isPanning.current) return;
+
+			const dx = e.evt.clientX - lastMousePos.current.x;
+			const dy = e.evt.clientY - lastMousePos.current.y;
+
+			setCameraX((prev) => prev + dx);
+			setCameraY((prev) => prev + dy);
+
+			lastMousePos.current = { x: e.evt.clientX, y: e.evt.clientY };
+		},
+		[],
+	);
+
+	const handleMouseUp = useCallback((e: KonvaEvent<MouseEvent>) => {
+		if (e.evt.button === 1) {
+			isPanning.current = false;
+		}
+	}, []);
+
+	// Global mouse up listener for when mouse leaves canvas while panning
+	useEffect(() => {
+		const globalMouseUp = () => {
+			isPanning.current = false;
+		};
+		window.addEventListener("mouseup", globalMouseUp);
+		return () => window.removeEventListener("mouseup", globalMouseUp);
+	}, []);
+
+	// Reset camera when out changes
+	useEffect(() => {
+		setCameraX(0);
+		setCameraY(0);
+		setCameraScale(1);
+	}, [out.id]);
+
+	// Reset camera manually
+	const resetCamera = useCallback(() => {
+		setCameraX(0);
+		setCameraY(0);
+		setCameraScale(1);
+	}, []);
+
 	const stageSummary = `${designW}×${designH} · анимаций ${geoms.length}`;
 
 	return (
@@ -204,12 +297,23 @@ export function EditorCanvas({
 						<Stage
 							width={stageW}
 							height={stageH}
+							scaleX={cameraScale}
+							scaleY={cameraScale}
+							x={cameraX}
+							y={cameraY}
+							onWheel={handleWheel}
 							onMouseDown={(event: KonvaEvent<MouseEvent>) => {
+								if (event.evt.button === 1) {
+									handleMouseDown(event);
+									return;
+								}
 								if (event.target === event.target.getStage()) {
 									onSelectItem(null);
 									onSelectLayer(null);
 								}
 							}}
+							onMouseMove={handleMouseMove}
+							onMouseUp={handleMouseUp}
 						>
 							<KonvaLayer>
 								{verticals.map((x) => (
@@ -340,7 +444,18 @@ export function EditorCanvas({
 				<span>
 					Out: {out.name} ({stageSummary})
 				</span>
-				<span>Масштаб {Math.round(fit * 100)}%</span>
+				<span>Масштаб {Math.round(fit * 100)}% · Зум {Math.round(cameraScale * 100)}%</span>
+				{(cameraScale !== 1 || cameraX !== 0 || cameraY !== 0) ? (
+					<button
+						type="button"
+						className="ed-mini"
+						style={{ padding: "1px 6px", fontSize: "10px" }}
+						onClick={resetCamera}
+						title="Сбросить вид (вернуть зум и положение)"
+					>
+						↺ Сбросить вид
+					</button>
+				) : null}
 				{activeGeom ? (
 					<span className="ed-ok">
 						{activeGeom.template.name}: x {round(activeGeom.item.x)}% · y{" "}
@@ -348,7 +463,7 @@ export function EditorCanvas({
 					</span>
 				) : (
 					<span>
-						Клик по анимации — выбрать · рамка/маркер — переместить · угол — масштаб
+						Клик — выбрать · средняя кнопка — перемещение · колесо — зум
 					</span>
 				)}
 			</div>
