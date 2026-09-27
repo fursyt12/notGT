@@ -804,6 +804,26 @@ async function diagnose() {
 		}
 	}
 
+	// Everything can answer locally and the port still be closed to the rest of
+	// the studio: Windows Firewall governs inbound connections per program, so a
+	// successful self-probe proves nothing about other devices.
+	if (
+		state.child &&
+		firewall.supported &&
+		!firewall.ruleExists &&
+		!reach.loopbackOnly &&
+		reach.chosenOk
+	) {
+		verdict.push({
+			level: "info",
+			text:
+				`Правила брандмауэра для порта ${state.port} нет. С этого компьютера всё ` +
+				`открывается, но другие устройства (OBS на второй машине, Bitfocus Companion, ` +
+				`телефон) могут не подключиться. Нажмите «Разрешить порт» — правило будет ` +
+				`создано для всех профилей сети.`,
+		});
+	}
+
 	return { reach, firewall, proxy, verdict };
 }
 
