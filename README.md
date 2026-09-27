@@ -29,6 +29,13 @@ The operator manual — mental model, dashboard panels, the full REST API refere
 Companion setup, persistence and troubleshooting — lives in
 **[`bundles/notGT/README.md`](bundles/notGT/README.md)**.
 
+To author a new title with an LLM, the bundle ships prompt files that already encode the
+runtime contract: **[`GENERATE_TITLES.md`](GENERATE_TITLES.md)** (English) and
+**[`GENERATE_TITLES_RU.md`](GENERATE_TITLES_RU.md)** (Russian). Fill in the inputs at the
+bottom and paste the prompt into a chat; you get `html` / `css` / `js` for a `kind: "code"`
+template. The bundle also carries worked examples (`example-countdown`, `example-clock`,
+`example-external-data`) next to `Code sample (ticker)`.
+
 Build and run it locally (the bundle is **not** an npm workspace of this monorepo, so it has its
 own `node_modules` and is installed and built separately):
 
