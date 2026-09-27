@@ -156,6 +156,38 @@ body.editor-body {
 	font-size: 12px;
 }
 
+/* Live code animations. A `kind: "code"` template is an iframe and Konva cannot
+   host one, so it is painted here as DOM underneath the stage: the canvas stays
+   on top and keeps drawing placement frames, handles and the selection. The
+   overlay repeats the stage camera transform, so a preview lands exactly on its
+   placement while panning and zooming. */
+.ed-code-overlay {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	transform-origin: 0 0;
+	pointer-events: none;
+}
+
+.ed-canvas-stage .konvajs-content {
+	z-index: 1;
+}
+
+.ed-code-overlay__box {
+	position: absolute;
+	overflow: hidden;
+}
+
+.ed-code-overlay__box iframe {
+	position: absolute;
+	left: 0;
+	top: 0;
+	border: 0;
+	background: transparent;
+	transform-origin: top left;
+	pointer-events: none;
+}
+
 .ed-canvas-status {
 	display: flex;
 	align-items: center;

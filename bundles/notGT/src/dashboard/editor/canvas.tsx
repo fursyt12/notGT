@@ -50,6 +50,7 @@ import {
 	useHtmlImage,
 	useHtmlVideo,
 } from "./ui";
+import { useCodeDocument } from "./code-preview";
 
 type KonvaEvent<T extends Event> = Konva.KonvaEventObject<T>;
 
@@ -294,6 +295,36 @@ export function EditorCanvas({
 			<div className="ed-canvas-wrap" ref={ref}>
 				{fit > 0 ? (
 					<div className="ed-canvas-stage" style={{ width: stageW, height: stageH }}>
+						{/* Code animations are live iframes, and Konva cannot host one,
+						    so they are painted as DOM *under* the stage: the canvas
+						    stays on top and keeps drawing the frames, handles and
+						    selection around them. The overlay carries the same camera
+						    transform as the stage, so a preview sits exactly on its
+						    placement. */}
+						<div
+							className="ed-code-overlay"
+							style={{
+								transform: `translate(${cameraX}px, ${cameraY}px) scale(${cameraScale})`,
+							}}
+						>
+							{geoms
+								.filter((geom) => geom.template.kind === "code")
+								.map((geom) => (
+									<CodeOverlayFrame
+										key={geom.item.id}
+										geom={geom}
+										dim={
+											geom.item.id === activeItemId
+												? 1
+												: geom.item.enabled === false
+													? 0.22
+													: 0.45
+										}
+										data={data}
+									/>
+								))}
+						</div>
+
 						<Stage
 							width={stageW}
 							height={stageH}
@@ -539,7 +570,7 @@ function AnimatedItem({
 			) : null}
 
 			{template.kind === "code" ? (
-				<CodePlaceholder template={template} boxW={boxW} boxH={boxH} />
+				<CodePlaceholder boxW={boxW} boxH={boxH} />
 			) : (
 				sortByZ(template.layers ?? []).map((layer) => (
 					<LayerNode
@@ -565,37 +596,61 @@ function AnimatedItem({
 	);
 }
 
-function CodePlaceholder({
-	template,
-	boxW,
-	boxH,
-}: {
-	template: TitleTemplate;
-	boxW: number;
-	boxH: number;
-}) {
-	const label = `${template.name} — код ${template.width}×${template.height}`;
+/**
+ * Outline of a code placement. The animation itself is the live iframe in the
+ * DOM overlay above; this frame only keeps the box readable when the animation
+ * is transparent where it is empty.
+ */
+function CodePlaceholder({ boxW, boxH }: { boxW: number; boxH: number }) {
 	return (
-		<Fragment>
-			<Rect
-				width={boxW}
-				height={boxH}
-				fill="rgba(255,190,90,0.06)"
-				stroke="rgba(255,190,90,0.65)"
-				strokeWidth={1}
-				dash={[8, 6]}
-				listening={false}
+		<Rect
+			width={boxW}
+			height={boxH}
+			stroke="rgba(255,190,90,0.45)"
+			strokeWidth={1}
+			dash={[8, 6]}
+			listening={false}
+		/>
+	);
+}
+
+/**
+ * One code animation on the canvas: its document rendered live in an iframe,
+ * scaled from the template's design size down to the placement box. Pointer
+ * events stay off so the canvas underneath keeps receiving drags and clicks.
+ */
+function CodeOverlayFrame({
+	geom,
+	dim,
+	data,
+}: {
+	geom: Geometry;
+	dim: number;
+	data: TitleData;
+}) {
+	const doc = useCodeDocument(geom.template, data);
+	return (
+		<div
+			className="ed-code-overlay__box"
+			style={{
+				left: geom.boxX,
+				top: geom.boxY,
+				width: geom.boxW,
+				height: geom.boxH,
+				opacity: dim,
+			}}
+		>
+			<iframe
+				title={`${geom.template.name} — предпросмотр на холсте`}
+				sandbox="allow-scripts allow-same-origin"
+				srcDoc={doc}
+				style={{
+					width: geom.template.width,
+					height: geom.template.height,
+					transform: `scale(${geom.k})`,
+				}}
 			/>
-			<Text
-				text={label}
-				x={8}
-				y={8}
-				width={Math.max(10, boxW - 16)}
-				fontSize={12}
-				fill="rgba(255,200,120,0.95)"
-				listening={false}
-			/>
-		</Fragment>
+		</div>
 	);
 }
 

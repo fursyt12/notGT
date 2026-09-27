@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
-import { buildCodeDocument, codeSource } from "../graphics/code-runtime";
+import { codeSource } from "../graphics/code-runtime";
 import { interpolate } from "../shared/binding";
 import { BUNDLE_NAME } from "../shared/types";
 import type {
@@ -34,6 +34,7 @@ import type {
 	VariableSelection,
 } from "../shared/types";
 import { EditorCanvas } from "./editor/canvas";
+import { useCodeDocument } from "./editor/code-preview";
 import {
 	CheckField,
 	ColorField,
@@ -1877,12 +1878,8 @@ function TemplateSettings({
 // ---------------------------------------------------------------- code panel
 
 function CodePreviewCard({ template, data }: { template: TitleTemplate; data: TitleData }) {
-	const [doc, setDoc] = useState("");
 	const [nonce, setNonce] = useState(0);
-
-	useEffect(() => {
-		setDoc(buildCodeDocument(template, data));
-	}, [template, data, nonce]);
+	const doc = useCodeDocument(template, data, nonce);
 
 	return (
 		<div className="ed-card">
