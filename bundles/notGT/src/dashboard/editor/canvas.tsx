@@ -18,7 +18,16 @@
  *     it active.
  */
 import type Konva from "konva";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	Fragment,
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import {
 	Ellipse,
 	Group,
@@ -51,6 +60,12 @@ import {
 	useHtmlVideo,
 } from "./ui";
 import { useCodeDocument } from "./code-preview";
+import {
+	type SnapLine,
+	layerSnapLines,
+	placementSnapLines,
+	snapBox,
+} from "./snapping";
 
 type KonvaEvent<T extends Event> = Konva.KonvaEventObject<T>;
 
@@ -103,6 +118,35 @@ interface PreviewBox {
 
 const noop = () => {};
 const noopRef = () => {};
+
+/** How close (in screen px) a box has to come to a line to stick to it. */
+const SNAP_THRESHOLD_PX = 7;
+/** Remembers the magnet switch between dashboard reloads. */
+const SNAP_STORAGE_KEY = "notgt.editor.snapping";
+
+/**
+ * Snapping available to everything draggable on the stage.
+ *
+ * The two kinds of drag live in different coordinate spaces — a placement moves
+ * inside the out's stage, a layer moves inside its template's box — so they get
+ * their own line sets, and the guides are published per space too.
+ */
+interface SnapApi {
+	enabled: boolean;
+	/** In stage px: the caller divides the screen threshold by the camera zoom. */
+	threshold: number;
+	/** Lines for moving a whole placement, in stage px. */
+	placementX: SnapLine[];
+	placementY: SnapLine[];
+	/** Lines for moving a layer, in the template's own px. */
+	layerX: SnapLine[];
+	layerY: SnapLine[];
+	showPlacement: (x: number[], y: number[]) => void;
+	showLayer: (x: number[], y: number[]) => void;
+	clear: () => void;
+}
+
+const SnapContext = createContext<SnapApi | null>(null);
 
 export function EditorCanvas({
 	out,
@@ -197,6 +241,69 @@ export function EditorCanvas({
 			k: fit,
 		};
 	}, [draft, geoms, fit, stageW, stageH]);
+
+	// --- magnetic snapping -------------------------------------------------
+	const [snapEnabled, setSnapEnabled] = useState(() => {
+		try {
+			return localStorage.getItem(SNAP_STORAGE_KEY) !== "0";
+		} catch {
+			return true;
+		}
+	});
+	useEffect(() => {
+		try {
+			localStorage.setItem(SNAP_STORAGE_KEY, snapEnabled ? "1" : "0");
+		} catch {
+			// A dashboard with storage disabled simply forgets the preference.
+		}
+	}, [snapEnabled]);
+
+	/** Lines drawn while a drag is in progress, in stage px. */
+	const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] });
+	const clearGuides = useCallback(() => setGuides({ x: [], y: [] }), []);
+
+	const placementLines = useMemo(
+		() =>
+			placementSnapLines(
+				stageW,
+				stageH,
+				geoms.filter((geom) => geom.item.id !== activeItemId),
+			),
+		[geoms, activeItemId, stageW, stageH],
+	);
+
+	/** Layer lines are in the active template's own px, so they only exist for it. */
+	const layerLines = useMemo(() => {
+		if (!activeGeom || activeGeom.template.kind !== "layers") return { x: [], y: [] };
+		return layerSnapLines(
+			activeGeom.template.width,
+			activeGeom.template.height,
+			activeGeom.k,
+			activeGeom.template.layers ?? [],
+			selectedLayerId,
+		);
+	}, [activeGeom, selectedLayerId]);
+
+	const snapApi = useMemo<SnapApi>(
+		() => ({
+			enabled: snapEnabled && fit > 0,
+			// The camera scales the stage content, so a threshold that feels the
+			// same at every zoom is a screen distance divided by that zoom.
+			threshold: SNAP_THRESHOLD_PX / Math.max(0.01, cameraScale),
+			placementX: placementLines.x,
+			placementY: placementLines.y,
+			layerX: layerLines.x,
+			layerY: layerLines.y,
+			showPlacement: (x, y) => setGuides({ x, y }),
+			showLayer: (x, y) =>
+				setGuides({
+					x: x.map((value) => (activeGeom ? activeGeom.boxX + value : value)),
+					y: y.map((value) => (activeGeom ? activeGeom.boxY + value : value)),
+				}),
+			clear: clearGuides,
+		}),
+		[snapEnabled, fit, cameraScale, placementLines, layerLines, activeGeom, clearGuides],
+	);
 
 	// --- node refs (only the active animation's layers matter for the transformer)
 	const nodeRefs = useRef(new Map<string, Konva.Node>());
@@ -332,7 +439,8 @@ export function EditorCanvas({
 	const stageSummary = `${designW}×${designH} · анимаций ${geoms.length}`;
 
 	return (
-		<div className="ed-center">
+		<SnapContext.Provider value={snapApi}>
+			<div className="ed-center">
 			<div className="ed-canvas-wrap" ref={ref}>
 				{fit > 0 ? (
 					<div className="ed-canvas-stage" style={{ width: stageW, height: stageH }}>
@@ -556,6 +664,31 @@ export function EditorCanvas({
 									</Group>
 								</KonvaLayer>
 							) : null}
+
+							{/* Snap guides, drawn last so they stay visible over every
+							    animation while something is being dragged. */}
+							{guides.x.length > 0 || guides.y.length > 0 ? (
+								<KonvaLayer listening={false}>
+									{guides.x.map((x, index) => (
+										<Line
+											key={`gx${index}`}
+											points={[x, 0, x, stageH]}
+											stroke="rgba(255,77,210,0.95)"
+											strokeWidth={1}
+											dash={[6, 4]}
+										/>
+									))}
+									{guides.y.map((y, index) => (
+										<Line
+											key={`gy${index}`}
+											points={[0, y, stageW, y]}
+											stroke="rgba(255,77,210,0.95)"
+											strokeWidth={1}
+											dash={[6, 4]}
+										/>
+									))}
+								</KonvaLayer>
+							) : null}
 						</Stage>
 					</div>
 				) : (
@@ -568,6 +701,14 @@ export function EditorCanvas({
 					Out: {out.name} ({stageSummary})
 				</span>
 				<span>Масштаб {Math.round(fit * 100)}% · Зум {Math.round(cameraScale * 100)}%</span>
+				<label className="ed-snap" title="Притягивать к центру и краям out'а, безопасной зоне и другим анимациям">
+					<input
+						type="checkbox"
+						checked={snapEnabled}
+						onChange={(event) => setSnapEnabled(event.target.checked)}
+					/>
+					магниты
+				</label>
 				{(cameraScale !== 1 || cameraX !== 0 || cameraY !== 0) ? (
 					<button
 						type="button"
@@ -590,11 +731,57 @@ export function EditorCanvas({
 					</span>
 				)}
 			</div>
-		</div>
+			</div>
+		</SnapContext.Provider>
 	);
 }
 
 // -------------------------------------------------------------- one animation
+
+/**
+ * Dragging a whole placement.
+ *
+ * The node moves as a delta inside the placement's group, so the drag becomes
+ * new `x`/`y` percentages only on release; the magnets correct that delta while
+ * the drag is in flight, and the guides show what it stuck to.
+ */
+function usePlacementDrag(
+	geom: Geometry,
+	stageW: number,
+	stageH: number,
+	onItemChange: (itemId: string, patch: Partial<OutItem>) => void,
+): {
+	onDragMove: (event: KonvaEvent<DragEvent>) => void;
+	onDragEnd: (event: KonvaEvent<DragEvent>) => void;
+} {
+	const snap = useContext(SnapContext);
+	const { item, boxX, boxY, boxW, boxH } = geom;
+
+	const onDragMove = (event: KonvaEvent<DragEvent>) => {
+		const node = event.target;
+		if (!snap?.enabled) return;
+		const moved = snapBox(
+			{ x: boxX + node.x(), y: boxY + node.y(), width: boxW, height: boxH },
+			snap.placementX,
+			snap.placementY,
+			snap.threshold,
+		);
+		node.position({ x: moved.box.x - boxX, y: moved.box.y - boxY });
+		snap.showPlacement(moved.guidesX, moved.guidesY);
+	};
+
+	const onDragEnd = (event: KonvaEvent<DragEvent>) => {
+		const node = event.target;
+		snap?.clear();
+		onItemChange(item.id, {
+			x: round((item.x ?? 0) + (stageW > 0 ? (node.x() / stageW) * 100 : 0)),
+			y: round((item.y ?? 0) + (stageH > 0 ? (node.y() / stageH) * 100 : 0)),
+		});
+		node.position({ x: 0, y: 0 });
+	};
+
+	return { onDragMove, onDragEnd };
+}
 
 function AnimatedItem({
 	geom,
@@ -631,13 +818,7 @@ function AnimatedItem({
 	const interactive = active && item.enabled !== false;
 	const dim = active ? 1 : item.enabled === false ? 0.22 : 0.45;
 
-	const moveTo = (node: Konva.Node) => {
-		onItemChange(item.id, {
-			x: round((item.x ?? 0) + (stageW > 0 ? (node.x() / stageW) * 100 : 0)),
-			y: round((item.y ?? 0) + (stageH > 0 ? (node.y() / stageH) * 100 : 0)),
-		});
-		node.position({ x: 0, y: 0 });
-	};
+	const placementDrag = usePlacementDrag(geom, stageW, stageH, onItemChange);
 
 	return (
 		<Group x={boxX} y={boxY} opacity={dim}>
@@ -657,7 +838,8 @@ function AnimatedItem({
 						onSelectItem(item.id);
 						onSelectLayer(null);
 					}}
-					onDragEnd={(event: KonvaEvent<DragEvent>) => moveTo(event.target)}
+					onDragMove={placementDrag.onDragMove}
+					onDragEnd={placementDrag.onDragEnd}
 				/>
 			) : null}
 
@@ -760,6 +942,7 @@ function PlacementHandles({
 	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
 }) {
 	const { item, template, boxW, boxH, boxX, boxY } = geom;
+	const placementDrag = usePlacementDrag(geom, stageW, stageH, onItemChange);
 
 	return (
 		<Group x={boxX} y={boxY}>
@@ -768,14 +951,8 @@ function PlacementHandles({
 				x={0}
 				y={0}
 				draggable
-				onDragEnd={(event: KonvaEvent<DragEvent>) => {
-					const node = event.target;
-					onItemChange(item.id, {
-						x: round((item.x ?? 0) + (stageW > 0 ? (node.x() / stageW) * 100 : 0)),
-						y: round((item.y ?? 0) + (stageH > 0 ? (node.y() / stageH) * 100 : 0)),
-					});
-					node.position({ x: 0, y: 0 });
-				}}
+				onDragMove={placementDrag.onDragMove}
+				onDragEnd={placementDrag.onDragEnd}
 			>
 				<Rect
 					width={HANDLE}
@@ -963,6 +1140,7 @@ function LayerNode({
 	const opacity = layer.hidden ? 0.25 : style.opacity ?? 1;
 	const rotation = style.rotation ?? 0;
 	const draggable = interactive && !layer.locked && !layer.hidden;
+	const snap = useContext(SnapContext);
 	const shadowColor = style.shadowColor ? style.shadowColor : undefined;
 
 	const toPctX = (px: number) => (stageW > 0 ? (px / stageW) * 100 : 0);
@@ -970,10 +1148,29 @@ function LayerNode({
 
 	const handleDragEnd = (event: KonvaEvent<DragEvent>) => {
 		const node = event.target;
+		snap?.clear();
 		onChange({
 			x: round(toPctX(node.x() - originX)),
 			y: round(toPctY(node.y() - originY)),
 		});
+	};
+
+	/**
+	 * Snaps a layer to the template's box and to its sibling layers. Rotated
+	 * layers are left alone: their box is the rotated one, and pretending
+	 * otherwise would snap to coordinates the operator cannot see.
+	 */
+	const handleDragMove = (event: KonvaEvent<DragEvent>) => {
+		const node = event.target;
+		if (!snap?.enabled || rotation !== 0 || w === undefined || h === undefined) return;
+		const moved = snapBox(
+			{ x: node.x() - originX, y: node.y() - originY, width: w, height: h },
+			snap.layerX,
+			snap.layerY,
+			snap.threshold,
+		);
+		node.position({ x: moved.box.x + originX, y: moved.box.y + originY });
+		snap.showLayer(moved.guidesX, moved.guidesY);
 	};
 
 	const handleTransformEnd = (event: KonvaEvent<Event>) => {
@@ -1015,6 +1212,7 @@ function LayerNode({
 		onMouseDown: listening ? onSelect : undefined,
 		onTouchStart: listening ? onSelect : undefined,
 		onDragStart: listening ? onSelect : undefined,
+		onDragMove: handleDragMove,
 		onDragEnd: handleDragEnd,
 		onTransformEnd: handleTransformEnd,
 	};

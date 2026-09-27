@@ -200,6 +200,21 @@ body.editor-body {
 	color: var(--ng-muted);
 }
 
+/* Magnet switch in the canvas status bar. */
+.ed-snap {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	cursor: pointer;
+	user-select: none;
+	color: var(--ng-muted);
+}
+
+.ed-snap input {
+	margin: 0;
+	cursor: pointer;
+}
+
 .ed-ok {
 	color: var(--ng-ok);
 }
