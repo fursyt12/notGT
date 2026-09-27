@@ -88,6 +88,22 @@ interface Geometry {
 	k: number;
 }
 
+/** Anything drawn at a template's design box on the stage: a placement or the
+ *  preview of the template being edited. */
+interface PreviewBox {
+	template: TitleTemplate;
+	/** Placement box on the stage, in stage px. */
+	boxX: number;
+	boxY: number;
+	boxW: number;
+	boxH: number;
+	/** Design px -> stage px factor. */
+	k: number;
+}
+
+const noop = () => {};
+const noopRef = () => {};
+
 export function EditorCanvas({
 	out,
 	templates,
@@ -156,6 +172,31 @@ export function EditorCanvas({
 	}, [items, byId, fit, stageW, stageH]);
 
 	const activeGeom = geoms.find((g) => g.item.id === activeItemId) ?? null;
+
+	/**
+	 * The template being edited, when it is not placed on the out shown here.
+	 *
+	 * The stage draws placements, so selecting an animation in the library — a
+	 * built-in example, a new code animation, anything not on this out — used to
+	 * leave the canvas empty and say nothing about the code open in the panel
+	 * next to it. Drawing the draft centred at its design size makes "what I
+	 * edit" and "what I see" the same thing again; the frame and the caption say
+	 * that this is the template, not a placement.
+	 */
+	const draftBox = useMemo<PreviewBox | null>(() => {
+		if (!draft || fit <= 0) return null;
+		if (geoms.some((geom) => geom.template.id === draft.id)) return null;
+		const boxW = Math.max(1, draft.width * fit);
+		const boxH = Math.max(1, draft.height * fit);
+		return {
+			template: draft,
+			boxX: Math.max(0, (stageW - boxW) / 2),
+			boxY: Math.max(0, (stageH - boxH) / 2),
+			boxW,
+			boxH,
+			k: fit,
+		};
+	}, [draft, geoms, fit, stageW, stageH]);
 
 	// --- node refs (only the active animation's layers matter for the transformer)
 	const nodeRefs = useRef(new Map<string, Konva.Node>());
@@ -312,7 +353,7 @@ export function EditorCanvas({
 								.map((geom) => (
 									<CodeOverlayFrame
 										key={geom.item.id}
-										geom={geom}
+										box={geom}
 										dim={
 											geom.item.id === activeItemId
 												? 1
@@ -323,6 +364,9 @@ export function EditorCanvas({
 										data={data}
 									/>
 								))}
+							{draftBox && draftBox.template.kind === "code" ? (
+								<CodeOverlayFrame box={draftBox} dim={1} data={data} />
+							) : null}
 						</div>
 
 						<Stage
@@ -464,6 +508,54 @@ export function EditorCanvas({
 									}
 								/>
 							</KonvaLayer>
+
+							{/* The template being edited, when it is not placed on this
+							    out: read-only, only so that the code open in the panel
+							    next to the canvas is also visible on the canvas. */}
+							{draftBox ? (
+								<KonvaLayer listening={false}>
+									<Group x={draftBox.boxX} y={draftBox.boxY}>
+										{draftBox.template.kind === "code"
+											? null
+											: sortByZ(draftBox.template.layers ?? []).map((layer) => (
+													<LayerNode
+														key={`draft:${layer.id}`}
+														layer={layer}
+														data={data}
+														selection={selection}
+														stageW={draftBox.template.width * draftBox.k}
+														stageH={draftBox.template.height * draftBox.k}
+														k={draftBox.k}
+														ky={draftBox.k}
+														interactive={false}
+														listening={false}
+														playing={false}
+														restartToken={0}
+														onSelect={noop}
+														onChange={noop}
+														registerRef={noopRef}
+													/>
+												))}
+										<Rect
+											width={draftBox.boxW}
+											height={draftBox.boxH}
+											stroke="rgba(178,140,255,0.85)"
+											strokeWidth={1}
+											dash={[10, 6]}
+											listening={false}
+										/>
+										<Text
+											text={`Предпросмотр шаблона «${draftBox.template.name}» — на этом out'е его нет`}
+											x={12}
+											y={12}
+											width={Math.max(10, draftBox.boxW - 24)}
+											fontSize={14}
+											fill="rgba(205,180,255,0.95)"
+											listening={false}
+										/>
+									</Group>
+								</KonvaLayer>
+							) : null}
 						</Stage>
 					</div>
 				) : (
@@ -620,34 +712,34 @@ function CodePlaceholder({ boxW, boxH }: { boxW: number; boxH: number }) {
  * events stay off so the canvas underneath keeps receiving drags and clicks.
  */
 function CodeOverlayFrame({
-	geom,
+	box,
 	dim,
 	data,
 }: {
-	geom: Geometry;
+	box: PreviewBox;
 	dim: number;
 	data: TitleData;
 }) {
-	const doc = useCodeDocument(geom.template, data);
+	const doc = useCodeDocument(box.template, data);
 	return (
 		<div
 			className="ed-code-overlay__box"
 			style={{
-				left: geom.boxX,
-				top: geom.boxY,
-				width: geom.boxW,
-				height: geom.boxH,
+				left: box.boxX,
+				top: box.boxY,
+				width: box.boxW,
+				height: box.boxH,
 				opacity: dim,
 			}}
 		>
 			<iframe
-				title={`${geom.template.name} — предпросмотр на холсте`}
+				title={`${box.template.name} — предпросмотр на холсте`}
 				sandbox="allow-scripts allow-same-origin"
 				srcDoc={doc}
 				style={{
-					width: geom.template.width,
-					height: geom.template.height,
-					transform: `scale(${geom.k})`,
+					width: box.template.width,
+					height: box.template.height,
+					transform: `scale(${box.k})`,
 				}}
 			/>
 		</div>
