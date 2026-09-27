@@ -71,7 +71,35 @@ classic reason for "everything except 127.0.0.1 hangs".
 `SIGTERM` then `SIGKILL` after a grace period elsewhere. The child is always stopped when
 the launcher exits (`SIGINT`, `SIGTERM`, `exit`).
 
-## HTTP API (127.0.0.1 only, JSON)
+## Two different HTTP APIs — do not confuse them
+
+The launcher has its own control API, and NodeCG serves the **notGT titles API**. Only the
+first one is loopback-only:
+
+|                            | launcher control API                                            | notGT titles API                                                                         |
+| -------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| base URL                   | `http://127.0.0.1:<control-port>` (ephemeral, printed on start) | `http://<адрес>:<port>/api` (порт NodeCG, по умолчанию 9090)                             |
+| reachable from the network | **no, by design**                                               | **yes** — everywhere NodeCG listens (`0.0.0.0` unless you chose «Только этот компьютер») |
+| what it is for             | start/stop NodeCG, firewall rules (UAC), logs, diagnostics      | titles, data, templates, outs, animations — Bitfocus Companion, OBS, your own module     |
+| docs                       | this section                                                    | [`bundles/notGT/README.md`](../bundles/notGT/README.md#bitfocus-companion)               |
+
+The launcher API is deliberately bound to `127.0.0.1`: it spawns and kills processes and can
+raise an elevated `netsh` prompt, so exposing it would hand remote code execution to anyone
+on the LAN. The titles API is the integration surface — it lives on the NodeCG port, works
+over the LAN, sends permissive CORS headers (`Access-Control-Allow-Origin: *`) and answers
+`OPTIONS` with `204`, so a Companion connection, a browser page or a native module can all
+talk to it. Verify from another machine with:
+
+```bash
+curl -sS http://<адрес>:9090/api/health           # {"ok":true,...} — no token needed
+curl -sS http://<адрес>:9090/api/state            # full public state
+curl -sS -X POST http://<адрес>:9090/api/titles/lower-third/toggle
+```
+
+If the address does not answer from another machine, that is the Windows firewall — see the
+section above («Разрешить порт»).
+
+## Launcher HTTP API (127.0.0.1 only, JSON)
 
 | method | path                   | notes                                                                             |
 | ------ | ---------------------- | --------------------------------------------------------------------------------- |

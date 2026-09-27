@@ -147,6 +147,13 @@ browser showed an endless spinner. With the wildcard bind:
 Only the explicit «Только этот компьютер (127.0.0.1)» choice keeps the strict
 loopback bind.
 
+This applies to the **NodeCG port**, so the notGT titles API
+(`http://<адрес>:<порт>/api/...`) is reachable from the LAN and is what Bitfocus
+Companion, OBS or a custom module should talk to. The launcher's _own_ control
+API (`http://127.0.0.1:<control-port>/api/...`) stays loopback-only on purpose:
+it spawns processes and can raise an elevated `netsh` prompt. See
+[`launcher/README.md`](../launcher/README.md#two-different-http-apis--do-not-confuse-them).
+
 ## CI и релиз через GitHub Actions
 
 Единственный автоматический CI в этом форке — Windows-сборка
