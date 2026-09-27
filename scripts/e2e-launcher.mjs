@@ -420,6 +420,68 @@ async function main() {
 			JSON.stringify(logsRes3.json)?.slice(0, 200),
 		);
 
+		// -- 4b. reachability surface + firewall helpers -------------------------
+		const reachRes = await postJson(`${control.url}/api/reach`, {}, 20_000);
+		check(
+			"POST /api/reach reports the loopback server as reachable",
+			reachRes.json?.reach?.chosenOk === true &&
+				reachRes.json?.reach?.loopbackOk === true,
+			JSON.stringify(reachRes.json),
+		);
+		check(
+			"the start payload advertises a bind host and both URLs",
+			typeof started.bindHost === "string" &&
+				typeof started.advertiseHost === "string" &&
+				started.networkUrl === expectedGuiUrl &&
+				started.loopbackUrl === expectedGuiUrl,
+			JSON.stringify({
+				bindHost: started.bindHost,
+				advertiseHost: started.advertiseHost,
+				networkUrl: started.networkUrl,
+				loopbackUrl: started.loopbackUrl,
+			}),
+		);
+
+		const diagRes = await httpReq(`${control.url}/api/diagnostics`, {}, 30_000);
+		const verdict = diagRes.json?.verdict ?? [];
+		check(
+			"GET /api/diagnostics reports an ok verdict for a reachable address",
+			diagRes.status === 200 &&
+				verdict.some((v) => v.level === "ok") &&
+				!verdict.some((v) => v.level === "error"),
+			JSON.stringify(verdict),
+		);
+		check(
+			"GET /api/diagnostics names the firewall rule for the running port",
+			diagRes.json?.firewall?.ruleName === `notGT-NodeCG-TCP-${serverPort}` &&
+				typeof diagRes.json?.firewall?.ruleExists === "boolean",
+			JSON.stringify(diagRes.json?.firewall),
+		);
+
+		if (process.platform !== "win32") {
+			const allowRes = await postJson(
+				`${control.url}/api/firewall/allow`,
+				{ port: serverPort },
+				20_000,
+			);
+			check(
+				"POST /api/firewall/allow answers with a Windows-only explanation",
+				allowRes.json?.ok === false &&
+					/Windows/.test(allowRes.json?.message ?? ""),
+				JSON.stringify(allowRes.json?.message),
+			);
+			const removeRes = await postJson(
+				`${control.url}/api/firewall/remove`,
+				{ port: serverPort },
+				20_000,
+			);
+			check(
+				"POST /api/firewall/remove answers with a Windows-only explanation",
+				removeRes.json?.ok === false,
+				JSON.stringify(removeRes.json?.message),
+			);
+		}
+
 		// -- 5. double start rejected, stop returns to stopped ------------------
 		const secondStart = await postJson(
 			`${control.url}/api/start`,
@@ -484,6 +546,71 @@ async function main() {
 			"POST /api/stop while not running is a safe 200 no-op",
 			stopAgain.status === 200,
 			`status=${stopAgain.status}`,
+		);
+
+		// -- 7. "all interfaces" binds everywhere but advertises a real address -
+		// Binding a single card is what makes Windows Firewall drop even
+		// same-machine connections, so every non-loopback choice now binds
+		// 0.0.0.0 and keeps the chosen address for links only.
+		const anyPort = await findFreePort(9300, 9399);
+		const anyStart = await postJson(
+			`${control.url}/api/start`,
+			{ host: "0.0.0.0", port: anyPort },
+			READY_TIMEOUT_MS + 15_000,
+		);
+		const anyBody = anyStart.json ?? {};
+		check(
+			"starting on 0.0.0.0 reaches status running",
+			anyBody.status === "running",
+			`status=${anyBody.status} text=${JSON.stringify(anyBody.statusText)}`,
+		);
+		check(
+			"0.0.0.0 is written to cfg/nodecg.json as the bind host",
+			JSON.parse(fs.readFileSync(cfgPath, "utf8")).host === "0.0.0.0",
+			fs.readFileSync(cfgPath, "utf8"),
+		);
+		check(
+			"state.bindHost is 0.0.0.0 while the advertised host is a real address",
+			anyBody.bindHost === "0.0.0.0" &&
+				typeof anyBody.advertiseHost === "string" &&
+				anyBody.advertiseHost !== "0.0.0.0",
+			JSON.stringify({
+				bindHost: anyBody.bindHost,
+				advertiseHost: anyBody.advertiseHost,
+			}),
+		);
+		check(
+			"«Открыть GUI» stays on 127.0.0.1 for the all-interfaces choice",
+			anyBody.guiUrl === `http://127.0.0.1:${anyPort}/dashboard/`,
+			`guiUrl=${anyBody.guiUrl}`,
+		);
+		const loopbackAnswer = await httpReq(
+			`http://127.0.0.1:${anyPort}/dashboard/`,
+			{ redirect: "manual" },
+			8000,
+		);
+		check(
+			"the all-interfaces server answers on 127.0.0.1",
+			loopbackAnswer.status < 500,
+			`status=${loopbackAnswer.status}`,
+		);
+		if (anyBody.networkUrl && anyBody.advertiseHost !== "127.0.0.1") {
+			const networkAnswer = await httpReq(
+				anyBody.networkUrl,
+				{ redirect: "manual" },
+				8000,
+			).catch(() => ({ status: 0 }));
+			check(
+				`the advertised address answers too (${anyBody.advertiseHost})`,
+				networkAnswer.status < 500,
+				`status=${networkAnswer.status}`,
+			);
+		}
+		const anyStop = await postJson(`${control.url}/api/stop`, {}, 20_000);
+		check(
+			"the all-interfaces server stops cleanly",
+			anyStop.json?.status === "stopped",
+			`status=${anyStop.json?.status}`,
 		);
 	} finally {
 		// Clean up the occupier, the launcher and the developer's config.

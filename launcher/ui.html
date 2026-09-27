@@ -263,6 +263,65 @@
 			code {
 				color: #9fb4da;
 			}
+			.warn-box {
+				display: none;
+				margin-top: 12px;
+				padding: 10px 12px;
+				border-radius: 6px;
+				border: 1px solid rgba(241, 196, 15, 0.45);
+				background: rgba(241, 196, 15, 0.1);
+				color: #ffe9a3;
+				font-size: 12px;
+				white-space: pre-wrap;
+				word-break: break-word;
+			}
+			.warn-box.show {
+				display: block;
+			}
+			.link-line {
+				display: flex;
+				gap: 8px;
+				align-items: center;
+				margin-top: 6px;
+				font-size: 11px;
+				color: var(--muted);
+			}
+			.link-line code {
+				flex: 1;
+				overflow-wrap: anywhere;
+			}
+			.link-line button {
+				padding: 3px 9px;
+				font-size: 11px;
+				font-weight: 500;
+			}
+			.verdict {
+				margin: 10px 0 0;
+				padding: 0;
+				list-style: none;
+				font-size: 12px;
+			}
+			.verdict li {
+				padding: 6px 10px;
+				border-radius: 6px;
+				margin-bottom: 6px;
+				border: 1px solid var(--border);
+				background: var(--panel-2);
+				white-space: pre-wrap;
+				word-break: break-word;
+			}
+			.verdict li.ok {
+				border-color: rgba(46, 204, 113, 0.4);
+				color: #b6f0cd;
+			}
+			.verdict li.warn {
+				border-color: rgba(241, 196, 15, 0.4);
+				color: #ffe9a3;
+			}
+			.verdict li.error {
+				border-color: rgba(231, 76, 60, 0.4);
+				color: #ffc0b8;
+			}
 		</style>
 	</head>
 	<body>
@@ -278,6 +337,7 @@
 					<span id="pillHint" class="note" style="margin: 0"></span>
 				</div>
 				<div class="status-text" id="statusText">Сервер не запущен.</div>
+				<div class="warn-box" id="warning"></div>
 			</div>
 
 			<div class="card">
@@ -298,6 +358,7 @@
 						/>
 					</div>
 				</div>
+				<div class="note" id="ifaceHint"></div>
 				<div class="buttons">
 					<button class="primary" id="btnStart">Запустить</button>
 					<button id="btnStop">Остановить</button>
@@ -316,6 +377,38 @@
 					(кнопка «Открыть GUI»). В OBS добавляется <b>другая</b> ссылка:
 					источник «Браузер» с адресом <code id="obsUrl"></code>
 				</div>
+				<div class="link-line">
+					<span>Для других устройств:</span>
+					<code id="networkUrl">—</code>
+					<button data-copy="networkUrl">Копировать</button>
+					<button data-open="networkUrl">Открыть</button>
+				</div>
+				<div class="link-line">
+					<span>Только этот компьютер:</span>
+					<code id="loopbackUrl">—</code>
+					<button data-copy="loopbackUrl">Копировать</button>
+					<button data-open="loopbackUrl">Открыть</button>
+				</div>
+			</div>
+
+			<div class="card">
+				<div class="status-head">
+					<label style="margin: 0">Сеть и брандмауэр</label>
+					<span class="note" style="margin: 0" id="fwState"></span>
+				</div>
+				<div class="note" style="margin-top: 6px">
+					Если панель открывается на этом компьютере, но «бесконечно грузится» с
+					другого устройства или по сетевому адресу — почти всегда виноват
+					брандмауэр Windows: он не пускает входящие подключения к
+					<code>node.exe</code>. Кнопка ниже добавляет правило для порта во
+					<b>всех</b> профилях сети (нужны права администратора).
+				</div>
+				<div class="buttons">
+					<button id="btnDiag">Проверить доступность</button>
+					<button id="btnAllow">Разрешить порт</button>
+					<button id="btnRemoveFw">Удалить правило</button>
+				</div>
+				<ul class="verdict" id="verdict"></ul>
 			</div>
 
 			<details id="logPanel">
@@ -365,8 +458,24 @@
 				return host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
 			}
 
+			/**
+			 * Which address a "not started yet" preview should advertise.
+			 * «Все интерфейсы» has no address of its own, so use the machine's
+			 * first real address - the same one the launcher will pick.
+			 */
+			function previewHost(host) {
+				if (host !== "0.0.0.0" && host !== "::") return openHostFor(host);
+				var list = (state && state.interfaces) || [];
+				for (var i = 0; i < list.length; i++) {
+					var addr = list[i].address;
+					if (addr !== "0.0.0.0" && addr !== "127.0.0.1" && addr !== "::1")
+						return addr;
+				}
+				return "127.0.0.1";
+			}
+
 			function originFor(host, port) {
-				var h = openHostFor(host);
+				var h = previewHost(host);
 				if (h.indexOf(":") >= 0 && h.charAt(0) !== "[") h = "[" + h + "]";
 				return "http://" + h + ":" + port;
 			}
@@ -485,6 +594,116 @@
 						: previewUrl(sel.host, sel.port);
 				var obs = $("obsUrl");
 				if (obs) obs.textContent = obsUrlFor(sel.host, sel.port);
+
+				var warn = $("warning");
+				warn.textContent = state.warning || "";
+				warn.className = state.warning ? "warn-box show" : "warn-box";
+
+				var netUrl =
+					state.status === "running"
+						? state.networkUrl || previewUrl(sel.host, sel.port)
+						: previewUrl(sel.host, sel.port);
+				var localUrl = state.loopbackUrl || previewUrl("127.0.0.1", sel.port);
+				$("networkUrl").textContent = netUrl;
+				$("loopbackUrl").textContent = localUrl;
+
+				var fw = state.firewall || {};
+				$("fwState").textContent = !fw.supported
+					? "правило создаётся только в Windows"
+					: fw.ruleExists
+						? "правило «" + fw.ruleName + "» есть"
+						: "правила для порта " + (fw.port || sel.port) + " нет";
+				$("btnAllow").disabled = !fw.supported || !!fw.ruleExists;
+				$("btnRemoveFw").disabled = !fw.supported || !fw.ruleExists;
+
+				var hint =
+					sel.host === "127.0.0.1"
+						? "Сервер будет доступен только с этого компьютера."
+						: "Сервер слушает все интерфейсы (как NodeCG по умолчанию), а выбранный адрес подставляется в ссылки. Нужен доступ только с этого компьютера — выберите «Только этот компьютер».";
+				if (state.status === "running") {
+					hint +=
+						" Сейчас слушает " +
+						(state.bindHost || "0.0.0.0") +
+						", в ссылках — " +
+						(state.advertiseHost || "-") +
+						".";
+				}
+				$("ifaceHint").textContent = hint;
+			}
+
+			function renderVerdict(items) {
+				var list = $("verdict");
+				list.innerHTML = "";
+				(items || []).forEach(function (item) {
+					var li = document.createElement("li");
+					li.className = item.level || "info";
+					li.textContent = item.text;
+					list.appendChild(li);
+				});
+			}
+
+			function runDiagnostics() {
+				$("btnDiag").disabled = true;
+				renderVerdict([{ level: "info", text: "Проверяем…" }]);
+				api("/api/diagnostics")
+					.then(function (r) {
+						var body = r.body || {};
+						renderVerdict(body.verdict);
+						refresh();
+					})
+					.catch(function () {
+						renderVerdict([{ level: "error", text: "Лончер не отвечает." }]);
+					})
+					.then(function () {
+						$("btnDiag").disabled = false;
+					});
+			}
+
+			function allowPort() {
+				var sel = currentSelection();
+				$("btnAllow").disabled = true;
+				renderVerdict([
+					{
+						level: "info",
+						text:
+							"Добавляем правило для порта " +
+							sel.port +
+							"… Подтвердите запрос UAC, если он появится.",
+					},
+				]);
+				post("/api/firewall/allow", { port: sel.port }).then(function (r) {
+					var body = r.body || {};
+					var items = [
+						{ level: body.ok ? "ok" : "error", text: body.message || "" },
+					];
+					if (body.reach && body.reach.chosenOk) {
+						items.push({
+							level: "ok",
+							text: "Адрес " + body.reach.dialHost + " теперь отвечает.",
+						});
+					} else if (body.warning) {
+						items.push({ level: "warn", text: body.warning });
+					}
+					renderVerdict(items);
+					refresh();
+				});
+			}
+
+			function removeFirewallRule() {
+				var sel = currentSelection();
+				post("/api/firewall/remove", { port: sel.port }).then(function (r) {
+					var body = r.body || {};
+					renderVerdict([
+						{ level: body.ok ? "ok" : "error", text: body.message || "" },
+					]);
+					refresh();
+				});
+			}
+
+			function openLink(id) {
+				post("/api/open", { url: $(id).textContent }).then(function () {
+					/* nothing to report */
+				});
 			}
 
 			function refresh() {
@@ -561,23 +780,27 @@
 				});
 			}
 
-			function copyUrl() {
-				var input = $("guiUrl");
-				var value = input.value;
-				var done = function () {
-					var toast = $("toast");
-					toast.classList.add("show");
-					setTimeout(function () {
-						toast.classList.remove("show");
-					}, 1200);
-				};
+			function copyValue(value, done) {
+				var done2 = done || toastDone;
 				if (navigator.clipboard && navigator.clipboard.writeText) {
-					navigator.clipboard.writeText(value).then(done, function () {
-						fallbackCopy(input, done);
+					navigator.clipboard.writeText(value).then(done2, function () {
+						fallbackCopyValue(value, done2);
 					});
 				} else {
-					fallbackCopy(input, done);
+					fallbackCopyValue(value, done2);
 				}
+			}
+
+			function copyUrl() {
+				copyValue($("guiUrl").value);
+			}
+
+			function toastDone() {
+				var toast = $("toast");
+				toast.classList.add("show");
+				setTimeout(function () {
+					toast.classList.remove("show");
+				}, 1200);
 			}
 
 			function fallbackCopy(input, done) {
@@ -593,10 +816,36 @@
 				}
 			}
 
+			/** Same trick, but for a value that lives in a <code> element. */
+			function fallbackCopyValue(value, done) {
+				var temp = document.createElement("textarea");
+				temp.value = value;
+				temp.setAttribute("readonly", "readonly");
+				temp.style.position = "fixed";
+				temp.style.opacity = "0";
+				document.body.appendChild(temp);
+				fallbackCopy(temp, done);
+				document.body.removeChild(temp);
+			}
+
 			$("btnStart").addEventListener("click", start);
 			$("btnStop").addEventListener("click", stop);
 			$("btnOpen").addEventListener("click", openGui);
 			$("btnCopy").addEventListener("click", copyUrl);
+			$("btnDiag").addEventListener("click", runDiagnostics);
+			$("btnAllow").addEventListener("click", allowPort);
+			$("btnRemoveFw").addEventListener("click", removeFirewallRule);
+			document.querySelectorAll("[data-copy]").forEach(function (btn) {
+				btn.addEventListener("click", function () {
+					var id = btn.getAttribute("data-copy");
+					copyValue($(id).textContent);
+				});
+			});
+			document.querySelectorAll("[data-open]").forEach(function (btn) {
+				btn.addEventListener("click", function () {
+					openLink(btn.getAttribute("data-open"));
+				});
+			});
 			$("iface").addEventListener("change", function () {
 				userTouched = true;
 				render();

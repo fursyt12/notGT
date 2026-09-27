@@ -120,6 +120,33 @@ user presses «Запустить» it writes `host`/`port` into `<appDir>/cfg/n
 and spawns `node index.js` with `cwd = app`. The packager itself never starts
 NodeCG.
 
+## The chosen interface, and why it is not the bind address
+
+The interface dropdown decides the **advertised** address (the links shown in
+the launcher), not what NodeCG binds:
+
+| choice                     | `cfg/nodecg.json` `host` | links                           |
+| -------------------------- | ------------------------ | ------------------------------- |
+| «Все интерфейсы (0.0.0.0)» | `0.0.0.0`                | 127.0.0.1 + the first real card |
+| a concrete card (Wi-Fi, …) | `0.0.0.0` (or `::`)      | that card + 127.0.0.1           |
+| «Только этот компьютер»    | `127.0.0.1`              | 127.0.0.1 only                  |
+
+Binding a single card is what makes Windows Firewall drop **even same-machine**
+connections to it, and it leaves no listener on `127.0.0.1` — so the launcher
+could not tell "the server never started" from "the address is blocked", and the
+browser showed an endless spinner. With the wildcard bind:
+
+- `127.0.0.1` always proves the server is alive and gives the operator a URL
+  that no firewall can block;
+- the advertised address is probed separately, so a silent card is reported as
+  `running` **with a warning** (after 8 s) instead of a 120 s timeout;
+- «Разрешить порт» adds an inbound rule for that port on every network profile
+  (UAC), and the launcher verifies it with `netsh ... show rule` instead of
+  trusting an exit code.
+
+Only the explicit «Только этот компьютер (127.0.0.1)» choice keeps the strict
+loopback bind.
+
 ## CI и релиз через GitHub Actions
 
 Единственный автоматический CI в этом форке — Windows-сборка
