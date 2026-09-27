@@ -34,21 +34,22 @@ function extractName(html: string, fallback: string): string {
 export function syncFileAnimations(
 	store: Store,
 	extensionDir: string,
-): { added: number; total: number } {
+): { added: number; total: number; removed: number } {
 	const dir = path.resolve(extensionDir, "..", ANIMATIONS_SUBDIR);
 	let added = 0;
 	let total = 0;
+	let removed = 0;
 
 	let files: string[] = [];
 	try {
-		if (!fs.existsSync(dir)) return { added, total };
+		if (!fs.existsSync(dir)) return { added, total, removed };
 		files = fs
 			.readdirSync(dir)
 			.filter((file) => file.toLowerCase().endsWith(".html"))
 			.sort();
 	} catch (error) {
 		store.nodecg.log.warn("Could not scan %s: %s", dir, String(error));
-		return { added, total };
+		return { added, total, removed };
 	}
 
 	for (const file of files) {
@@ -108,5 +109,24 @@ export function syncFileAnimations(
 		store.nodecg.log.info("Registered file animation %s (%s)", name, src);
 	}
 
-	return { added, total };
+	// A template whose file is gone and which has no inline code of its own is
+	// dead: its iframe can only show a load error. That happens when a file is
+	// renamed or deleted (and when an animation moves from a file into a
+	// bundled template). Drop it, together with its placements; a template that
+	// was edited in the GUI keeps working from its inline code and is left
+	// alone.
+	const urlPrefix = `/bundles/${BUNDLE_NAME}/${ANIMATIONS_SUBDIR.replace(/\\/g, "/")}/`;
+	const alive = new Set(files.map((file) => `${urlPrefix}${file}`));
+	for (const template of store.listTemplates()) {
+		const src = template.code?.src;
+		if (!src || !src.startsWith(urlPrefix)) continue;
+		if (alive.has(src)) continue;
+		if (template.code?.html && template.code.html.trim() !== "") continue;
+		if (store.removeTemplate(template.id)) {
+			removed++;
+			store.nodecg.log.info("Removed file animation %s: %s is gone", template.name, src);
+		}
+	}
+
+	return { added, total, removed };
 }

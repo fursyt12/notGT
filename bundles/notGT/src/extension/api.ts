@@ -33,7 +33,7 @@ interface Router {
 
 export interface ApiHooks {
 	/** Re-scans `graphics/animations/` for file-authored animations. */
-	syncAnimations?: () => { added: number; total: number };
+	syncAnimations?: () => { added: number; total: number; removed: number };
 	/** Length of a template's video layer in ms, when it has one. */
 	videoDuration?: (templateId: string) => number | undefined;
 }

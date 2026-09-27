@@ -110,11 +110,12 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	nodecg.log.info(
 		"notGT ready — REST API on /api (state, titles/show|hide|toggle|trigger, data, templates, outs, animations)",
 	);
-	if (syncResult.total > 0) {
+	if (syncResult.total > 0 || syncResult.removed > 0) {
 		nodecg.log.info(
-			"File animations: %d registered from graphics/animations (%d added)",
+			"File animations: %d registered from graphics/animations (%d added, %d removed)",
 			syncResult.total,
 			syncResult.added,
+			syncResult.removed,
 		);
 	}
 
