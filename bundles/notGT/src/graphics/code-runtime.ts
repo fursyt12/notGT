@@ -52,8 +52,17 @@ window.onData = function(cb){
   _callbacks.push(cb);
   try { cb(_data); } catch (e) { console.error(e); }
 };
-window.root = document.body;
-window.notgt = { data: _data, vars: window.vars, onData: window.onData, root: window.root };
+// root — это document.body, но отдаём его геттером, а не значением: файловая
+// анимация получает этот шим в <head>, когда document.body ещё null, и
+// зафиксированное значение осталось бы null навсегда.
+function bodyRoot(){ return document.body; }
+Object.defineProperty(window, 'root', { get: bodyRoot, configurable: true });
+window.notgt = {
+  data: _data,
+  vars: window.vars,
+  onData: window.onData,
+  get root(){ return document.body; }
+};
 window.addEventListener('message', function(event){
   var msg = event.data;
   if (!msg || msg.type !== 'notgt:data') return;
@@ -66,6 +75,11 @@ window.addEventListener('message', function(event){
   }
 });
 applyBindings();
+// В файловой анимации на момент вставки шима элементов ещё нет — раскладываем
+// [data-bind] повторно, когда документ разобран.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', applyBindings);
+}
 })();`;
 }
 
