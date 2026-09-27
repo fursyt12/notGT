@@ -1,3 +1,4 @@
+import { createExampleTemplates } from "./examples";
 import {
 	BUNDLE_NAME,
 	type Layer,
@@ -196,7 +197,10 @@ export function createDefaultOut(outId = "main"): Out {
 
 /** Seed data applied when the replicants are empty (first run). */
 export function seedTemplates(): TitleTemplate[] {
-	return [createDefaultTemplate(), createCodeSampleTemplate()];
+	// The examples are ordinary `kind: "code"` templates, exactly like
+	// `Code sample (ticker)`: their HTML/CSS/JS live in the template, so the
+	// Editor shows the code and previews the animation.
+	return [createDefaultTemplate(), createCodeSampleTemplate(), ...createExampleTemplates()];
 }
 
 export function seedData(): Record<string, unknown> {

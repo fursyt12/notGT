@@ -30,6 +30,14 @@ export const REPLICANTS = {
 	meta: "meta",
 } as const;
 
+/**
+ * Version of the persisted store layout. Bump it whenever an existing
+ * installation needs a one-time migration in `createStore`:
+ *   1 — initial layout;
+ *   2 — built-in example animations shipped as bundled code templates.
+ */
+export const SCHEMA_VERSION = 2;
+
 export interface MetaState {
 	initialized: boolean;
 	schemaVersion: number;

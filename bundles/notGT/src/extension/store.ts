@@ -12,6 +12,7 @@ import {
 	seedData,
 	seedTemplates,
 } from "../shared/defaults";
+import { missingExampleTemplates } from "../shared/examples";
 import {
 	BUNDLE_NAME,
 	type ActiveTitleState,
@@ -20,6 +21,7 @@ import {
 	type OutItem,
 	REPLICANTS,
 	type RuntimeState,
+	SCHEMA_VERSION,
 	type TitleData,
 	type TitleTemplate,
 	type VariableSelection,
@@ -135,7 +137,7 @@ export function createStore(nodecg: ServerAPI): Store {
 		{ defaultValue: {}, persistent: true },
 	);
 	const meta = nodecg.Replicant<MetaState>(REPLICANTS.meta, BUNDLE_NAME, {
-		defaultValue: { initialized: false, schemaVersion: 1 },
+		defaultValue: { initialized: false, schemaVersion: SCHEMA_VERSION },
 		persistent: true,
 	});
 
@@ -397,15 +399,26 @@ export function createStore(nodecg: ServerAPI): Store {
 	}
 
 	// ---------------------------------------------------------------------
-	// First-run seeding
+	// First-run seeding + schema migrations
 	// ---------------------------------------------------------------------
 	if (!meta.value?.initialized) {
 		const defaultOutId = nodecg.bundleConfig?.defaultOutId || "main";
 		if (listTemplates().length === 0) templates.value = seedTemplates();
 		if (listOuts().length === 0) outs.value = [createDefaultOut(defaultOutId)];
 		if (Object.keys(readData()).length === 0) titleData.value = seedData();
-		meta.value = { initialized: true, schemaVersion: 1 };
+		meta.value = { initialized: true, schemaVersion: SCHEMA_VERSION };
 		log.info("Seeded default templates, out and sample data");
+	} else if ((meta.value.schemaVersion ?? 1) < SCHEMA_VERSION) {
+		// v2: the built-in example animations stopped being files under
+		// `graphics/animations/` and became ordinary code templates carried by
+		// the bundle (like `Code sample (ticker)`), so the Editor can show and
+		// preview their code. Add the ones this installation is missing; a
+		// template the operator deleted on purpose is not resurrected, because
+		// the migration only runs once.
+		const added = missingExampleTemplates(listTemplates());
+		for (const template of added) upsertTemplate(template);
+		meta.value = { ...meta.value, schemaVersion: SCHEMA_VERSION };
+		log.info("Added %d built-in example animation(s)", added.length);
 	}
 
 	return {
