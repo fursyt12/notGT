@@ -23,6 +23,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Optional npm mirror for slow/filtered networks; leave empty to use
+        # registry.npmjs.org. Set NPM_REGISTRY in `.env` to change it.
+        NPM_REGISTRY: "${NPM_REGISTRY:-}"
     image: notgt:latest
     container_name: notgt
     restart: unless-stopped

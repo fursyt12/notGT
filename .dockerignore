@@ -14,6 +14,11 @@ node_modules
 /build
 /build-types
 
+# The portable Windows package written by scripts/build-windows.mjs: a zip plus
+# an extracted tree of hundreds of MB. The image never copies it, and leaving it
+# in the context makes Docker ship all of it to the daemon on every build.
+/dist
+
 # Persisted runtime state — these live in Docker volumes, not in the image.
 # NOTE: deliberately anchored to the context root: `workspaces/nodecg/src`
 # contains a source directory literally named `assets`

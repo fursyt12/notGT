@@ -57,6 +57,29 @@ Set `NOTGT_PORT` in a `.env` (copy `.env.example`) to publish another port, and
 see the commented-out TRAEFIK block in the compose file if you want a hostname,
 TLS and Basic Auth in front of it.
 
+The image installs dependencies three times (monorepo, bundle, production-only),
+so the first build takes a few minutes and needs a couple of GB of scratch space.
+If it dies inside an `npm ci` step, read the lines *above* npm's
+`Exit handler never called!`: that message is npm's crash tail, and the line above
+it is normally `npm error network read ETIMEDOUT` — a registry read timed out
+mid-install, which the Dockerfile already retries five times.
+
+```bash
+docker compose build --progress=plain 2>&1 | tail -60
+```
+
+If the registry is slow or filtered from your network, build against a mirror
+instead of editing anything:
+
+```bash
+NPM_REGISTRY=https://registry.npmmirror.com docker compose build
+```
+
+In Docker Desktop a plain `npm ci` failure can also be the VM running out of
+memory or disk (`docker system df` to check, Settings → Resources to raise the
+limit); the image pins its npm version and wipes its own cache to keep layers
+small.
+
 ## Windows
 
 A portable Windows build is produced by

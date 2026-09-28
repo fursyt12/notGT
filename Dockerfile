@@ -2,6 +2,31 @@ FROM node:22-slim AS base
 
 ENV PUPPETEER_SKIP_DOWNLOAD true
 
+# Optional npm registry mirror. The installs below pull ~1500 packages, and on a
+# slow or filtered link one read times out in the middle of `npm ci` — npm then
+# dies with "Exit handler never called!", which hides the real ETIMEDOUT and
+# fails the whole build. Point the build at a mirror when that happens:
+#   NPM_REGISTRY=https://registry.npmmirror.com docker compose build
+ARG NPM_REGISTRY
+
+# Pin npm to the version the lockfile was written with (`packageManager` in
+# package.json). The floating `node:22-slim` tag ships a different npm patch on
+# every rebuild, so two machines can run two different npm versions against the
+# same lockfile.
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi \
+	&& npm install -g npm@11.6.2
+
+# Long, network-bound installs on operator machines: give Node room, retry a
+# flaky registry instead of failing the build, and skip audit/fund, which only
+# add round trips and noise.
+ENV NODE_OPTIONS=--max-old-space-size=4096 \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_FETCH_TIMEOUT=600000
+
 
 FROM base AS build
 
@@ -15,7 +40,10 @@ COPY workspaces workspaces
 COPY tsconfig.json tsdown.config.ts ./
 COPY scripts scripts
 
-RUN npm ci
+# The npm cache is wiped in the same layer: it is a few hundred MB of tarballs
+# that nothing later needs, and Docker Desktop disks fill up quickly.
+RUN npm ci \
+	&& npm cache clean --force
 
 RUN npm run build
 
@@ -47,7 +75,8 @@ WORKDIR /build/bundles/notGT
 # plus the Vite-bundled dashboard/graphics assets) is self-contained.
 RUN npm ci \
 	&& npm run build \
-	&& rm -rf node_modules
+	&& rm -rf node_modules \
+	&& npm cache clean --force
 
 
 FROM base AS npm
@@ -59,7 +88,8 @@ RUN apt-get update && apt-get install -y python3 build-essential
 COPY package.json package-lock.json ./
 COPY --from=build /nodecg/workspaces workspaces
 
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+	&& npm cache clean --force
 
 
 FROM base AS runtime
