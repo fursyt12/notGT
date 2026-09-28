@@ -59,7 +59,7 @@ TLS and Basic Auth in front of it.
 
 The image installs dependencies three times (monorepo, bundle, production-only),
 so the first build takes a few minutes and needs a couple of GB of scratch space.
-If it dies inside an `npm ci` step, read the lines *above* npm's
+If it dies inside an `npm ci` step, read the lines _above_ npm's
 `Exit handler never called!`: that message is npm's crash tail, and the line above
 it is normally `npm error network read ETIMEDOUT` — a registry read timed out
 mid-install, which the Dockerfile already retries five times.
