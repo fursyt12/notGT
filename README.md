@@ -46,8 +46,16 @@ cd bundles/notGT && npm install && npm run build && cd ../..
 node index.js      # http://localhost:9090/dashboard/
 ```
 
-For a containerised deployment with Traefik and persistent volumes, use
-`docker-compose.yml` plus `.env.example` in the repository root.
+In a container, `docker-compose.yml` in the repository root publishes the port on
+its own — no reverse proxy and no `.env` needed:
+
+```bash
+docker compose up --build -d      # http://localhost:9090/dashboard/
+```
+
+Set `NOTGT_PORT` in a `.env` (copy `.env.example`) to publish another port, and
+see the commented-out TRAEFIK block in the compose file if you want a hostname,
+TLS and Basic Auth in front of it.
 
 ## Windows
 
