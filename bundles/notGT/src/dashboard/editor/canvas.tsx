@@ -41,7 +41,9 @@ import {
 } from "react-konva";
 
 import { interpolate } from "../../shared/binding";
+import { cropBox, cropIsFull, fullCrop, roundCrop, MIN_CROP_PX } from "../../shared/crop";
 import type {
+	ItemCrop,
 	Layer,
 	LayerStyle,
 	Out,
@@ -53,6 +55,7 @@ import type {
 import {
 	resolveAssetUrl,
 	resolveText,
+	clamp,
 	round,
 	sortByZ,
 	useElementSize,
@@ -61,10 +64,13 @@ import {
 } from "./ui";
 import { useCodeDocument } from "./code-preview";
 import {
+	type SnapBox,
 	type SnapLine,
+	boxSnapLines,
 	layerSnapLines,
 	placementSnapLines,
 	snapBox,
+	snapCoordinate,
 } from "./snapping";
 
 type KonvaEvent<T extends Event> = Konva.KonvaEventObject<T>;
@@ -80,6 +86,8 @@ export interface EditorCanvasProps {
 	draft: TitleTemplate | null;
 	activeItemId: string | null;
 	selectedLayerId: string | null;
+	/** The crop tool is active: the placement is edited, not played with. */
+	cropMode: boolean;
 	/** Live playback preview: only the selected video layer is played. */
 	previewPlaying: boolean;
 	/** Incremented to seek the selected clip back to 0. */
@@ -148,12 +156,65 @@ interface SnapApi {
 
 const SnapContext = createContext<SnapApi | null>(null);
 
+/** A point in stage px (the out's design box scaled by `fit`). */
+interface Point {
+	x: number;
+	y: number;
+}
+
+/**
+ * What is changing *right now*, before anything is saved.
+ *
+ * A drag used to move only the Konva node it started on, so the rest of the
+ * placement — the layers of the box, the live iframe of a code animation — sat
+ * still until the mouse was released and the new percentages reached the
+ * replicant. The preview is that movement while it happens: the canvas renders
+ * every placement from `geom` plus this offset, so what the operator drags is
+ * what the operator sees, and the replicant is written once, on release.
+ */
+interface DragPreview {
+	itemId: string;
+	/** Placement offset in stage px. */
+	dx: number;
+	dy: number;
+	/** Placement scale while the size handle is being dragged. */
+	scale?: number;
+	/** Crop window in template px while the crop frame is being dragged. */
+	crop?: ItemCrop;
+}
+
+/**
+ * Pointer plumbing shared by every handle on the canvas.
+ *
+ * Konva's own `draggable` moves the node it was started on, which is exactly
+ * what we do not want (the node is only one part of a placement), so the
+ * handles drag themselves: a mousedown starts a window-level move/up pair, and
+ * `pointOf` turns a pointer event into stage coordinates, camera and all.
+ */
+interface DragApi {
+	preview: DragPreview | null;
+	setPreview: (next: DragPreview | null) => void;
+	/** Stage coordinates of a pointer event. */
+	pointOf: (event: MouseEvent) => Point | null;
+	/** Starts a drag; the handlers receive stage coordinates. */
+	begin: (
+		event: KonvaEvent<MouseEvent>,
+		move: (point: Point) => void,
+		end: (point: Point) => void,
+	) => void;
+	/** The geometry as it should be drawn right now (preview applied). */
+	view: (geom: Geometry) => Geometry;
+}
+
+const DragContext = createContext<DragApi | null>(null);
+
 export function EditorCanvas({
 	out,
 	templates,
 	draft,
 	activeItemId,
 	selectedLayerId,
+	cropMode,
 	previewPlaying,
 	restartToken,
 	data,
@@ -164,6 +225,7 @@ export function EditorCanvas({
 	onItemChange,
 }: EditorCanvasProps) {
 	const { ref, width, height } = useElementSize<HTMLDivElement>();
+	const stageRef = useRef<Konva.Stage | null>(null);
 
 	// Camera state: position (pan) and scale (zoom)
 	const [cameraX, setCameraX] = useState(0);
@@ -181,6 +243,84 @@ export function EditorCanvas({
 
 	const stageW = Math.max(1, Math.round(designW * fit));
 	const stageH = Math.max(1, Math.round(designH * fit));
+
+	// --- live drag preview -------------------------------------------------
+	const [preview, setPreview] = useState<DragPreview | null>(null);
+
+	/** Stage px of a pointer event: container px, camera undone. */
+	const pointOf = useCallback(
+		(event: MouseEvent): Point | null => {
+			const container = stageRef.current?.container();
+			if (!container) return null;
+			const rect = container.getBoundingClientRect();
+			return {
+				x: (event.clientX - rect.left - cameraX) / cameraScale,
+				y: (event.clientY - rect.top - cameraY) / cameraScale,
+			};
+		},
+		[cameraX, cameraY, cameraScale],
+	);
+
+	/**
+	 * Drags until the mouse button comes up, wherever the pointer goes.
+	 *
+	 * The handlers get stage coordinates, so a drag keeps working when it leaves
+	 * the canvas, and nothing depends on the node that was pressed.
+	 */
+	const begin = useCallback(
+		(
+			event: KonvaEvent<MouseEvent>,
+			move: (point: Point) => void,
+			end: (point: Point) => void,
+		) => {
+			if (event.evt.button !== 0) return;
+			const start = pointOf(event.evt);
+			if (!start) return;
+			event.cancelBubble = true;
+			event.evt.preventDefault();
+			const onMove = (native: MouseEvent) => {
+				const point = pointOf(native);
+				if (point) move(point);
+			};
+			const onUp = (native: MouseEvent) => {
+				window.removeEventListener("mousemove", onMove);
+				window.removeEventListener("mouseup", onUp);
+				end(pointOf(native) ?? start);
+			};
+			window.addEventListener("mousemove", onMove);
+			window.addEventListener("mouseup", onUp);
+		},
+		[pointOf],
+	);
+
+	/** The geometry as it must be drawn while a drag is in flight. */
+	const withPreview = useCallback(
+		(geom: Geometry): Geometry => {
+			if (!preview || preview.itemId !== geom.item.id) return geom;
+			const scale = preview.scale && preview.scale > 0 ? preview.scale : geom.scale;
+			const k = scale * fit;
+			return {
+				...geom,
+				scale,
+				k,
+				boxX: geom.boxX + preview.dx,
+				boxY: geom.boxY + preview.dy,
+				boxW: Math.max(1, geom.template.width * k),
+				boxH: Math.max(1, geom.template.height * k),
+			};
+		},
+		[preview, fit],
+	);
+
+	const dragApi = useMemo<DragApi>(
+		() => ({ preview, setPreview, pointOf, begin, view: withPreview }),
+		[preview, pointOf, begin, withPreview],
+	);
+
+	// A new selection, another out or another tool: nothing is being dragged.
+	useEffect(() => {
+		setPreview(null);
+	}, [activeItemId, out.id, cropMode]);
 
 	const items = useMemo(
 		() => [...(out.items ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
@@ -437,9 +577,18 @@ export function EditorCanvas({
 	}, []);
 
 	const stageSummary = `${designW}×${designH} · анимаций ${geoms.length}`;
+	/** The active placement as it is drawn right now (drag preview included). */
+	const shownActive = activeGeom ? withPreview(activeGeom) : null;
+	const activePending = Boolean(preview && activeGeom && preview.itemId === activeGeom.item.id);
+	/** The visible window of the active placement, when it hides something. */
+	const activeCrop =
+		activeGeom && !cropIsFull(cropFor(activeGeom, preview), activeGeom.template)
+			? cropFor(activeGeom, preview)
+			: null;
 
 	return (
 		<SnapContext.Provider value={snapApi}>
+			<DragContext.Provider value={dragApi}>
 			<div className="ed-center">
 			<div className="ed-canvas-wrap" ref={ref}>
 				{fit > 0 ? (
@@ -461,7 +610,8 @@ export function EditorCanvas({
 								.map((geom) => (
 									<CodeOverlayFrame
 										key={geom.item.id}
-										box={geom}
+										box={withPreview(geom)}
+										crop={cropFor(geom, preview)}
 										dim={
 											geom.item.id === activeItemId
 												? 1
@@ -478,6 +628,7 @@ export function EditorCanvas({
 						</div>
 
 						<Stage
+							ref={stageRef}
 							width={stageW}
 							height={stageH}
 							scaleX={cameraScale}
@@ -549,24 +700,28 @@ export function EditorCanvas({
 								{/* Click-catchers for the dimmed animations. They are drawn
 								    *below* every animation's content so they can never steal a
 								    drag from the active one; the active box is instead clickable
-								    through its own frame. */}
+								    through its own frame. Only the visible window answers, so a
+								    cropped animation is not selected from its hidden half. */}
 								{geoms
 									.filter((geom) => geom.item.id !== activeItemId)
-									.map((geom) => (
-										<Rect
-											key={`catcher:${geom.item.id}`}
-											x={geom.boxX}
-											y={geom.boxY}
-											width={geom.boxW}
-											height={geom.boxH}
-											fill="rgba(0,0,0,0.001)"
-											onMouseDown={(event: KonvaEvent<MouseEvent>) => {
-												event.cancelBubble = true;
-												onSelectItem(geom.item.id);
-												onSelectLayer(null);
-											}}
-										/>
-									))}
+									.map((geom) => {
+										const win = windowOf(geom, cropFor(geom, preview));
+										return (
+											<Rect
+												key={`catcher:${geom.item.id}`}
+												x={win.x}
+												y={win.y}
+												width={win.width}
+												height={win.height}
+												fill="rgba(0,0,0,0.001)"
+												onMouseDown={(event: KonvaEvent<MouseEvent>) => {
+													event.cancelBubble = true;
+													onSelectItem(geom.item.id);
+													onSelectLayer(null);
+												}}
+											/>
+										);
+									})}
 
 								{geoms.map((geom) => (
 									<AnimatedItem
@@ -575,6 +730,7 @@ export function EditorCanvas({
 										stageW={stageW}
 										stageH={stageH}
 										active={geom.item.id === activeItemId}
+										cropMode={cropMode}
 										selectedLayerId={selectedLayerId}
 										previewPlaying={previewPlaying}
 										restartToken={restartToken}
@@ -589,9 +745,19 @@ export function EditorCanvas({
 								))}
 
 								{/* Handles are drawn last so they stay usable even when the
-								    active animation sits below a later one. */}
-								{activeGeom ? (
+								    active animation sits below a later one. The crop tool
+								    replaces them: while it is on, the frame is the thing being
+								    edited. */}
+								{activeGeom && !cropMode ? (
 									<PlacementHandles
+										geom={activeGeom}
+										stageW={stageW}
+										stageH={stageH}
+										onItemChange={onItemChange}
+									/>
+								) : null}
+								{activeGeom && cropMode ? (
+									<CropOverlay
 										geom={activeGeom}
 										stageW={stageW}
 										stageH={stageH}
@@ -720,10 +886,17 @@ export function EditorCanvas({
 						↺ Сбросить вид
 					</button>
 				) : null}
-				{activeGeom ? (
+				{activeGeom && shownActive ? (
 					<span className="ed-ok">
-						{activeGeom.template.name}: x {round(activeGeom.item.x)}% · y{" "}
-						{round(activeGeom.item.y)}% · scale {round(activeGeom.scale, 3)}
+						{activeGeom.template.name}: x {round((shownActive.boxX / stageW) * 100)}% · y{" "}
+						{round((shownActive.boxY / stageH) * 100)}% · scale{" "}
+						{round(shownActive.scale, 3)}
+						{activeCrop
+							? ` · обрезка ${Math.round(activeCrop.width)}×${Math.round(
+									activeCrop.height,
+								)}`
+							: ""}
+						{activePending ? " · перетаскивание" : ""}
 					</span>
 				) : (
 					<span>
@@ -732,6 +905,7 @@ export function EditorCanvas({
 				)}
 			</div>
 			</div>
+			</DragContext.Provider>
 		</SnapContext.Provider>
 	);
 }
@@ -741,46 +915,63 @@ export function EditorCanvas({
 /**
  * Dragging a whole placement.
  *
- * The node moves as a delta inside the placement's group, so the drag becomes
- * new `x`/`y` percentages only on release; the magnets correct that delta while
- * the drag is in flight, and the guides show what it stuck to.
+ * Nothing on the placement moves by itself: the drag publishes an offset into
+ * the shared preview, every part of the placement (layers, live code iframe,
+ * frame, handles) is drawn with it, and the magnets correct it on the way. The
+ * new `x`/`y` percentages are written once, when the button comes up.
  */
 function usePlacementDrag(
 	geom: Geometry,
 	stageW: number,
 	stageH: number,
 	onItemChange: (itemId: string, patch: Partial<OutItem>) => void,
-): {
-	onDragMove: (event: KonvaEvent<DragEvent>) => void;
-	onDragEnd: (event: KonvaEvent<DragEvent>) => void;
-} {
+): (event: KonvaEvent<MouseEvent>) => void {
 	const snap = useContext(SnapContext);
+	const drag = useContext(DragContext);
 	const { item, boxX, boxY, boxW, boxH } = geom;
 
-	const onDragMove = (event: KonvaEvent<DragEvent>) => {
-		const node = event.target;
-		if (!snap?.enabled) return;
-		const moved = snapBox(
-			{ x: boxX + node.x(), y: boxY + node.y(), width: boxW, height: boxH },
-			snap.placementX,
-			snap.placementY,
-			snap.threshold,
-		);
-		node.position({ x: moved.box.x - boxX, y: moved.box.y - boxY });
-		snap.showPlacement(moved.guidesX, moved.guidesY);
-	};
-
-	const onDragEnd = (event: KonvaEvent<DragEvent>) => {
-		const node = event.target;
-		snap?.clear();
-		onItemChange(item.id, {
-			x: round((item.x ?? 0) + (stageW > 0 ? (node.x() / stageW) * 100 : 0)),
-			y: round((item.y ?? 0) + (stageH > 0 ? (node.y() / stageH) * 100 : 0)),
-		});
-		node.position({ x: 0, y: 0 });
-	};
-
-	return { onDragMove, onDragEnd };
+	return useCallback(
+		(event: KonvaEvent<MouseEvent>) => {
+			if (!drag) return;
+			const start = drag.pointOf(event.evt);
+			if (!start) return;
+			let last = { x: boxX, y: boxY };
+			drag.begin(
+				event,
+				(point) => {
+					const raw = {
+						x: boxX + (point.x - start.x),
+						y: boxY + (point.y - start.y),
+						width: boxW,
+						height: boxH,
+					};
+					const moved =
+						snap?.enabled
+							? snapBox(raw, snap.placementX, snap.placementY, snap.threshold)
+							: { box: raw, guidesX: [], guidesY: [] };
+					last = { x: moved.box.x, y: moved.box.y };
+					drag.setPreview({
+						itemId: item.id,
+						dx: last.x - boxX,
+						dy: last.y - boxY,
+					});
+					snap?.showPlacement(moved.guidesX, moved.guidesY);
+				},
+				() => {
+					drag.setPreview(null);
+					snap?.clear();
+					const dx = last.x - boxX;
+					const dy = last.y - boxY;
+					if (dx === 0 && dy === 0) return;
+					onItemChange(item.id, {
+						x: round((item.x ?? 0) + (stageW > 0 ? (dx / stageW) * 100 : 0)),
+						y: round((item.y ?? 0) + (stageH > 0 ? (dy / stageH) * 100 : 0)),
+					});
+				},
+			);
+		},
+		[snap, drag, item, boxX, boxY, boxW, boxH, stageW, stageH, onItemChange],
+	);
 }
 
 function AnimatedItem({
@@ -788,6 +979,7 @@ function AnimatedItem({
 	stageW,
 	stageH,
 	active,
+	cropMode,
 	selectedLayerId,
 	previewPlaying,
 	restartToken,
@@ -803,6 +995,7 @@ function AnimatedItem({
 	stageW: number;
 	stageH: number;
 	active: boolean;
+	cropMode: boolean;
 	selectedLayerId: string | null;
 	previewPlaying: boolean;
 	restartToken: number;
@@ -814,37 +1007,65 @@ function AnimatedItem({
 	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
 	registerRef: (itemId: string, layerId: string) => (node: Konva.Node | null) => void;
 }) {
-	const { item, template, boxX, boxY, boxW, boxH, k } = geom;
+	const { item, template } = geom;
+	const drag = useContext(DragContext);
+	const view = drag ? drag.view(geom) : geom;
+	const crop = cropFor(geom, drag?.preview ?? null);
+	const cropped = !cropIsFull(crop, template);
+	// Everything inside the group is drawn in the template's own box, so the
+	// crop window is a local rectangle and the clip is one line.
+	const local = {
+		x: cropped ? crop.x * view.k : 0,
+		y: cropped ? crop.y * view.k : 0,
+		width: cropped ? Math.max(1, crop.width * view.k) : view.boxW,
+		height: cropped ? Math.max(1, crop.height * view.k) : view.boxH,
+	};
 	const interactive = active && item.enabled !== false;
 	const dim = active ? 1 : item.enabled === false ? 0.22 : 0.45;
 
-	const placementDrag = usePlacementDrag(geom, stageW, stageH, onItemChange);
+	const onPlacementDown = usePlacementDrag(geom, stageW, stageH, onItemChange);
+
+	// In crop mode the placement is a picture to cut, not a thing to move.
+	const hitDown = (event: KonvaEvent<MouseEvent>) => {
+		if (cropMode) {
+			event.cancelBubble = true;
+			return;
+		}
+		onSelectItem(item.id);
+		onSelectLayer(null);
+		onPlacementDown(event);
+	};
 
 	return (
-		<Group x={boxX} y={boxY} opacity={dim}>
+		<Group
+			x={view.boxX}
+			y={view.boxY}
+			opacity={dim}
+			// A crop hides what sticks out of the window, the same way the out
+			// page clips it with `overflow: hidden`.
+			clipX={cropped ? local.x : undefined}
+			clipY={cropped ? local.y : undefined}
+			clipWidth={cropped ? local.width : undefined}
+			clipHeight={cropped ? local.height : undefined}
+		>
 			{/* Placement frame: transparent hit area behind the layers, so dragging
-			    an empty part of the box moves the whole animation. */}
+			    an empty part of the box moves the whole animation. Only the visible
+			    window answers, so a cropped animation is not grabbed by its hidden
+			    half. */}
 			{active ? (
 				<Rect
-					width={boxW}
-					height={boxH}
+					x={local.x}
+					y={local.y}
+					width={local.width}
+					height={local.height}
 					fill="rgba(0,0,0,0.001)"
-					stroke="rgba(74,168,255,0.9)"
-					strokeWidth={1}
-					dash={[5, 4]}
 					hitStrokeWidth={14}
-					draggable
-					onMouseDown={() => {
-						onSelectItem(item.id);
-						onSelectLayer(null);
-					}}
-					onDragMove={placementDrag.onDragMove}
-					onDragEnd={placementDrag.onDragEnd}
+					onMouseDown={hitDown}
 				/>
 			) : null}
 
 			{template.kind === "code" ? (
-				<CodePlaceholder boxW={boxW} boxH={boxH} />
+				<CodePlaceholder boxW={view.boxW} boxH={view.boxH} />
 			) : (
 				sortByZ(template.layers ?? []).map((layer) => (
 					<LayerNode
@@ -852,10 +1073,10 @@ function AnimatedItem({
 						layer={layer}
 						data={data}
 						selection={selection}
-						stageW={template.width * k}
-						stageH={template.height * k}
-						k={k}
-						ky={k}
+						stageW={template.width * view.k}
+						stageH={template.height * view.k}
+						k={view.k}
+						ky={view.k}
 						interactive={interactive}
 						listening={active}
 						playing={previewPlaying && active && layer.id === selectedLayerId}
@@ -892,44 +1113,73 @@ function CodePlaceholder({ boxW, boxH }: { boxW: number; boxH: number }) {
  * One code animation on the canvas: its document rendered live in an iframe,
  * scaled from the template's design size down to the placement box. Pointer
  * events stay off so the canvas underneath keeps receiving drags and clicks.
+ *
+ * A crop shrinks the outer box to the visible window and pulls the iframe back
+ * by the same offset, so the animation keeps its place on screen and only the
+ * part outside the window is cut away — the editor shows exactly what the out
+ * page does.
  */
 function CodeOverlayFrame({
 	box,
+	crop,
 	dim,
 	data,
 }: {
 	box: PreviewBox;
+	/** Visible window in template px; absent = the whole box (the draft). */
+	crop?: ItemCrop;
 	dim: number;
 	data: TitleData;
 }) {
 	const doc = useCodeDocument(box.template, data);
+	const window_ = crop ?? fullCrop(box.template);
 	return (
 		<div
 			className="ed-code-overlay__box"
 			style={{
-				left: box.boxX,
-				top: box.boxY,
-				width: box.boxW,
-				height: box.boxH,
+				left: box.boxX + window_.x * box.k,
+				top: box.boxY + window_.y * box.k,
+				width: Math.max(1, window_.width * box.k),
+				height: Math.max(1, window_.height * box.k),
 				opacity: dim,
 			}}
 		>
-			<iframe
-				title={`${box.template.name} — предпросмотр на холсте`}
-				sandbox="allow-scripts allow-same-origin"
-				srcDoc={doc}
-				style={{
-					width: box.template.width,
-					height: box.template.height,
-					transform: `scale(${box.k})`,
-				}}
-			/>
+			{/* An iframe created with an empty `srcdoc` and filled in a moment
+			    later occasionally keeps its about:blank and never paints, so it
+			    is only created once there is a document to show. */}
+			{doc ? (
+				<iframe
+					title={`${box.template.name} — предпросмотр на холсте`}
+					sandbox="allow-scripts allow-same-origin"
+					srcDoc={doc}
+					style={{
+						width: box.template.width,
+						height: box.template.height,
+						left: -window_.x * box.k,
+						top: -window_.y * box.k,
+						transform: `scale(${box.k})`,
+					}}
+				/>
+			) : null}
 		</div>
 	);
 }
 
 // --------------------------------------------------------------- move + scale
 
+/**
+ * The frame around the active placement, the move handle in its top-left corner
+ * and the size handle in its bottom-right.
+ *
+ * The frame is the *visible window* (the crop when there is one) — that is the
+ * box the operator thinks in, and everything else measures from it. With a crop
+ * the full template box is drawn faintly as well, so it is clear how much of the
+ * animation is hidden.
+ *
+ * Both handles drag themselves (see `DragApi`): the move handle publishes an
+ * offset, the size handle publishes a scale, and by the time the button comes up
+ * the canvas has already been showing the result.
+ */
 function PlacementHandles({
 	geom,
 	stageW,
@@ -941,82 +1191,139 @@ function PlacementHandles({
 	stageH: number;
 	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
 }) {
-	const { item, template, boxW, boxH, boxX, boxY } = geom;
-	const placementDrag = usePlacementDrag(geom, stageW, stageH, onItemChange);
+	const drag = useContext(DragContext);
+	const { item, template } = geom;
+	const crop = cropFor(geom, drag?.preview ?? null);
+	const view = drag ? drag.view(geom) : geom;
+	const win = windowOf(view, crop);
+	const onPlacementDown = usePlacementDrag(geom, stageW, stageH, onItemChange);
+	const fit = fitOf(geom);
+
+	/**
+	 * Resizing keeps the window's top-left corner where it is: the scale changes
+	 * the crop's offset inside the box too, so the placement has to move back by
+	 * exactly that much or the title would crawl away from the corner the
+	 * operator grabbed.
+	 */
+	const onSizeDown = (event: KonvaEvent<MouseEvent>) => {
+		if (!drag) return;
+		const start = drag.pointOf(event.evt);
+		if (!start) return;
+		const anchorX = win.x;
+		const designW = crop.width > 0 ? crop.width : template.width;
+		const baseK = geom.k;
+		let scale = geom.scale;
+		drag.begin(
+			event,
+			(point) => {
+				scale = clamp((point.x - anchorX) / (designW * fit), 0.02, 20);
+				const k = scale * fit;
+				drag.setPreview({
+					itemId: item.id,
+					dx: -(crop.x * k - crop.x * baseK),
+					dy: -(crop.y * k - crop.y * baseK),
+					scale,
+				});
+			},
+			() => {
+				drag.setPreview(null);
+				const k = scale * fit;
+				onItemChange(item.id, {
+					scale: round(scale, 4),
+					x: round(
+						(item.x ?? 0) -
+							(stageW > 0 ? ((crop.x * k - crop.x * baseK) / stageW) * 100 : 0),
+					),
+					y: round(
+						(item.y ?? 0) -
+							(stageH > 0 ? ((crop.y * k - crop.y * baseK) / stageH) * 100 : 0),
+					),
+				});
+			},
+		);
+	};
 
 	return (
-		<Group x={boxX} y={boxY}>
-			{/* Move handle (top-left). */}
-			<Group
-				x={0}
-				y={0}
-				draggable
-				onDragMove={placementDrag.onDragMove}
-				onDragEnd={placementDrag.onDragEnd}
-			>
+		<Fragment>
+			{/* The whole template box, when the window is only a part of it. */}
+			{cropIsFull(crop, template) ? null : (
 				<Rect
-					width={HANDLE}
-					height={HANDLE}
-					fill="rgba(74,168,255,0.95)"
-					cornerRadius={3}
-					stroke="#0d141c"
+					x={view.boxX}
+					y={view.boxY}
+					width={view.boxW}
+					height={view.boxH}
+					stroke="rgba(255,255,255,0.22)"
 					strokeWidth={1}
-				/>
-				<Text
-					text="✥"
-					x={2}
-					y={2}
-					width={HANDLE - 4}
-					height={HANDLE - 4}
-					align="center"
-					verticalAlign="middle"
-					fontSize={11}
-					fill="#0d141c"
+					dash={[4, 7]}
 					listening={false}
 				/>
-			</Group>
+			)}
+			<Group x={win.x} y={win.y}>
+				{/* The visible window itself: the drag surface for a move. */}
+				<Rect
+					width={win.width}
+					height={win.height}
+					fill="rgba(0,0,0,0.001)"
+					stroke="rgba(74,168,255,0.9)"
+					strokeWidth={1}
+					dash={[5, 4]}
+					hitStrokeWidth={14}
+					onMouseDown={onPlacementDown}
+				/>
 
-			{/* Scale handle (bottom-right). */}
-			<Group
-				x={Math.max(0, boxW - HANDLE)}
-				y={Math.max(0, boxH - HANDLE)}
-				draggable
-				onDragEnd={(event: KonvaEvent<DragEvent>) => {
-					const node = event.target;
-					const fit = fitOf(geom);
-					const nextW = Math.max(8, node.x() + HANDLE);
-					const nextScale =
-						template.width > 0 ? nextW / (template.width * fit) : geom.scale;
-					const clamped = Math.min(20, Math.max(0.02, nextScale));
-					onItemChange(item.id, { scale: round(clamped, 4) });
-					node.position({
-						x: Math.max(0, template.width * clamped * fit - HANDLE),
-						y: Math.max(0, template.height * clamped * fit - HANDLE),
-					});
-				}}
-			>
-				<Rect
-					width={HANDLE}
-					height={HANDLE}
-					fill="rgba(255,209,102,0.95)"
-					cornerRadius={3}
-					stroke="#0d141c"
-					strokeWidth={1}
-				/>
-				<Text
-					text="⤡"
-					x={1}
-					y={1}
-					width={HANDLE - 2}
-					height={HANDLE - 2}
-					align="center"
-					verticalAlign="middle"
-					fontSize={12}
-					fill="#0d141c"
-					listening={false}
-				/>
+				{/* Move handle (top-left). */}
+				<Group x={0} y={0} onMouseDown={onPlacementDown}>
+					<Rect
+						width={HANDLE}
+						height={HANDLE}
+						fill="rgba(74,168,255,0.95)"
+						cornerRadius={3}
+						stroke="#0d141c"
+						strokeWidth={1}
+					/>
+					<Text
+						text="✥"
+						x={2}
+						y={2}
+						width={HANDLE - 4}
+						height={HANDLE - 4}
+						align="center"
+						verticalAlign="middle"
+						fontSize={11}
+						fill="#0d141c"
+						listening={false}
+					/>
+				</Group>
+
+				{/* Scale handle (bottom-right). */}
+				<Group
+					x={Math.max(0, win.width - HANDLE)}
+					y={Math.max(0, win.height - HANDLE)}
+					onMouseDown={onSizeDown}
+				>
+					<Rect
+						width={HANDLE}
+						height={HANDLE}
+						fill="rgba(255,209,102,0.95)"
+						cornerRadius={3}
+						stroke="#0d141c"
+						strokeWidth={1}
+					/>
+					<Text
+						text="⤡"
+						x={1}
+						y={1}
+						width={HANDLE - 2}
+						height={HANDLE - 2}
+						align="center"
+						verticalAlign="middle"
+						fontSize={12}
+						fill="#0d141c"
+						listening={false}
+					/>
+				</Group>
 			</Group>
-		</Group>
+		</Fragment>
 	);
 }
 
@@ -1024,6 +1331,296 @@ function PlacementHandles({
 function fitOf(geom: Geometry): number {
 	if (geom.template.width > 0 && geom.scale > 0) return geom.k / geom.scale;
 	return 1;
+}
+
+/** The visible window of a placement on the stage, in stage px. */
+function windowOf(geom: Geometry, crop: ItemCrop): SnapBox {
+	return {
+		x: geom.boxX + crop.x * geom.k,
+		y: geom.boxY + crop.y * geom.k,
+		width: Math.max(1, crop.width * geom.k),
+		height: Math.max(1, crop.height * geom.k),
+	};
+}
+
+/** The crop to draw for a geometry: the one being dragged, else the saved one. */
+function cropFor(geom: Geometry, preview: DragPreview | null): ItemCrop {
+	if (preview && preview.itemId === geom.item.id && preview.crop) return preview.crop;
+	return cropBox(geom.item, geom.template);
+}
+
+// ------------------------------------------------------------------- crop tool
+
+/** Darkens everything outside the crop window. */
+const CROP_SHADE = "rgba(4,8,14,0.62)";
+
+/** Where the crop handles sit, as fractions of the window. */
+const CROP_ANCHORS: Array<{ id: string; fx: number; fy: number; cursor: string }> = [
+	{ id: "nw", fx: 0, fy: 0, cursor: "nwse-resize" },
+	{ id: "n", fx: 0.5, fy: 0, cursor: "ns-resize" },
+	{ id: "ne", fx: 1, fy: 0, cursor: "nesw-resize" },
+	{ id: "e", fx: 1, fy: 0.5, cursor: "ew-resize" },
+	{ id: "se", fx: 1, fy: 1, cursor: "nwse-resize" },
+	{ id: "s", fx: 0.5, fy: 1, cursor: "ns-resize" },
+	{ id: "sw", fx: 0, fy: 1, cursor: "nesw-resize" },
+	{ id: "w", fx: 0, fy: 0.5, cursor: "ew-resize" },
+];
+
+const CROP_HANDLE = 12;
+
+/**
+ * The crop frame: the visible window of the active placement, with a handle on
+ * every corner and edge.
+ *
+ * Dragging the frame moves it over the animation, dragging a handle resizes it;
+ * either way the rest of the canvas is dimmed so it is obvious what is being
+ * kept. The frame is measured in the template's own box (the same space the
+ * layer drag uses) and written to the placement as template px on release, so
+ * the out page can clip at exactly the rectangle that was drawn here.
+ */
+function CropOverlay({
+	geom,
+	stageW,
+	stageH,
+	onItemChange,
+}: {
+	geom: Geometry;
+	stageW: number;
+	stageH: number;
+	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
+}) {
+	const snap = useContext(SnapContext);
+	const drag = useContext(DragContext);
+	const { item, template } = geom;
+	const crop = cropFor(geom, drag?.preview ?? null);
+	const view = drag ? drag.view(geom) : geom;
+	const win = windowOf(view, crop);
+	const bounds = { width: geom.boxW, height: geom.boxH };
+	/** The window in the box's own px, which is what the drag works in. */
+	const local = {
+		x: crop.x * geom.k,
+		y: crop.y * geom.k,
+		width: crop.width * geom.k,
+		height: crop.height * geom.k,
+	};
+	const minSize = Math.max(2, MIN_CROP_PX * geom.k);
+
+	const lines = useMemo(() => boxSnapLines(bounds.width, bounds.height), [bounds.width, bounds.height]);
+	const threshold = snap?.threshold ?? 0;
+
+	const toDesign = (box: SnapBox): ItemCrop => ({
+		x: box.x / geom.k,
+		y: box.y / geom.k,
+		width: box.width / geom.k,
+		height: box.height / geom.k,
+	});
+
+	const showGuides = (x: number[], y: number[]) => {
+		// Local box px -> stage px, the same conversion the layer guides use.
+		snap?.showLayer(x, y);
+	};
+
+	const commit = (next: SnapBox) => {
+		const design = roundCrop(toDesign(next));
+		if (cropIsFull(design, template)) onItemChange(item.id, { crop: undefined });
+		else onItemChange(item.id, { crop: design });
+	};
+
+	/** Dragging the window itself: it slides over the animation. */
+	const onBodyDown = (event: KonvaEvent<MouseEvent>) => {
+		if (!drag) return;
+		const start = drag.pointOf(event.evt);
+		if (!start) return;
+		let next: SnapBox = { ...local };
+		drag.begin(
+			event,
+			(point) => {
+				const raw = {
+					...local,
+					x: clamp(local.x + (point.x - start.x), 0, Math.max(0, bounds.width - local.width)),
+					y: clamp(local.y + (point.y - start.y), 0, Math.max(0, bounds.height - local.height)),
+				};
+				const moved =
+					snap?.enabled
+						? snapBox(raw, lines.x, lines.y, threshold)
+						: { box: raw, guidesX: [], guidesY: [] };
+				next = moved.box;
+				drag.setPreview({ itemId: item.id, dx: 0, dy: 0, crop: toDesign(next) });
+				showGuides(moved.guidesX, moved.guidesY);
+			},
+			() => {
+				drag.setPreview(null);
+				snap?.clear();
+				commit(next);
+			},
+		);
+	};
+
+	/** Dragging a handle: only the edges under the cursor move. */
+	const onAnchorDown =
+		(anchor: { fx: number; fy: number }) => (event: KonvaEvent<MouseEvent>) => {
+			if (!drag) return;
+			const start = drag.pointOf(event.evt);
+			if (!start) return;
+			let next: SnapBox = { ...local };
+			drag.begin(
+				event,
+				(point) => {
+					const right = local.x + local.width;
+					const bottom = local.y + local.height;
+					let { x, y, width, height } = local;
+					const guidesX: number[] = [];
+					const guidesY: number[] = [];
+
+					if (anchor.fx === 0) {
+						const snapped = snap?.enabled
+							? snapCoordinate(x + (point.x - start.x), lines.x, threshold)
+							: { value: x + (point.x - start.x), guide: [] };
+						x = clamp(snapped.value, 0, right - minSize);
+						guidesX.push(...snapped.guide);
+						width = right - x;
+					} else if (anchor.fx === 1) {
+						const snapped = snap?.enabled
+							? snapCoordinate(right + (point.x - start.x), lines.x, threshold)
+							: { value: right + (point.x - start.x), guide: [] };
+						const edge = clamp(snapped.value, x + minSize, bounds.width);
+						guidesX.push(...snapped.guide);
+						width = edge - x;
+					}
+
+					if (anchor.fy === 0) {
+						const snapped = snap?.enabled
+							? snapCoordinate(y + (point.y - start.y), lines.y, threshold)
+							: { value: y + (point.y - start.y), guide: [] };
+						y = clamp(snapped.value, 0, bottom - minSize);
+						guidesY.push(...snapped.guide);
+						height = bottom - y;
+					} else if (anchor.fy === 1) {
+						const snapped = snap?.enabled
+							? snapCoordinate(bottom + (point.y - start.y), lines.y, threshold)
+							: { value: bottom + (point.y - start.y), guide: [] };
+						const edge = clamp(snapped.value, y + minSize, bounds.height);
+						guidesY.push(...snapped.guide);
+						height = edge - y;
+					}
+
+					next = { x, y, width, height };
+					drag.setPreview({ itemId: item.id, dx: 0, dy: 0, crop: toDesign(next) });
+					showGuides(guidesX, guidesY);
+				},
+				() => {
+					drag.setPreview(null);
+					snap?.clear();
+					commit(next);
+				},
+			);
+		};
+
+	return (
+		<Fragment>
+			{/* Everything outside the window, dimmed. */}
+			<Rect x={0} y={0} width={stageW} height={Math.max(0, win.y)} fill={CROP_SHADE} listening={false} />
+			<Rect
+				x={0}
+				y={win.y + win.height}
+				width={stageW}
+				height={Math.max(0, stageH - win.y - win.height)}
+				fill={CROP_SHADE}
+				listening={false}
+			/>
+			<Rect
+				x={0}
+				y={win.y}
+				width={Math.max(0, win.x)}
+				height={win.height}
+				fill={CROP_SHADE}
+				listening={false}
+			/>
+			<Rect
+				x={win.x + win.width}
+				y={win.y}
+				width={Math.max(0, stageW - win.x - win.width)}
+				height={win.height}
+				fill={CROP_SHADE}
+				listening={false}
+			/>
+
+			{/* The template box, so it is clear how much is being cut. */}
+			<Rect
+				x={view.boxX}
+				y={view.boxY}
+				width={view.boxW}
+				height={view.boxH}
+				stroke="rgba(255,255,255,0.28)"
+				strokeWidth={1}
+				dash={[4, 7]}
+				listening={false}
+			/>
+
+			<Group x={win.x} y={win.y}>
+				<Rect
+					width={win.width}
+					height={win.height}
+					fill="rgba(0,0,0,0.001)"
+					onMouseDown={onBodyDown}
+				/>
+				{/* Thirds, the usual framing help. */}
+				<Line
+					points={[win.width / 3, 0, win.width / 3, win.height]}
+					stroke="rgba(255,255,255,0.18)"
+					strokeWidth={1}
+					listening={false}
+				/>
+				<Line
+					points={[(win.width / 3) * 2, 0, (win.width / 3) * 2, win.height]}
+					stroke="rgba(255,255,255,0.18)"
+					strokeWidth={1}
+					listening={false}
+				/>
+				<Line
+					points={[0, win.height / 3, win.width, win.height / 3]}
+					stroke="rgba(255,255,255,0.18)"
+					strokeWidth={1}
+					listening={false}
+				/>
+				<Line
+					points={[0, (win.height / 3) * 2, win.width, (win.height / 3) * 2]}
+					stroke="rgba(255,255,255,0.18)"
+					strokeWidth={1}
+					listening={false}
+				/>
+				<Rect
+					width={win.width}
+					height={win.height}
+					stroke="rgba(255,209,102,0.95)"
+					strokeWidth={1}
+					listening={false}
+				/>
+				{CROP_ANCHORS.filter(
+					(anchor) =>
+						// Mid-edge handles only when the window is big enough to have an
+						// edge: on a small crop eight handles would cover all of it and
+						// hide the very thing being framed.
+						(anchor.fx !== 0.5 || win.width > CROP_HANDLE * 4) &&
+						(anchor.fy !== 0.5 || win.height > CROP_HANDLE * 4),
+				).map((anchor) => (
+					<Rect
+						key={anchor.id}
+						x={anchor.fx * win.width - CROP_HANDLE / 2}
+						y={anchor.fy * win.height - CROP_HANDLE / 2}
+						width={CROP_HANDLE}
+						height={CROP_HANDLE}
+						fill="rgba(255,209,102,0.92)"
+						stroke="#0d141c"
+						strokeWidth={1}
+						cornerRadius={2}
+						onMouseDown={onAnchorDown(anchor)}
+					/>
+				))}
+			</Group>
+
+		</Fragment>
+	);
 }
 
 // --------------------------------------------------------------- layer nodes

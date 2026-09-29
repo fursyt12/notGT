@@ -84,6 +84,23 @@ export function snapBox(
 }
 
 /**
+ * Snaps a single coordinate — one edge of a box being resized — to the nearest
+ * line. `snapBox` is for moving a whole box; resizing has to leave the opposite
+ * edge exactly where the operator put it, and that edge is usually *on* a line
+ * already, which would win every comparison.
+ */
+export function snapCoordinate(
+	value: number,
+	lines: SnapLine[],
+	threshold: number,
+): { value: number; guide: number[] } {
+	if (threshold <= 0) return { value, guide: [] };
+	const match = closest([value], lines, threshold);
+	if (!match) return { value, guide: [] };
+	return { value: value + match.delta, guide: [match.at] };
+}
+
+/**
  * Lines every placement can stick to: the out's edges, its centre, the 5 %
  * broadcast safe area, and the edges and centres of the *other* animations on
  * the same out (so two titles can be lined up against each other).
@@ -123,6 +140,25 @@ export function placementSnapLines(
 }
 
 /**
+ * The edges and the centre of one box, in that box's own pixel space. Used for
+ * layers (inside a template) and for a crop window (inside the same box).
+ */
+export function boxSnapLines(width: number, height: number): { x: SnapLine[]; y: SnapLine[] } {
+	return {
+		x: [
+			{ at: 0, label: "край шаблона" },
+			{ at: width / 2, label: "центр шаблона" },
+			{ at: width, label: "край шаблона" },
+		],
+		y: [
+			{ at: 0, label: "край шаблона" },
+			{ at: height / 2, label: "центр шаблона" },
+			{ at: height, label: "край шаблона" },
+		],
+	};
+}
+
+/**
  * Lines a layer can stick to, in the *template's* pixel space (the parent group
  * the layers live in): the edges and centre of the animation box itself, plus
  * the edges and centres of the other layers that have an explicit box.
@@ -146,16 +182,7 @@ export function layerSnapLines(
 ): { x: SnapLine[]; y: SnapLine[] } {
 	const boxW = templateWidth * k;
 	const boxH = templateHeight * k;
-	const x: SnapLine[] = [
-		{ at: 0, label: "край шаблона" },
-		{ at: boxW / 2, label: "центр шаблона" },
-		{ at: boxW, label: "край шаблона" },
-	];
-	const y: SnapLine[] = [
-		{ at: 0, label: "край шаблона" },
-		{ at: boxH / 2, label: "центр шаблона" },
-		{ at: boxH, label: "край шаблона" },
-	];
+	const { x, y } = boxSnapLines(boxW, boxH);
 	for (const layer of layers) {
 		if (layer.id === skipId || layer.hidden) continue;
 		if (layer.width === undefined || layer.height === undefined) continue;

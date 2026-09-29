@@ -224,6 +224,21 @@ export interface TitleTemplate {
 	updatedAt: number;
 }
 
+/**
+ * The visible window of a placement, in the template's own design pixels.
+ *
+ * It is a crop, not a resize: what falls outside is hidden, and the window
+ * itself is placed where the cropped part already was, so nothing on screen
+ * moves or changes size. `x`/`y` are relative to the top-left of the template's
+ * design box; `width`/`height` are its size (see `shared/crop.ts`).
+ */
+export interface ItemCrop {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
 /** An animation placed on an out. */
 export interface OutItem {
 	id: string;
@@ -236,6 +251,8 @@ export interface OutItem {
 	/** Overrides the template's own playback config when set. */
 	playback: PlaybackConfig;
 	enabled: boolean;
+	/** Hides everything outside this window. Absent = the whole box is shown. */
+	crop?: ItemCrop;
 	/**
 	 * "Show it and keep it": while true the placement stays on air until the
 	 * toggle is switched off — no `holdMs` timeout, no `once`/`loop` schedule,

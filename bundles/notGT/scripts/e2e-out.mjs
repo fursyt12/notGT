@@ -370,6 +370,72 @@ async function main() {
 			JSON.stringify(box),
 		);
 		await api("DELETE", `/api/outs/main/items/${placed.item.id}`);
+
+		// --- 4c2. a crop clips the placement, it does not move it ---------
+		// The window becomes the positioner (so the box shrinks to what is
+		// visible) and the animation underneath is pulled back by the crop's
+		// offset, which is what keeps the visible part exactly where it was.
+		const cropped = await api("POST", "/api/outs/main/items", {
+			templateId: "e2e-placement",
+			x: 25,
+			y: 25,
+			scale: 0.5,
+			crop: { x: 384, y: 216, width: 960, height: 540 },
+			held: true,
+		});
+		await page.waitForFunction(
+			() => document.querySelector('.notgt-layer[data-layer-id="p_marker"]') !== null,
+			{ timeout: 8000 },
+		);
+		await sleep(400);
+		const croppedStyles = await page.evaluate(() => {
+			const layer = document.querySelector('.notgt-layer[data-layer-id="p_marker"]');
+			const positioner = layer.closest(".notgt-slot");
+			const animator = layer.closest(".notgt-animator");
+			return {
+				positioner: {
+					left: positioner.style.left,
+					top: positioner.style.top,
+					width: positioner.style.width,
+					height: positioner.style.height,
+					overflow: positioner.style.overflow,
+				},
+				animator: { left: animator.style.left, top: animator.style.top },
+			};
+		});
+		check(
+			"a crop makes the placement box the visible window",
+			croppedStyles.positioner.left === "35%" &&
+				croppedStyles.positioner.top === "35%" &&
+				croppedStyles.positioner.width === "960px" &&
+				croppedStyles.positioner.height === "540px" &&
+				croppedStyles.positioner.overflow === "hidden",
+			JSON.stringify(croppedStyles.positioner),
+		);
+		check(
+			"a crop pulls the animation back so it does not move on screen",
+			croppedStyles.animator.left === "-384px" && croppedStyles.animator.top === "-216px",
+			JSON.stringify(croppedStyles.animator),
+		);
+		await api("PATCH", `/api/outs/main/items/${cropped.item.id}`, { crop: null });
+		await sleep(300);
+		const uncroppedStyles = await page.evaluate(() => {
+			const layer = document.querySelector('.notgt-layer[data-layer-id="p_marker"]');
+			const slot = layer.closest(".notgt-slot");
+			return {
+				width: slot.style.width,
+				overflow: slot.style.overflow,
+				animatorLeft: slot.querySelector(".notgt-animator").style.left,
+			};
+		});
+		check(
+			"removing the crop restores the whole box",
+			uncroppedStyles.width === "" &&
+				uncroppedStyles.overflow === "" &&
+				uncroppedStyles.animatorLeft === "",
+			JSON.stringify(uncroppedStyles),
+		);
+		await api("DELETE", `/api/outs/main/items/${cropped.item.id}`);
 		await api("DELETE", "/api/templates/e2e-placement");
 		await api("POST", "/api/titles/hide", {});
 		await sleep(300);

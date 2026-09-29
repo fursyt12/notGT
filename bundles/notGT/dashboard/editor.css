@@ -54,6 +54,13 @@ body.editor-body {
 	padding: 4px 9px;
 }
 
+/* A tool that stays on until it is switched off (see the crop tool). */
+.ed-toolbar button.ed-tool.is-active {
+	background: rgba(255, 209, 102, 0.16);
+	border-color: rgba(255, 209, 102, 0.75);
+	color: var(--ng-fg);
+}
+
 .ed-out-select {
 	width: auto;
 	min-width: 160px;
@@ -217,6 +224,14 @@ body.editor-body {
 
 .ed-ok {
 	color: var(--ng-ok);
+}
+
+/* The crop of a placement, as a value in the inspector. */
+.ed-crop-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	justify-content: space-between;
 }
 
 /* --------------------------------------------------------------- code panel */

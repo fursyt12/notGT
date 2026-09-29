@@ -12,6 +12,7 @@ import {
 import {
 	BUNDLE_NAME,
 	CODE_MESSAGES,
+	type ItemCrop,
 	type Out,
 	REPLICANTS,
 	type RuntimeState,
@@ -20,6 +21,7 @@ import {
 	type ActiveTitleState,
 	type VariableSelection,
 } from "../shared/types";
+import { cropBox } from "../shared/crop";
 import {
 	CODE_HOOKS_TIMEOUT_MS,
 	buildCodeDocument,
@@ -45,6 +47,11 @@ interface Instance {
 	/** Play counter; a change restarts the entrance animation. */
 	trigger: number;
 	data: TitleData;
+	/** Visible window inside the design box, or `null` for the whole box. */
+	crop: ItemCrop | null;
+	/** Design size of the out, for placing a crop window (px -> percent). */
+	outW: number;
+	outH: number;
 }
 
 /** Which phases a code animation animates itself, as reported by its runtime. */
@@ -180,6 +187,9 @@ function computeInstances(out: Out | undefined): Instance[] {
 			scale: item.scale ?? 1,
 			trigger: runtimeRep.value?.triggers?.[`${out.id}:${item.id}`] ?? 0,
 			data: baseData(),
+			crop: item.crop ? cropBox(item, template) : null,
+			outW: out.width,
+			outH: out.height,
 		});
 	}
 
@@ -199,6 +209,9 @@ function computeInstances(out: Out | undefined): Instance[] {
 				scale: 1,
 				trigger: active.updatedAt ?? 0,
 				data: mergedData(),
+				crop: null,
+				outW: out.width,
+				outH: out.height,
 			});
 		}
 	}
@@ -255,10 +268,44 @@ function sortLayers(template: TitleTemplate): TitleTemplate["layers"] {
 	return [...(template.layers ?? [])].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 }
 
+/**
+ * Places a slot on the out, with its crop window when it has one.
+ *
+ * Without a crop the positioner *is* the animation box: `x%`/`y%` from the
+ * stage and the template's design size, scaled by `scale`.
+ *
+ * With a crop the positioner becomes the visible window only. It is sized to
+ * the crop, clipped, and moved by the crop's offset inside the box, while the
+ * animator underneath is pulled back by the same offset — so the part that is
+ * still visible does not move on screen, exactly like the editor canvas shows.
+ * The offset is converted from design px to percent of the out, which is the
+ * unit `left`/`top` are expressed in (`scale` is in the positioner's transform
+ * and does not affect its own layout position).
+ */
 function applyPlacement(slot: Slot, inst: Instance): void {
-	slot.positioner.style.left = `${inst.x}%`;
-	slot.positioner.style.top = `${inst.y}%`;
 	slot.positioner.style.transform = `scale(${inst.scale})`;
+
+	const crop = inst.crop;
+	if (!crop) {
+		slot.positioner.style.left = `${inst.x}%`;
+		slot.positioner.style.top = `${inst.y}%`;
+		slot.positioner.style.width = "";
+		slot.positioner.style.height = "";
+		slot.positioner.style.overflow = "";
+		slot.animator.style.left = "";
+		slot.animator.style.top = "";
+		return;
+	}
+
+	const dx = inst.outW > 0 ? (crop.x * inst.scale * 100) / inst.outW : 0;
+	const dy = inst.outH > 0 ? (crop.y * inst.scale * 100) / inst.outH : 0;
+	slot.positioner.style.left = `${inst.x + dx}%`;
+	slot.positioner.style.top = `${inst.y + dy}%`;
+	slot.positioner.style.width = `${crop.width}px`;
+	slot.positioner.style.height = `${crop.height}px`;
+	slot.positioner.style.overflow = "hidden";
+	slot.animator.style.left = `${-crop.x}px`;
+	slot.animator.style.top = `${-crop.y}px`;
 }
 
 /**
@@ -287,9 +334,18 @@ function setupCodeIframe(
 		if (slot.renderToken === token) slot.iframeReady = true;
 	});
 	slot.iframe = iframe;
-	slot.box.appendChild(iframe);
 
-	if (codeSource(template) === "file" && template.code?.src) {
+	// The inline document is set *before* the iframe enters the document: an
+	// iframe that is inserted with an empty `srcdoc` and filled in a moment
+	// later occasionally keeps its initial about:blank and paints nothing.
+	if (codeSource(template) !== "file" || !template.code?.src) {
+		iframe.srcdoc = buildCodeDocument(template, data);
+		slot.box.appendChild(iframe);
+		return;
+	}
+
+	slot.box.appendChild(iframe);
+	{
 		const src = template.code.src;
 		buildSourcedDocument(src, codeData(data))
 			.then((document) => {
@@ -306,10 +362,7 @@ function setupCodeIframe(
 						`${src}</body>`;
 				}
 			});
-		return;
 	}
-
-	iframe.srcdoc = buildCodeDocument(template, data);
 }
 
 function rebuildSlot(slot: Slot, template: TitleTemplate, data: TitleData): void {

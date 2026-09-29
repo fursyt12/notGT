@@ -19,6 +19,7 @@ import { createRoot } from "react-dom/client";
 
 import { codeSource } from "../graphics/code-runtime";
 import { interpolate } from "../shared/binding";
+import { cropBox } from "../shared/crop";
 import { BUNDLE_NAME } from "../shared/types";
 import type {
 	CodeBlock,
@@ -1644,6 +1645,30 @@ function PlacementInspector({
 					X/Y — проценты от {out.width}×{out.height}; масштаб умножает бокс анимации{" "}
 					{template.width}×{template.height} (полная ширина ≈ {round(fittedScale, 3)}).
 				</div>
+				<Field label="Обрезка">
+					{item.crop ? (
+						<div className="ed-crop-row">
+							<span className="ed-ok" data-crop-info>
+								{Math.round(cropBox(item, template).width)}×
+								{Math.round(cropBox(item, template).height)} px (
+								{Math.round(cropBox(item, template).x)},
+								{Math.round(cropBox(item, template).y)})
+							</span>
+							<button
+								type="button"
+								className="ed-mini"
+								onClick={() => onPatch({ crop: undefined })}
+								data-crop-clear
+							>
+								убрать
+							</button>
+						</div>
+					) : (
+						<span className="ed-hint" data-crop-none>
+							нет — обрезать можно кнопкой «⛶ Обрезка» в панели сверху
+						</span>
+					)}
+				</Field>
 				<CheckField
 					label="включено на out'е"
 					checked={item.enabled}
@@ -1908,12 +1933,18 @@ function CodePreviewCard({ template, data }: { template: TitleTemplate; data: Ti
 				</button>
 			</div>
 			<div className="ed-code-preview ed-code-preview--panel">
-				<iframe
-					className="ed-preview-frame"
-					title="Предпросмотр код-анимации"
-					sandbox="allow-scripts allow-same-origin"
-					srcDoc={doc}
-				/>
+				{/* The iframe only exists once there is a document to show: an
+				    iframe created with an empty `srcdoc` and filled in a moment
+				    later sometimes keeps its initial about:blank and never
+				    paints, which reads as "the preview is broken". */}
+				{doc ? (
+					<iframe
+						className="ed-preview-frame"
+						title="Предпросмотр код-анимации"
+						sandbox="allow-scripts allow-same-origin"
+						srcDoc={doc}
+					/>
+				) : null}
 			</div>
 			<p className="ed-hint">
 				{template.width}×{template.height} · пересобирается при каждом изменении кода
@@ -2026,6 +2057,8 @@ export function EditorApp() {
 	const [draft, setDraft] = useState<TitleTemplate | null>(null);
 	const [dirty, setDirty] = useState(false);
 	const [flash, setFlash] = useState("");
+	/** The crop tool is on: the canvas edits the active placement's window. */
+	const [cropMode, setCropMode] = useState(false);
 
 	const dirtyRef = useRef(dirty);
 	const draftRef = useRef<TitleTemplate | null>(draft);
@@ -2228,6 +2261,36 @@ export function EditorApp() {
 		const template = getTemplate(item.templateId);
 		if (!template || template.width <= 0) return;
 		updateItem(out.id, item.id, { scale: round(out.width / template.width, 4) });
+	};
+
+	// -------------------------------------------------------------- crop tool
+
+	/**
+	 * The crop tool edits the visible window of the active placement, so it is
+	 * offered exactly when there is a placement with a template to measure.
+	 */
+	const canCrop = Boolean(activeItem && getTemplate(activeItem.templateId));
+
+	// Losing the placement loses the tool with it — there is nothing to crop.
+	useEffect(() => {
+		if (!canCrop) setCropMode(false);
+	}, [canCrop]);
+
+	const setCrop = (crop: OutItem["crop"]) => {
+		if (!activeItem || !out) return;
+		updateItem(out.id, activeItem.id, { crop });
+	};
+
+	const toggleCropMode = () => {
+		if (!canCrop) return;
+		setCropMode((value) => {
+			const next = !value;
+			if (next) {
+				setSelectedLayerId(null);
+				notify("Обрезка: тяните рамку, края и углы");
+			}
+			return next;
+		});
 	};
 
 	// ------------------------------------------------------------- selection
@@ -2438,6 +2501,11 @@ export function EditorApp() {
 	// Arrow-key nudging: the layer when one is selected, otherwise the placement.
 	useEffect(() => {
 		const handler = (event: KeyboardEvent) => {
+			// Escape always leaves the crop tool, whatever has focus.
+			if (event.key === "Escape" && cropMode) {
+				setCropMode(false);
+				return;
+			}
 			const target = event.target as HTMLElement | null;
 			if (
 				target &&
@@ -2481,7 +2549,7 @@ export function EditorApp() {
 		};
 		window.addEventListener("keydown", handler);
 		return () => window.removeEventListener("keydown", handler);
-	}, [selectedLayerId, draft, activeItemId, out, mutate]);
+	}, [selectedLayerId, draft, activeItemId, out, mutate, cropMode]);
 
 	// ---------------------------------------------------------------- derive
 
@@ -2525,6 +2593,41 @@ export function EditorApp() {
 				<button type="button" onClick={preview} disabled={!draft && !editingTemplateId}>
 					Preview
 				</button>
+				<span className="ed-vline" />
+				<button
+					type="button"
+					className={`ed-tool${cropMode ? " is-active" : ""}`}
+					onClick={toggleCropMode}
+					disabled={!canCrop}
+					data-crop-toggle
+					title={
+						canCrop
+							? "Обрезка: рамка поверх активной анимации — тяните за края и углы; всё, что вне рамки, скрывается"
+							: "Сначала выберите анимацию на out'е"
+					}
+				>
+					⛶ Обрезка
+				</button>
+				{cropMode && activeItem ? (
+					<>
+						<span className="ed-muted ed-small" data-crop-hint>
+							рамка — видимая часть; тяните края и углы
+						</span>
+						{activeItem.crop ? (
+							<button
+								type="button"
+								className="ed-mini"
+								onClick={() => setCrop(undefined)}
+								data-crop-reset
+							>
+								Сбросить обрезку
+							</button>
+						) : null}
+						<button type="button" className="ed-mini" onClick={() => setCropMode(false)}>
+							Готово
+						</button>
+					</>
+				) : null}
 				<span className="ed-spacer" />
 				{flash ? <span className="ed-flash">{flash}</span> : null}
 			</div>
@@ -2641,6 +2744,7 @@ export function EditorApp() {
 						draft={draft}
 						activeItemId={activeItemId}
 						selectedLayerId={selectedLayerId}
+						cropMode={cropMode}
 						previewPlaying={previewPlaying}
 						restartToken={restartToken}
 						data={data}

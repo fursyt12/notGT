@@ -49,6 +49,7 @@ const PANELS = [
 		expectCanvas: true,
 		clickPreview: true,
 		outSwitch: true,
+		dragAndCrop: true,
 		shot: "panel-editor.png",
 	},
 ];
@@ -236,6 +237,186 @@ async function main() {
 					fullPage: false,
 				});
 				await fetch(`${BASE}/api/outs/${fixture}`, { method: "DELETE" });
+			}
+
+			if (panel.dragAndCrop) {
+				// Dragging a placement must show where it goes *while* the mouse is
+				// down — the live code preview is a DOM iframe under the canvas, so
+				// it only follows if the drag publishes an offset instead of moving
+				// a Konva node. The crop tool then has to write a real window onto
+				// the placement.
+				const templateId = "e2e-drag-tpl";
+				const fixtureOut = "main";
+				await fetch(`${BASE}/api/templates/${templateId}`, { method: "DELETE" });
+				await fetch(`${BASE}/api/templates`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						id: templateId,
+						name: "E2E Drag",
+						kind: "code",
+						width: 800,
+						height: 450,
+						code: {
+							html: "<div class='box'>drag me</div>",
+							css: ".box{position:absolute;inset:0;background:#2b8cff;color:#fff;font:24px sans-serif}",
+							js: "",
+						},
+					}),
+				});
+				const created = await (
+					await fetch(`${BASE}/api/outs/${fixtureOut}/items`, {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ templateId, x: 20, y: 20, scale: 0.5 }),
+					})
+				).json();
+				const itemId = created.item.id;
+
+				await page.select("select.ed-out-select", fixtureOut);
+				await sleep(900);
+
+				const stage = await page.evaluate(() => {
+					const el = document.querySelector(".konvajs-content");
+					if (!el) return null;
+					const r = el.getBoundingClientRect();
+					return { x: r.x, y: r.y, w: r.width, h: r.height };
+				});
+				check("editor.html: the canvas stage has a box", Boolean(stage && stage.w > 0));
+
+				const readItem = async () => {
+					const outs = await (await fetch(`${BASE}/api/outs`)).json();
+					const out = outs.outs.find((o) => o.id === fixtureOut);
+					return out?.items.find((i) => i.id === itemId) ?? null;
+				};
+				// Where the placement's visible window sits on the page, in page px:
+				// x/y are percent of the out, the window is the template box scaled.
+				const windowOnPage = async () => {
+					const item = await readItem();
+					const w = (800 * (item?.scale ?? 1)) / 1920;
+					const h = (450 * (item?.scale ?? 1)) / 1080;
+					return {
+						left: stage.x + ((item?.x ?? 0) / 100) * stage.w,
+						top: stage.y + ((item?.y ?? 0) / 100) * stage.h,
+						right: stage.x + ((item?.x ?? 0) / 100 + w) * stage.w,
+						bottom: stage.y + ((item?.y ?? 0) / 100 + h) * stage.h,
+					};
+				};
+
+				const first = await windowOnPage();
+				const centerX = (first.left + first.right) / 2;
+				const centerY = (first.top + first.bottom) / 2;
+
+				// Select it in the list rather than by clicking the canvas: other
+				// placements on `main` may sit under the same point, and the list is
+				// what the operator uses anyway.
+				const selected = await page.evaluate((name) => {
+					const rows = [...document.querySelectorAll(".ed-list-item")];
+					const row = rows.find(
+						(el) => (el.querySelector(".ed-list-item__name")?.textContent ?? "") === name,
+					);
+					if (!row) return false;
+					row.click();
+					return true;
+				}, "E2E Drag");
+				check("editor.html: the placement can be selected in the list", selected);
+				await sleep(400);
+				const cropEnabled = await page.$eval(
+					"button[data-crop-toggle]",
+					(el) => !el.disabled,
+				);
+				check(
+					"editor.html: selecting a placement enables its tools",
+					cropEnabled,
+				);
+
+				// The live preview of *this* animation: a code placement is an iframe
+				// in the DOM overlay, identified by its template name.
+				const overlayBox = () =>
+					page.evaluate((name) => {
+						const boxes = [...document.querySelectorAll(".ed-code-overlay__box")];
+						const box = boxes.find(
+							(el) => el.querySelector("iframe")?.getAttribute("title")?.startsWith(name),
+						);
+						return box ? `${box.style.left}|${box.style.top}` : null;
+					}, "E2E Drag");
+				const statusText = () =>
+					page.evaluate(() =>
+						(document.querySelector(".ed-canvas-status")?.textContent ?? "").replace(
+							/\s+/g,
+							" ",
+						),
+					);
+
+				const overlayBefore = await overlayBox();
+				await page.mouse.move(centerX, centerY);
+				await page.mouse.down();
+				await page.mouse.move(centerX + 70, centerY + 45, { steps: 10 });
+				const overlayDuring = await overlayBox();
+				const duringStatus = await statusText();
+				await page.mouse.up();
+				await sleep(500);
+				const movedItem = await readItem();
+				check(
+					"editor.html: the code preview follows the drag before the mouse is released",
+					Boolean(overlayBefore) && overlayBefore !== overlayDuring,
+					`${overlayBefore} -> ${overlayDuring}`,
+				);
+				check(
+					"editor.html: the canvas reports the drag while it is in flight",
+					/перетаскивание/.test(duringStatus),
+					duringStatus,
+				);
+				check(
+					"editor.html: the drag is saved on release",
+					(movedItem?.x ?? 0) > 20 && (movedItem?.y ?? 0) > 20,
+					JSON.stringify({ x: movedItem?.x, y: movedItem?.y }),
+				);
+
+				await page.click("button[data-crop-toggle]");
+				await sleep(200);
+				const toolOn = await page.$eval("button[data-crop-toggle]", (el) =>
+					el.classList.contains("is-active"),
+				);
+				check("editor.html: the crop tool turns on", toolOn);
+
+				const second = await windowOnPage();
+				// The handles are centred on the window's corners, so the corner
+				// itself is the middle of the bottom-right one.
+				const handleX = second.right;
+				const handleY = second.bottom;
+				await page.mouse.move(handleX, handleY);
+				await page.mouse.down();
+				await page.mouse.move(handleX - 130, handleY - 70, { steps: 10 });
+				await page.mouse.up();
+				await sleep(500);
+				const croppedItem = await readItem();
+				check(
+					"editor.html: the crop frame writes a visible window to the placement",
+					Boolean(croppedItem?.crop) &&
+						croppedItem.crop.width < 800 &&
+						croppedItem.crop.height < 450 &&
+						croppedItem.crop.x === 0 &&
+						croppedItem.crop.y === 0,
+					JSON.stringify(croppedItem?.crop),
+				);
+
+				const cropInfo = await page.evaluate(
+					() => document.querySelector("[data-crop-info]")?.textContent ?? "",
+				);
+				check(
+					"editor.html: the inspector shows the crop",
+					/\d+×\d+/.test(cropInfo),
+					cropInfo,
+				);
+				await page.screenshot({
+					path: path.join(outDir, "editor-crop.png"),
+					fullPage: false,
+				});
+
+				await page.click("button[data-crop-toggle]");
+				await fetch(`${BASE}/api/outs/${fixtureOut}/items/${itemId}`, { method: "DELETE" });
+				await fetch(`${BASE}/api/templates/${templateId}`, { method: "DELETE" });
 			}
 
 			if (panel.heldToggle) {

@@ -3,6 +3,7 @@ import {
 	defaultPlayback,
 	defaultTransition,
 	newId,
+	type ItemCrop,
 	type Out,
 	type OutItem,
 	type PublicState,
@@ -534,7 +535,26 @@ export function normalizeItem(input: Record<string, unknown>, index = 0): OutIte
 	return {
 		...base,
 		playback: mergePlayback(input["playback"], base.playback),
+		crop: normalizeCrop(input["crop"]),
 	};
+}
+
+/**
+ * A crop sent through the HTTP API, or `undefined` when it is not a complete
+ * rectangle — an out written back by an API client keeps the crops it was given
+ * instead of silently losing them.
+ */
+function normalizeCrop(value: unknown): ItemCrop | undefined {
+	if (!isPlainObject(value)) return undefined;
+	const x = pickNumber(value["x"]);
+	const y = pickNumber(value["y"]);
+	const width = pickNumber(value["width"]);
+	const height = pickNumber(value["height"]);
+	if (x === undefined || y === undefined || width === undefined || height === undefined) {
+		return undefined;
+	}
+	if (width <= 0 || height <= 0) return undefined;
+	return { x, y, width, height };
 }
 
 export function asObject(value: unknown): Record<string, unknown> {
