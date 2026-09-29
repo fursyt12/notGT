@@ -1,8 +1,15 @@
 import { interpolate } from "../shared/binding";
-import type { TitleData, TitleTemplate } from "../shared/types";
+import { CODE_MESSAGES, type TitleData, type TitleTemplate } from "../shared/types";
 
 const BASE_CSS = `html,body{margin:0;padding:0;width:100%;height:100%;background:transparent;overflow:hidden}
 *{box-sizing:border-box}`;
+
+/** How long the out page waits for a code animation to declare its hooks. */
+export const CODE_HOOKS_TIMEOUT_MS = 1000;
+/** Exit time assumed when a code animation asks for a hide but gives no number. */
+export const CODE_HIDE_FALLBACK_MS = 600;
+/** Upper bound on how long a code animation may hold the slot while exiting. */
+export const CODE_HIDE_MAX_MS = 10_000;
 
 /**
  * Runtime injected into every code-authored animation (in the web GUI *and* in
@@ -13,12 +20,35 @@ const BASE_CSS = `html,body{margin:0;padding:0;width:100%;height:100%;background
  *   data            - the whole variable store
  *   vars(path, fb?) - read one binding path
  *   onData(fn)      - called now and on every variable change
+ *   onShow(fn)      - the animation is (still) on screen: animate the entrance
+ *   onHide(fn, ms?) - the animation is going away: animate the exit, `ms` is how
+ *                     long the out page will wait before dropping the iframe
+ *   hideDone()      - "my exit animation is over", drop me now
  *   [data-bind=x]   - auto-updating text nodes
+ *
+ * Registering `onShow` / `onHide` hands that phase over to the animation: the
+ * out page then skips the template's own in/out transition for it, instead of
+ * animating the wrapper on top of the animation's own work.
  */
 export function runtimeShim(dataJson: string): string {
 	return `(function(){
 var _data = ${dataJson};
 var _callbacks = [];
+var _phase = 'in';
+var _showCbs = [];
+var _hideCbs = [];
+var _hideMs = 0;
+function send(message){
+  try { if (parent !== window) parent.postMessage(message, '*'); } catch (e) {}
+}
+function postHooks(){
+  send({ type: '${CODE_MESSAGES.hooks}', show: _showCbs.length > 0, hide: _hideCbs.length > 0, hideMs: _hideMs });
+}
+function run(list){
+  for (var i = 0; i < list.length; i++) {
+    try { list[i](); } catch (e) { console.error(e); }
+  }
+}
 function get(path){
   var parts = String(path).replace(/\\[(\\d+)\\]/g, '.$1').split('.');
   var cur = _data;
@@ -57,15 +87,42 @@ window.onData = function(cb){
 // зафиксированное значение осталось бы null навсегда.
 function bodyRoot(){ return document.body; }
 Object.defineProperty(window, 'root', { get: bodyRoot, configurable: true });
+// The animation is created when it goes on screen, so "in" is the phase it
+// starts in; the out page re-sends the phase on every replay.
+window.onShow = function(cb){
+  if (typeof cb !== 'function') return;
+  _showCbs.push(cb);
+  if (_phase === 'in') run([cb]);
+};
+window.onHide = function(cb, ms){
+  if (typeof cb !== 'function') return;
+  _hideCbs.push(cb);
+  if (typeof ms === 'number' && isFinite(ms) && ms > _hideMs) _hideMs = ms;
+  postHooks();
+  if (_phase === 'out') run([cb]);
+};
+window.hideDone = function(){
+  send({ type: '${CODE_MESSAGES.phaseDone}' });
+};
 window.notgt = {
   data: _data,
   vars: window.vars,
   onData: window.onData,
+  onShow: window.onShow,
+  onHide: window.onHide,
+  hideDone: window.hideDone,
+  get phase(){ return _phase; },
   get root(){ return document.body; }
 };
 window.addEventListener('message', function(event){
   var msg = event.data;
-  if (!msg || msg.type !== 'notgt:data') return;
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type === '${CODE_MESSAGES.phase}') {
+    _phase = msg.phase === 'out' ? 'out' : 'in';
+    run(_phase === 'out' ? _hideCbs : _showCbs);
+    return;
+  }
+  if (msg.type !== '${CODE_MESSAGES.data}') return;
   _data = msg.data || {};
   window.data = _data;
   window.notgt.data = _data;
@@ -76,9 +133,13 @@ window.addEventListener('message', function(event){
 });
 applyBindings();
 // В файловой анимации на момент вставки шима элементов ещё нет — раскладываем
-// [data-bind] повторно, когда документ разобран.
+// [data-bind] повторно, когда документ разобран. Здесь же сообщаем наружу,
+// какие фазы анимация берёт на себя: к этому моменту её <script> уже выполнен.
+function onReady(){ applyBindings(); postHooks(); }
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', applyBindings);
+  document.addEventListener('DOMContentLoaded', onReady);
+} else {
+  onReady();
 }
 })();`;
 }

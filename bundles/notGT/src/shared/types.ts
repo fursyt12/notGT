@@ -51,6 +51,25 @@ export const MESSAGES = {
 	refresh: "refresh",
 } as const;
 
+/**
+ * `window.postMessage` types between the out page and a `kind: "code"` iframe.
+ *
+ * The out page owns the slot; the animation owns what happens inside it. The
+ * phases let the two agree on who animates the entrance and the exit:
+ *
+ *   out -> iframe   data       the whole variable store changed
+ *   out -> iframe   phase      { phase: "in" | "out" }: show / hide now
+ *   iframe -> out   hooks      which phases this animation animates itself,
+ *                              and how long its exit needs (ms)
+ *   iframe -> out   phaseDone  "my exit animation is over, you can drop me"
+ */
+export const CODE_MESSAGES = {
+	data: "notgt:data",
+	phase: "notgt:phase",
+	hooks: "notgt:code-hooks",
+	phaseDone: "notgt:phase-done",
+} as const;
+
 export type LayerType = "text" | "image" | "gif" | "video" | "shape";
 
 export interface LayerStyle {

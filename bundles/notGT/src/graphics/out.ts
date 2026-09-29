@@ -11,6 +11,7 @@ import {
 } from "../shared/client";
 import {
 	BUNDLE_NAME,
+	CODE_MESSAGES,
 	type Out,
 	REPLICANTS,
 	type RuntimeState,
@@ -20,6 +21,9 @@ import {
 	type VariableSelection,
 } from "../shared/types";
 import {
+	CODE_HIDE_FALLBACK_MS,
+	CODE_HIDE_MAX_MS,
+	CODE_HOOKS_TIMEOUT_MS,
 	buildCodeDocument,
 	buildSourcedDocument,
 	codeSource,
@@ -44,6 +48,14 @@ interface Instance {
 	data: TitleData;
 }
 
+/** Which phases a code animation animates itself, as reported by its runtime. */
+interface CodeHooks {
+	show: boolean;
+	hide: boolean;
+	/** How long the exit animation needs, in ms. */
+	hideMs: number;
+}
+
 interface Slot {
 	key: string;
 	templateId: string;
@@ -57,6 +69,11 @@ interface Slot {
 	/** Guards async file loads against later rebuilds of the same slot. */
 	renderToken: number;
 	lastTrigger: number;
+	/** Set once the entrance has been dealt with (wrapper or the animation). */
+	entered: boolean;
+	/** Safety net for a code animation that never reports its hooks. */
+	enterTimer?: number;
+	codeHooks?: CodeHooks;
 }
 
 const stage = document.getElementById("notgt-stage") as HTMLDivElement;
@@ -215,6 +232,7 @@ function createSlot(inst: Instance, template: TitleTemplate): Slot {
 		iframeReady: false,
 		renderToken: 0,
 		lastTrigger: inst.trigger,
+		entered: false,
 	};
 
 	if (template.kind === "code") {
@@ -300,6 +318,9 @@ function rebuildSlot(slot: Slot, template: TitleTemplate, data: TitleData): void
 	slot.iframeReady = false;
 	slot.templateId = template.id;
 	slot.signature = signatureOf(template);
+	// A fresh iframe means fresh hooks: the animation gets to claim its phases
+	// again, exactly like on the first show.
+	slot.codeHooks = undefined;
 	slot.animator.style.width = `${template.width}px`;
 	slot.animator.style.height = `${template.height}px`;
 
@@ -318,7 +339,7 @@ function updateSlotData(slot: Slot, template: TitleTemplate, data: TitleData): v
 	if (template.kind === "code") {
 		if (slot.iframeReady) {
 			slot.iframe?.contentWindow?.postMessage(
-				{ type: "notgt:data", data: codeData(data) },
+				{ type: CODE_MESSAGES.data, data: codeData(data) },
 				"*",
 			);
 		}
@@ -330,6 +351,121 @@ function updateSlotData(slot: Slot, template: TitleTemplate, data: TitleData): v
 		if (el) updateLayerContent(el, layer, data, selection);
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Who animates the entrance and the exit
+//
+// A code animation decides for itself. Its runtime reports which phases it
+// handles (`notgt:code-hooks`); when it claims one, the out page leaves that
+// phase alone instead of animating the wrapper on top of it, and for the exit
+// it keeps the iframe alive until the animation says it is done (`hideDone()`)
+// or until the time it asked for runs out. Everything else keeps the template's
+// inTransition / outTransition exactly as before.
+// ---------------------------------------------------------------------------
+
+function postToSlot(slot: Slot, message: Record<string, unknown>): void {
+	slot.iframe?.contentWindow?.postMessage(message, "*");
+}
+
+/** Starts the entrance: the wrapper now, or once the animation has spoken. */
+function enterSlot(slot: Slot, template: TitleTemplate): void {
+	slot.entered = false;
+	if (slot.enterTimer !== undefined) {
+		window.clearTimeout(slot.enterTimer);
+		slot.enterTimer = undefined;
+	}
+	if (template.kind !== "code") {
+		finishEnter(slot, template);
+		return;
+	}
+	// Give the animation a moment to report its hooks, so a code-owned entrance
+	// is not preceded by the wrapper's own transition. Without an answer the
+	// wrapper takes over, which is the pre-hooks behaviour.
+	slot.enterTimer = window.setTimeout(() => {
+		slot.enterTimer = undefined;
+		finishEnter(slot, template);
+	}, CODE_HOOKS_TIMEOUT_MS);
+}
+
+function finishEnter(slot: Slot, template: TitleTemplate): void {
+	if (slot.entered) return;
+	slot.entered = true;
+	if (slot.enterTimer !== undefined) {
+		window.clearTimeout(slot.enterTimer);
+		slot.enterTimer = undefined;
+	}
+	if (slot.codeHooks?.show) {
+		// The animation animates its own entrance, and it already did: a fresh
+		// iframe starts in the "in" phase, so its onShow handlers ran when the
+		// script registered them. Sending the phase here would play it twice —
+		// the out page only sends "in" again to *replay* (see `replayEnter`).
+		return;
+	}
+	enterAnimation(slot.animator, template.inTransition);
+}
+
+/** Replays the entrance of a slot that is already on screen (a re-trigger). */
+function replayEnter(slot: Slot, template: TitleTemplate): void {
+	if (slot.codeHooks?.show) {
+		postToSlot(slot, { type: CODE_MESSAGES.phase, phase: "in" });
+		return;
+	}
+	enterAnimation(slot.animator, template.inTransition);
+}
+
+/** Plays the exit, then calls `done` — the caller removes the slot there. */
+function exitSlot(slot: Slot, template: TitleTemplate | undefined, done: () => void): void {
+	const hooks = slot.codeHooks;
+	if (template?.kind === "code" && hooks?.hide && slot.iframe?.contentWindow) {
+		const wait = Math.min(
+			CODE_HIDE_MAX_MS,
+			Math.max(0, hooks.hideMs > 0 ? hooks.hideMs : CODE_HIDE_FALLBACK_MS),
+		);
+		const source = slot.iframe.contentWindow;
+		const timer = window.setTimeout(() => {
+			pendingExits.delete(source);
+			done();
+		}, wait);
+		pendingExits.set(source, () => {
+			window.clearTimeout(timer);
+			done();
+		});
+		postToSlot(slot, { type: CODE_MESSAGES.phase, phase: "out" });
+		return;
+	}
+	exitAnimation(slot.animator, template?.outTransition, done);
+}
+
+/** Exit animations in flight, by iframe window, so `hideDone()` can end them. */
+const pendingExits = new Map<Window, () => void>();
+
+window.addEventListener("message", (event: MessageEvent) => {
+	const message = event.data as { type?: string; show?: unknown; hide?: unknown; hideMs?: unknown };
+	if (!message || typeof message !== "object") return;
+
+	if (message.type === CODE_MESSAGES.phaseDone) {
+		const done = pendingExits.get(event.source as Window);
+		if (done) {
+			pendingExits.delete(event.source as Window);
+			done();
+		}
+		return;
+	}
+
+	if (message.type !== CODE_MESSAGES.hooks) return;
+	const slot = [...slots.values()].find(
+		(candidate) => candidate.iframe?.contentWindow === event.source,
+	);
+	if (!slot) return;
+	const template = templates().find((candidate) => candidate.id === slot.templateId);
+	if (!template) return;
+	slot.codeHooks = {
+		show: message.show === true,
+		hide: message.hide === true,
+		hideMs: typeof message.hideMs === "number" && isFinite(message.hideMs) ? message.hideMs : 0,
+	};
+	if (!slot.entered) finishEnter(slot, template);
+});
 
 let scheduled = false;
 function scheduleRender(): void {
@@ -352,7 +488,7 @@ function render(): void {
 		slots.delete(key);
 		const template = list.find((t) => t.id === slot.templateId);
 		pauseVideoLayers(slot.layerEls);
-		exitAnimation(slot.animator, template?.outTransition, () => {
+		exitSlot(slot, template, () => {
 			slot.positioner.remove();
 		});
 	}
@@ -367,7 +503,7 @@ function render(): void {
 			slots.delete(inst.key);
 			const staleTemplate = list.find((t) => t.id === stale.templateId);
 			pauseVideoLayers(stale.layerEls);
-			exitAnimation(stale.animator, staleTemplate?.outTransition, () => {
+			exitSlot(stale, staleTemplate, () => {
 				stale.positioner.remove();
 			});
 			slot = undefined;
@@ -376,20 +512,20 @@ function render(): void {
 		if (!slot) {
 			slot = createSlot(inst, template);
 			slots.set(inst.key, slot);
-			enterAnimation(slot.animator, template.inTransition);
+			enterSlot(slot, template);
 			restartVideoLayers(slot.layerEls);
 			slot.lastTrigger = inst.trigger;
 		} else {
 			applyPlacement(slot, inst);
 			if (slot.signature !== signatureOf(template)) {
 				rebuildSlot(slot, template, inst.data);
-				enterAnimation(slot.animator, template.inTransition);
+				enterSlot(slot, template);
 				restartVideoLayers(slot.layerEls);
 				slot.lastTrigger = inst.trigger;
 			} else if (inst.trigger !== slot.lastTrigger) {
 				// Re-triggered while already on screen: replay the entrance.
 				slot.lastTrigger = inst.trigger;
-				enterAnimation(slot.animator, template.inTransition);
+				replayEnter(slot, template);
 				restartVideoLayers(slot.layerEls);
 			}
 		}

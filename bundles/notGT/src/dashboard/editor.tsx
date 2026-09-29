@@ -1945,9 +1945,25 @@ function CodeEditors({
 						<code>root</code> — контейнер анимации
 					</li>
 					<li>
+						<code>{"onShow(fn)"}</code> — анимация показана: проиграйте появление (и запустите
+						то, что живёт, пока титр в эфире)
+					</li>
+					<li>
+						<code>{"onHide(fn, ms)"}</code> — анимацию скрывают: проиграйте обратную
+						анимацию; <code>ms</code> — сколько система подождёт её конца
+					</li>
+					<li>
+						<code>hideDone()</code> — «обратная анимация кончилась», не ждать <code>ms</code>
+					</li>
+					<li>
 						<code>[data-bind="path"]</code> — текст, обновляемый автоматически
 					</li>
 				</ul>
+				<p>
+					Зарегистрировали <code>onShow</code> / <code>onHide</code> — эту фазу анимирует сам
+					код, и системный <code>inTransition</code> / <code>outTransition</code> для неё не
+					применяется.
+				</p>
 				<p>
 					<code>{"{{path}}"}</code> в HTML и CSS подставляется один раз при загрузке — для
 					живых значений используйте <code>vars()</code>, <code>onData()</code> и{" "}
