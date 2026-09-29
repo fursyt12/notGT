@@ -13,4 +13,6 @@ export interface ExampleCode {
 	css: string;
 	/** Script of the animation; runs after the notGT runtime is injected. */
 	js: string;
+	/** How long the animation's own exit takes, ms (see `onHide`). */
+	exitMs?: number;
 }

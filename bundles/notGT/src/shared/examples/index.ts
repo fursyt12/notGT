@@ -35,7 +35,7 @@ export function createExampleTemplates(): TitleTemplate[] {
 		width: 1920,
 		height: 1080,
 		layers: [],
-		code: { html: example.html, css: example.css, js: example.js },
+		code: { html: example.html, css: example.css, js: example.js, exitMs: example.exitMs },
 		inTransition: defaultTransition(),
 		outTransition: { type: "fade", durationMs: 300 },
 		playback: { ...defaultPlayback(), mode: "loop", intervalMs: 30_000, holdMs: 20_000, autoStart: false },

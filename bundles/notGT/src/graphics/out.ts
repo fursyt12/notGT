@@ -403,6 +403,9 @@ function finishEnter(slot: Slot, template: TitleTemplate): void {
 		// the out page only sends "in" again to *replay* (see `replayEnter`).
 		return;
 	}
+	// A code animation owns its transitions: if it did not take the entrance,
+	// nothing animates it. The template's inTransition is for `layers` only.
+	if (template.kind === "code") return;
 	enterAnimation(slot.animator, template.inTransition);
 }
 
@@ -412,6 +415,7 @@ function replayEnter(slot: Slot, template: TitleTemplate): void {
 		postToSlot(slot, { type: CODE_MESSAGES.phase, phase: "in" });
 		return;
 	}
+	if (template.kind === "code") return;
 	enterAnimation(slot.animator, template.inTransition);
 }
 
@@ -433,6 +437,13 @@ function exitSlot(slot: Slot, template: TitleTemplate | undefined, done: () => v
 			done();
 		});
 		postToSlot(slot, { type: CODE_MESSAGES.phase, phase: "out" });
+		return;
+	}
+	// Same rule on the way out: a code animation that did not take the exit
+	// leaves instantly instead of getting a wrapper transition it never asked
+	// for. Only `layers` templates use outTransition.
+	if (template?.kind === "code") {
+		done();
 		return;
 	}
 	exitAnimation(slot.animator, template?.outTransition, done);

@@ -331,6 +331,7 @@ body {
 		animation: none;
 	}
 }`,
+	exitMs: 300,
 	js: String.raw`(function () {
 	"use strict";
 
@@ -471,5 +472,12 @@ body {
 	});
 
 	requestAnimationFrame(loop);
-})();`,
+})();
+
+// Уход делает сам код: система обёртку не анимирует (см. «Переходы»).
+onHide(() => {
+	root.querySelectorAll(".cd").forEach((el) =>
+		el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, fill: "forwards" }),
+	);
+}, 300);`,
 };

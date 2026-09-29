@@ -100,7 +100,7 @@
 
 		<script>
 			// Рантайм уже подключён: onData вызывается сразу и при каждом изменении.
-			onData(function () {
+			function apply() {
 				var bug = document.getElementById("bug");
 
 				// Цвет акцента — из переменной, с запасным значением.
@@ -109,7 +109,16 @@
 				// Показываем, если партнёр задан; иначе прячем.
 				var hasSponsor = vars("sponsor.name", "") !== "";
 				bug.classList.toggle("is-visible", hasSponsor);
-			});
+			}
+
+			onData(apply);
+
+			// Появление и уход код-анимация анимирует сама — систему её обёртка
+			// больше не касается. Здесь это тот же CSS-переход по `.is-visible`.
+			onShow(apply);
+			onHide(function () {
+				document.getElementById("bug").classList.remove("is-visible");
+			}, 400);
 		</script>
 	</body>
 </html>

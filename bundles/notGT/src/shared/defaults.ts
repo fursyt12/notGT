@@ -172,11 +172,29 @@ requestAnimationFrame(frame);
 // Called whenever variables change, without reloading the page.
 onData(() => {
   el.textContent = vars('ticker.text') || 'Введите текст бегущей строки';
-});`,
+});
+
+// A code animation animates its own entrance and exit — see "Переходы" in the
+// README. onShow fires once per show (and on a re-trigger), onHide when the
+// placement leaves, and hideDone() lets the system drop the iframe right then.
+onShow(() => {
+  root.querySelector('.ticker').animate(
+    [{ opacity: 0, transform: 'translateY(120%)' }, { opacity: 1, transform: 'none' }],
+    { duration: 350, easing: 'cubic-bezier(.2,.8,.2,1)' },
+  );
+});
+
+onHide(() => {
+  root.querySelector('.ticker').animate(
+    [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(120%)' }],
+    { duration: 250, easing: 'ease-in', fill: 'forwards' },
+  );
+}, 250);`,
+			exitMs: 250,
 		},
-		inTransition: defaultTransition(),
-		outTransition: { type: "fade", durationMs: 250 },
-		playback: { mode: "loop", intervalMs: 30000, holdMs: 20000, autoStart: false },
+		inTransition: { type: "none", durationMs: 0 },
+		outTransition: { type: "none", durationMs: 0 },
+		playback: { mode: "once", intervalMs: 30000, holdMs: 20000, autoStart: false },
 		createdAt: now,
 		updatedAt: now,
 	};

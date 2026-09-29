@@ -304,6 +304,7 @@ body {
 		animation: none;
 	}
 }`,
+	exitMs: 300,
 	js: String.raw`(function () {
 	"use strict";
 
@@ -578,5 +579,12 @@ body {
 
 	applyHands(zoneNow());
 	requestAnimationFrame(loop);
-})();`,
+})();
+
+// Уход делает сам код: система обёртку не анимирует (см. «Переходы»).
+onHide(() => {
+	root.querySelectorAll(".clock").forEach((el) =>
+		el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, fill: "forwards" }),
+	);
+}, 300);`,
 };

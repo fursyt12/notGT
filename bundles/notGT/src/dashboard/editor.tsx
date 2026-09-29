@@ -1712,6 +1712,10 @@ function TemplateSettings({
 	const isLoop = playback.mode === "loop";
 	// A loop is held by the toggle, so the hold settings do not apply to it.
 	const videoMode = !isLoop && playback.holdMode === "video";
+	// A code animation animates its own entrance and exit (`onShow` / `onHide`),
+	// so it has no transition settings to show: the system never animates its
+	// wrapper, and the fields would be a lie.
+	const isCode = template.kind === "code";
 	const hasVideo = hasVideoLayer(template);
 	const videoDuration = useVideoDuration(
 		template.id,
@@ -1759,6 +1763,17 @@ function TemplateSettings({
 				</div>
 			</Section>
 
+			{isCode ? (
+				<Section title="Переходы" defaultOpen={false}>
+					<div className="ed-hint" data-code-transitions-hint>
+						Появление и исчезновение код-анимации делает её собственный JavaScript:
+						<code> onShow(fn) </code> и <code>onHide(fn, ms)</code> в секции JavaScript.
+						Система обёртку не анимирует — если код фаз не зарегистрировал, титр
+						появляется и исчезает мгновенно.
+					</div>
+				</Section>
+			) : (
+				<>
 			<Section title="Появление" defaultOpen={false}>
 				<SelectField
 					label="Тип"
@@ -1825,6 +1840,9 @@ function TemplateSettings({
 					/>
 				</div>
 			</Section>
+
+				</>
+			)}
 
 			<Section title="Проигрывание по умолчанию" defaultOpen={false}>
 				<SelectField
