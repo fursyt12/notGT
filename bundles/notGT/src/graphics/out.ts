@@ -73,6 +73,8 @@ interface Slot {
 	/** Safety net for a code animation that never reports its hooks. */
 	enterTimer?: number;
 	codeHooks?: CodeHooks;
+	/** Last error thrown inside the animation, for the debug overlay. */
+	codeError?: string;
 }
 
 const stage = document.getElementById("notgt-stage") as HTMLDivElement;
@@ -320,6 +322,7 @@ function rebuildSlot(slot: Slot, template: TitleTemplate, data: TitleData): void
 	// A fresh iframe means fresh hooks: the animation gets to claim its phases
 	// again, exactly like on the first show.
 	slot.codeHooks = undefined;
+	slot.codeError = undefined;
 	slot.animator.style.width = `${template.width}px`;
 	slot.animator.style.height = `${template.height}px`;
 
@@ -451,6 +454,26 @@ window.addEventListener("message", (event: MessageEvent) => {
 		return;
 	}
 
+	if (message.type === CODE_MESSAGES.error) {
+		const slot = [...slots.values()].find(
+			(candidate) => candidate.iframe?.contentWindow === event.source,
+		);
+		const error = message as {
+			message?: unknown;
+			source?: unknown;
+			line?: unknown;
+			col?: unknown;
+		};
+		const where = error.line ? ` (${String(error.source)}:${String(error.line)})` : "";
+		const text = `${String(error.message ?? "ошибка")}${where}`;
+		console.error("[notGT] ошибка в код-анимации:", text);
+		if (slot && slot.codeError !== text) {
+			slot.codeError = text;
+			scheduleRender();
+		}
+		return;
+	}
+
 	if (message.type !== CODE_MESSAGES.hooks) return;
 	const slot = [...slots.values()].find(
 		(candidate) => candidate.iframe?.contentWindow === event.source,
@@ -564,6 +587,13 @@ function updateDebug(out: Out | undefined, desired: Instance[]): void {
 					? ` — код ${broken.map((v) => v.error?.code ?? "нет данных").join(", ")}`
 					: ` (${videos.map((v) => v.videoWidth).join("x")})`),
 		);
+	}
+
+	// An animation that throws leaves an empty frame and says nothing by itself.
+	const failed = [...slots.values()].filter((slot) => slot.codeError);
+	if (failed.length > 0) {
+		lines.push("", "→ код-анимация падает:");
+		for (const slot of failed) lines.push(`  ${slot.templateId}: ${slot.codeError}`);
 	}
 
 	debugEl.textContent = lines.join("\n");

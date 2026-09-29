@@ -56,12 +56,31 @@ var _hideMs = 0;
 function send(message){
   try { if (parent !== window) parent.postMessage(message, '*'); } catch (e) {}
 }
+// An animation that throws while loading used to leave an empty frame with no
+// explanation: the out page cannot see inside the iframe, and the operator sees
+// only "ничего не выводится". Every catch below reports instead of swallowing.
+function postError(message, source, line, col){
+  send({ type: '${CODE_MESSAGES.error}', message: String(message), source: String(source || ''), line: line || 0, col: col || 0 });
+}
+function report(error){
+  var name = error && error.name ? error.name : 'Error';
+  var text = error && error.message ? name + ': ' + error.message : String(error);
+  console.error(error);
+  postError(text, '', 0, 0);
+}
+window.addEventListener('error', function(event){
+  postError(event.message, event.filename, event.lineno, event.colno);
+});
+window.addEventListener('unhandledrejection', function(event){
+  var reason = event.reason;
+  postError(reason && reason.message ? reason.message : String(reason), '', 0, 0);
+});
 function postHooks(){
   send({ type: '${CODE_MESSAGES.hooks}', show: _showCbs.length > 0, hide: _hideCbs.length > 0, hideMs: _hideMs });
 }
 function run(list){
   for (var i = 0; i < list.length; i++) {
-    try { list[i](); } catch (e) { console.error(e); }
+    try { list[i](); } catch (e) { report(e); }
   }
 }
 function get(path){
@@ -95,7 +114,7 @@ window.vars = function(path, fallback){
 window.onData = function(cb){
   if (typeof cb !== 'function') return;
   _callbacks.push(cb);
-  try { cb(_data); } catch (e) { console.error(e); }
+  try { cb(_data); } catch (e) { report(e); }
 };
 // root — это document.body, но отдаём его геттером, а не значением: файловая
 // анимация получает этот шим в <head>, когда document.body ещё null, и
@@ -143,7 +162,7 @@ window.addEventListener('message', function(event){
   window.notgt.data = _data;
   applyBindings();
   for (var i = 0; i < _callbacks.length; i++) {
-    try { _callbacks[i](_data); } catch (e) { console.error(e); }
+    try { _callbacks[i](_data); } catch (e) { report(e); }
   }
 });
 applyBindings();

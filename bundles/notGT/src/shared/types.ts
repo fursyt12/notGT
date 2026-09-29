@@ -62,12 +62,16 @@ export const MESSAGES = {
  *   iframe -> out   hooks      which phases this animation animates itself,
  *                              and how long its exit needs (ms)
  *   iframe -> out   phaseDone  "my exit animation is over, you can drop me"
+ *   iframe -> out   error      the animation threw; without this an animation
+ *                              that dies at load leaves an empty frame and no
+ *                              explanation anywhere
  */
 export const CODE_MESSAGES = {
 	data: "notgt:data",
 	phase: "notgt:phase",
 	hooks: "notgt:code-hooks",
 	phaseDone: "notgt:phase-done",
+	error: "notgt:code-error",
 } as const;
 
 export type LayerType = "text" | "image" | "gif" | "video" | "shape";
