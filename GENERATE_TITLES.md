@@ -21,7 +21,13 @@ HARD RUNTIME RULES (do not break these):
    - vars(path, fallback) — read one value by path, always returns a
      string; fallback is used when the value is empty;
    - onData(fn) — a callback fired immediately with current data and
-     again on every change. All "live" logic should live here;
+     again on every change. Data only: do NOT animate the entrance from
+     it;
+   - onShow(fn) — the title is on air: play the entrance here;
+   - onHide(fn, ms) — the title is leaving: play the reverse animation
+     here; ms is how long the system keeps the iframe alive for you;
+   - hideDone() — "my exit is over", so the system can drop the iframe
+     without waiting for the rest of ms;
    - [data-bind="path"] in HTML — text nodes with this attribute are
      updated automatically by the runtime; never touch them manually
      from JS.
@@ -44,15 +50,53 @@ HARD RUNTIME RULES (do not break these):
    a base64 data-URI, or use a system font. A Google Fonts <link> is not
    guaranteed to load.
 
-8. The overall entrance/exit of the whole title (fade/slide/scale/wipe)
-   is already handled by the system outside the iframe
-   (inTransition/outTransition) — do not duplicate a full-container
-   fade/slide in JS. In code.js, only animate internal elements (text,
-   icons, counters) via element.animate([...], {...}) (Web Animations
-   API) or CSS transitions/keyframes.
+8. The animation owns its entrance and its exit — see PHASES below. Do not
+   rely on the system's inTransition/outTransition: the moment you register
+   onShow / onHide, the system stops animating that phase itself. Animate
+   internal elements (text, icons, counters) via element.animate([...],
+   {...}) (Web Animations API) or CSS transitions/keyframes.
 
 9. No <form> elements, no fetch/XHR to third-party domains, no
    localStorage — the title must be a clean, self-contained fragment.
+
+PHASES: ENTRANCE, ON AIR, EXIT
+
+The iframe is created when the title goes on air and destroyed after it
+leaves, so the animation is responsible for its whole lifecycle, not just
+for the part in the middle:
+
+- onShow(fn) — the title is on air. Play the entrance here (letters flying
+  in, a card sliding up, a counter ticking) and start whatever should live
+  while the title is visible (particles, a pulsing dot, a blinking cursor).
+  It fires again when the title is re-triggered while already on screen,
+  so it must be safe to run twice.
+- onHide(fn, ms) — the title is leaving. Play the reverse animation here
+  and stop the ambient loop. ms is how long the system keeps the iframe
+  alive for you (600 ms by default, 10 s at most); call hideDone() as soon
+  as your exit is over so it is dropped at that exact moment instead.
+- onData(fn) is for data only. It fires on every variable change, so it must
+  NOT replay the entrance — the title should not "re-enter" when the
+  operator fixes a name. Split the two: apply values in onData, animate in
+  onShow.
+- Register the phases at the top level of the script, not inside a timeout
+  or after an await: that is how the system knows which phases you own.
+- If you never mention an element in onHide, leave it as it is: the whole
+  wrapper is not faded out by the system either.
+
+TIMING
+
+The template has an "exit, ms" field (code.exitMs). Put the same number
+there as the second argument of onHide, and the configured hold time then
+covers the whole appearance — entrance, time on screen and exit — instead
+of the exit running past the end.
+
+SKETCH
+
+function apply() { ... data -> DOM, no animation ... }
+onData(apply);
+
+onShow(() => { playEntrance(); startAmbient(); });
+onHide(() => { stopAmbient(); playExit(); hideDone(); }, 700);
 
 REQUIRED OUTPUT FORMAT:
 Reply with exactly three labeled code blocks:
@@ -71,6 +115,8 @@ Reply with exactly three labeled code blocks:
 
 After the code, add a short variable legend: path → what to put there →
 default/fallback, so these can be wired up in notGT's Control/Data panel.
+Also state the exit duration in ms, so it can be put into the template's
+"exit, ms" field.
 
 BRANDING:
 Pull every brand value (colors, fonts, corner radius, stroke width) into
@@ -92,3 +138,6 @@ INPUTS (fill in and send along with this prompt):
   [e.g. speaker.name, speaker.role, event.title]
 - Animation flourishes: [letters fly in one by one / counter ticks up /
   icon pulses / etc.]
+- Entrance / exit / on air: [how the title should appear, what it should
+  do while it is visible (e.g. slow particles), how it should leave, and
+  how long the exit takes in ms]

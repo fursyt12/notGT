@@ -1,3 +1,4 @@
+import { CODE_EXIT_MAX_MS } from "../shared/types";
 import type { ServerAPI, Store } from "./store";
 
 interface Timers {
@@ -198,6 +199,13 @@ export class Scheduler {
 		// handler and recurse forever.
 		this.store.markTrigger(outId, itemId);
 
+		// A code animation that animates its own exit (see `onHide` in the
+		// graphics runtime) is taken off air that much earlier, so its exit runs
+		// *inside* the configured hold: entrance + on screen + exit = holdMs,
+		// instead of the exit trailing past it.
+		const exitMs = this.exitFor(outId, itemId);
+		const visibleMs = Math.max(0, holdMs - exitMs);
+
 		const key = this.key(outId, itemId);
 		const entry = this.timers.get(key) ?? {};
 		this.timers.set(key, entry);
@@ -205,7 +213,17 @@ export class Scheduler {
 		entry.hold = setTimeout(() => {
 			this.store.removePlaying(outId, itemId);
 			entry.hold = undefined;
-		}, holdMs);
+		}, visibleMs);
+	}
+
+	/** How long the placement's own exit animation takes, if it declares one. */
+	private exitFor(outId: string, itemId: string): number {
+		const found = this.store.getItem(outId, itemId);
+		if (!found) return 0;
+		const template = this.store.getTemplate(found.item.templateId);
+		const declared = template?.code?.exitMs;
+		if (typeof declared !== "number" || !Number.isFinite(declared) || declared <= 0) return 0;
+		return Math.min(CODE_EXIT_MAX_MS, Math.round(declared));
 	}
 
 	private stop(key: string): void {

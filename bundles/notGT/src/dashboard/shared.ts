@@ -175,6 +175,29 @@ export function duplicateTemplate(id: string): TitleTemplate | undefined {
 	return copy;
 }
 
+/**
+ * Effective playback of a placement: its own settings override the template's,
+ * exactly the way the scheduler resolves them.
+ */
+export function effectivePlayback(
+	item: OutItem,
+	template: TitleTemplate | undefined,
+): PlaybackConfig {
+	return { ...(template?.playback ?? defaultPlayback()), ...(item.playback ?? {}) };
+}
+
+/**
+ * Can this placement be played on demand with "проиграть"?
+ *
+ * Loops and held placements cannot: the scheduler only toggles them on and off
+ * (a held placement never times out, and a loop plays on its interval), so the
+ * button would do nothing. They are switched in the Control panel instead.
+ */
+export function itemCanPlay(item: OutItem, template: TitleTemplate | undefined): boolean {
+	if (item.held) return false;
+	return effectivePlayback(item, template).mode !== "loop";
+}
+
 export function saveOut(out: Out): Out {
 	const next = { ...clone(out), updatedAt: Date.now() };
 	const list = clone(listOuts());

@@ -1,5 +1,10 @@
 import { interpolate } from "../shared/binding";
-import { CODE_MESSAGES, type TitleData, type TitleTemplate } from "../shared/types";
+import {
+	CODE_EXIT_MAX_MS,
+	CODE_MESSAGES,
+	type TitleData,
+	type TitleTemplate,
+} from "../shared/types";
 
 const BASE_CSS = `html,body{margin:0;padding:0;width:100%;height:100%;background:transparent;overflow:hidden}
 *{box-sizing:border-box}`;
@@ -8,8 +13,18 @@ const BASE_CSS = `html,body{margin:0;padding:0;width:100%;height:100%;background
 export const CODE_HOOKS_TIMEOUT_MS = 1000;
 /** Exit time assumed when a code animation asks for a hide but gives no number. */
 export const CODE_HIDE_FALLBACK_MS = 600;
-/** Upper bound on how long a code animation may hold the slot while exiting. */
-export const CODE_HIDE_MAX_MS = 10_000;
+
+/**
+ * The exit budget for a code animation: what it declared with `onHide(fn, ms)`,
+ * else the template's `code.exitMs`, else the fallback. The scheduler uses the
+ * same number to start the hide early, so the animation is gone exactly when
+ * the configured hold runs out.
+ */
+export function codeExitBudgetMs(template: TitleTemplate | undefined, declared: number): number {
+	const value = declared > 0 ? declared : (template?.code?.exitMs ?? 0);
+	if (!Number.isFinite(value) || value <= 0) return CODE_HIDE_FALLBACK_MS;
+	return Math.min(CODE_EXIT_MAX_MS, Math.round(value));
+}
 
 /**
  * Runtime injected into every code-authored animation (in the web GUI *and* in

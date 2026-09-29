@@ -186,7 +186,19 @@ export interface CodeBlock {
 	 * inline code takes over (fork-on-edit).
 	 */
 	src?: string;
+	/**
+	 * How long the animation's own exit takes, ms (see `onHide` in the code
+	 * runtime). The scheduler starts the hide this much before `holdMs` runs
+	 * out, so entrance + on screen + exit fit the configured time instead of
+	 * the exit running past it. `0`/absent = the exit starts when the hold
+	 * ends, which is what happens to every animation that does not animate its
+	 * own exit.
+	 */
+	exitMs?: number;
 }
+
+/** Upper bound on any single code-owned exit animation, ms. */
+export const CODE_EXIT_MAX_MS = 10_000;
 
 export type TemplateKind = "layers" | "code";
 

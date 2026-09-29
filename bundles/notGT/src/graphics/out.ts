@@ -21,11 +21,10 @@ import {
 	type VariableSelection,
 } from "../shared/types";
 import {
-	CODE_HIDE_FALLBACK_MS,
-	CODE_HIDE_MAX_MS,
 	CODE_HOOKS_TIMEOUT_MS,
 	buildCodeDocument,
 	buildSourcedDocument,
+	codeExitBudgetMs,
 	codeSource,
 } from "./code-runtime";
 import {
@@ -417,10 +416,10 @@ function replayEnter(slot: Slot, template: TitleTemplate): void {
 function exitSlot(slot: Slot, template: TitleTemplate | undefined, done: () => void): void {
 	const hooks = slot.codeHooks;
 	if (template?.kind === "code" && hooks?.hide && slot.iframe?.contentWindow) {
-		const wait = Math.min(
-			CODE_HIDE_MAX_MS,
-			Math.max(0, hooks.hideMs > 0 ? hooks.hideMs : CODE_HIDE_FALLBACK_MS),
-		);
+		// The scheduler already started this exit early when the template
+		// declares `code.exitMs`, so waiting here finishes it exactly at the
+		// configured end of the hold.
+		const wait = codeExitBudgetMs(template, hooks.hideMs);
 		const source = slot.iframe.contentWindow;
 		const timer = window.setTimeout(() => {
 			pendingExits.delete(source);

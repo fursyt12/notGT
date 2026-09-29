@@ -68,6 +68,7 @@ import {
 	formatMs,
 	getDb,
 	getTemplate,
+	itemCanPlay,
 	hasVideoLayer,
 	hideTitle,
 	moveItem,
@@ -276,10 +277,9 @@ function OutItemsList({
 				<div className="ed-list">
 					{items.map((item) => {
 						const template = templates.find((candidate) => candidate.id === item.templateId);
-						const name =
-							draft && draft.id === item.templateId
-								? draft.name
-								: template?.name ?? "—";
+						const live = draft && draft.id === item.templateId ? draft : template;
+						const canPlay = itemCanPlay(item, live);
+						const name = live?.name ?? "—";
 						return (
 							<div
 								key={item.id}
@@ -324,7 +324,13 @@ function OutItemsList({
 									<button
 										type="button"
 										className="ed-icon-btn"
-										title="Проиграть"
+										data-can-play={canPlay ? "true" : "false"}
+										title={
+											canPlay
+												? "Проиграть один раз"
+												: "Цикл и «показать и держать» переключаются в панели Control"
+										}
+										disabled={!canPlay}
 										onClick={() => onTrigger(item.id)}
 									>
 										проиграть
@@ -1928,6 +1934,20 @@ function CodeEditors({
 			</Section>
 			<Section title="JavaScript">
 				<CodeArea value={code.js} rows={10} onChange={(value) => onCode({ js: value })} />
+			</Section>
+			<Section title="Выход">
+				<NumField
+					label="Длительность обратной анимации"
+					suffix="ms"
+					step={50}
+					value={code.exitMs}
+					title="Сколько длится уход, который анимирует код (onHide)"
+					onChange={(value) => onCode({ exitMs: Math.max(0, Math.round(value)) })}
+				/>
+				<div className="ed-hint">
+					Столько система вычтет из «держать», чтобы вход, показ и уход уложились в
+					настроенное время. <code>0</code> — уход начинается после удержания.
+				</div>
 			</Section>
 			<div className="ed-note">
 				<strong>Доступно внутри анимации</strong>

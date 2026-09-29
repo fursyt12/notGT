@@ -13,6 +13,7 @@ import {
 	deleteTemplate,
 	duplicateTemplate,
 	getTemplate,
+	itemCanPlay,
 	hasVideoLayer,
 	moveItem,
 	newTemplate,
@@ -324,7 +325,19 @@ function ItemRow({ out, item }: { out: Out; item: OutItem }) {
 						↓
 					</button>
 				</div>
-				<button className="tiny" onClick={() => triggerItem(out.id, item.id)}>
+				<button
+					className="tiny"
+					data-can-play={itemCanPlay(item, template) ? "true" : "false"}
+					title={
+						itemCanPlay(item, template)
+							? "Проиграть один раз"
+							: item.held
+								? "Титр держится в эфире: снимается тумблером в панели Control"
+								: "Цикл включается и выключается в панели Control"
+					}
+					disabled={!itemCanPlay(item, template)}
+					onClick={() => triggerItem(out.id, item.id)}
+				>
 					проиграть
 				</button>
 				<select

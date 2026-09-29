@@ -12,6 +12,7 @@ import {
 	getTemplate,
 	hasVideoLayer,
 	hideTitle,
+	itemCanPlay,
 	makeArray,
 	mergeData,
 	moveArrayItem,
@@ -695,6 +696,7 @@ function TriggerItemRow({
 }) {
 	const videoMode = item.playback.holdMode === "video";
 	const hasVideo = hasVideoLayer(template);
+	const canPlay = itemCanPlay(item, template);
 	const videoDuration = useVideoDuration(
 		item.templateId,
 		videoMode && hasVideo,
@@ -725,7 +727,19 @@ function TriggerItemRow({
 					</span>
 					<span className="ctl-switch__label">показать</span>
 				</label>
-				<button className="tiny ctl-play" onClick={() => triggerItem(out.id, item.id)}>
+				<button
+					className="tiny ctl-play"
+					data-can-play={canPlay ? "true" : "false"}
+					title={
+						canPlay
+							? "Проиграть один раз"
+							: item.held
+								? "Титр держится в эфире: снимается тумблером «показать»"
+								: "Цикл включается и выключается тумблером «показать»"
+					}
+					disabled={!canPlay}
+					onClick={() => triggerItem(out.id, item.id)}
+				>
 					Проиграть
 				</button>
 			</div>
