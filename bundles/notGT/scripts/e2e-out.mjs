@@ -348,7 +348,8 @@ async function main() {
 			x: 25,
 			y: 25,
 			scale: 0.5,
-			playback: { mode: "loop", intervalMs: 8000, holdMs: 6000, autoStart: true },
+			// On air and staying there: only the «показать» toggle does that now.
+			held: true,
 		});
 		await page.waitForFunction(
 			() => document.querySelector('.notgt-layer[data-layer-id="p_marker"]') !== null,
@@ -562,16 +563,23 @@ async function main() {
 		await api("DELETE", "/api/templates/e2e-video");
 		await sleep(300);
 
-		// --- 5. loop scheduler -------------------------------------------
+		// --- 5. loop placement: held by the toggle, not by a schedule -----
 		await api("POST", "/api/titles/hide", {});
 		const created = await api("POST", "/api/outs/main/items", {
 			templateId: "lower-third",
+			// A loop has no schedule of its own: holdMs/intervalMs/autoStart do
+			// not apply to it, the «показать» toggle is its power switch.
 			playback: { mode: "loop", intervalMs: 1500, holdMs: 900, autoStart: true },
 		});
 		const itemId = created.item.id;
 		await sleep(300);
 		let playing = (await api("GET", "/api/state")).playing?.main ?? [];
-		check("loop item is playing after autoStart", playing.includes(itemId), JSON.stringify(playing));
+		check("a loop is off air until it is switched on", !playing.includes(itemId), JSON.stringify(playing));
+
+		await api("PATCH", `/api/outs/main/items/${itemId}`, { held: true });
+		await sleep(300);
+		playing = (await api("GET", "/api/state")).playing?.main ?? [];
+		check("loop item is on air while «показать» is on", playing.includes(itemId), JSON.stringify(playing));
 
 		let sawGap = false;
 		for (let i = 0; i < 12; i++) {
@@ -579,7 +587,12 @@ async function main() {
 			playing = (await api("GET", "/api/state")).playing?.main ?? [];
 			if (!playing.includes(itemId)) sawGap = true;
 		}
-		check("loop item stops again after holdMs", sawGap);
+		check("loop item stays on air — no holdMs, no interval", !sawGap);
+
+		await api("PATCH", `/api/outs/main/items/${itemId}`, { held: false });
+		await sleep(300);
+		playing = (await api("GET", "/api/state")).playing?.main ?? [];
+		check("switching «показать» off takes the loop off air", !playing.includes(itemId));
 
 		await api("DELETE", `/api/outs/main/items/${itemId}`);
 		await sleep(200);

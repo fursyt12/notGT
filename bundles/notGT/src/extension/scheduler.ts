@@ -2,7 +2,6 @@ import { CODE_EXIT_MAX_MS } from "../shared/types";
 import type { ServerAPI, Store } from "./store";
 
 interface Timers {
-	interval?: ReturnType<typeof setInterval>;
 	hold?: ReturnType<typeof setTimeout>;
 }
 
@@ -40,18 +39,16 @@ export class Scheduler {
 
 				// "Show it and keep it": the operator toggled this placement on,
 				// so it stays on air regardless of once/loop and of `enabled`.
+				// This is also how a `loop` placement lives — the toggle is its
+				// power switch, and the animation loops inside itself while it is
+				// on. `holdMs`, `intervalMs` and `autoStart` do not apply to it.
 				if (item.held) {
 					desired.add(key);
 					this.hold(out.id, item.id);
-					continue;
 				}
 
-				if (!item.enabled) continue;
-				const playback = item.playback ?? template.playback;
-				if (playback.mode !== "loop" || !playback.autoStart) continue;
-
-				desired.add(key);
-				if (!this.timers.has(key)) this.startLoop(out.id, item.id);
+				// Nothing else starts by itself: `once` plays on a trigger, and a
+				// `loop` without the toggle is simply not on air.
 			}
 		}
 
@@ -117,18 +114,6 @@ export class Scheduler {
 		return clampDuration(playback?.holdMs ?? 4000);
 	}
 
-	/** A looping clip must be allowed to finish before the next pass starts. */
-	private intervalFor(outId: string, itemId: string): number {
-		const found = this.store.getItem(outId, itemId);
-		if (!found) return 10_000;
-		const playback = found.item.playback;
-		let interval = playback.intervalMs ?? 10_000;
-		if (playback.holdMode === "video") {
-			interval = Math.max(interval, this.holdFor(outId, itemId));
-		}
-		return clampInterval(interval);
-	}
-
 	/** On-air time implied by a template's own playback settings. */
 	holdForTemplate(templateId: string): number {
 		const template = this.store.getTemplate(templateId);
@@ -144,35 +129,14 @@ export class Scheduler {
 		return `${outId}::${itemId}`;
 	}
 
-	private startLoop(outId: string, itemId: string): void {
-		const key = this.key(outId, itemId);
-		const entry: Timers = {};
-		this.timers.set(key, entry);
-
-		const tick = (): void => {
-			const found = this.store.getItem(outId, itemId);
-			if (!found) {
-				this.stop(key);
-				return;
-			}
-			this.play(outId, itemId, this.holdFor(outId, itemId));
-		};
-
-		tick();
-		entry.interval = setInterval(tick, this.intervalFor(outId, itemId));
-	}
-
 	/**
-	 * Puts a placement on air and leaves it there: no hold timer, no interval.
-	 * Used for `held` placements, the operator's show/keep toggle.
+	 * Puts a placement on air and leaves it there: no hold timer at all. This is
+	 * both the operator's show/keep toggle and what a `loop` placement does
+	 * while it is switched on.
 	 */
 	private hold(outId: string, itemId: string): void {
 		const key = this.key(outId, itemId);
 		const entry = this.timers.get(key) ?? {};
-		if (entry.interval) {
-			clearInterval(entry.interval);
-			entry.interval = undefined;
-		}
 		if (entry.hold) {
 			clearTimeout(entry.hold);
 			entry.hold = undefined;
@@ -229,7 +193,6 @@ export class Scheduler {
 	private stop(key: string): void {
 		const entry = this.timers.get(key);
 		if (entry) {
-			if (entry.interval) clearInterval(entry.interval);
 			if (entry.hold) clearTimeout(entry.hold);
 			this.timers.delete(key);
 		}
@@ -241,10 +204,5 @@ export class Scheduler {
 
 function clampDuration(value: number | undefined): number {
 	if (!Number.isFinite(value) || (value as number) < 0) return 4000;
-	return Math.min(value as number, 24 * 60 * 60 * 1000);
-}
-
-function clampInterval(value: number | undefined): number {
-	if (!Number.isFinite(value) || (value as number) < 250) return 250;
 	return Math.min(value as number, 24 * 60 * 60 * 1000);
 }

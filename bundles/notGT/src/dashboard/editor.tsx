@@ -1598,7 +1598,9 @@ function PlacementInspector({
 }) {
 	const playback = item.playback ?? defaultPlayback();
 	const fittedScale = template.width > 0 ? out.width / template.width : 1;
-	const videoMode = playback.holdMode === "video";
+	const isLoop = playback.mode === "loop";
+	// A loop is held by the toggle, so the hold settings do not apply to it.
+	const videoMode = !isLoop && playback.holdMode === "video";
 	const hasVideo = hasVideoLayer(template);
 	const videoDuration = useVideoDuration(
 		item.templateId,
@@ -1659,42 +1661,37 @@ function PlacementInspector({
 					options={PLAYBACK_MODES}
 					onChange={(value) => onPlayback({ mode: value })}
 				/>
-				<div className="ed-grid2">
-					<NumField
-						label="Интервал"
-						suffix="ms"
-						step={100}
-						min={100}
-						value={playback.intervalMs}
-						onChange={(value) => onPlayback({ intervalMs: Math.max(100, Math.round(value)) })}
-					/>
-					<HoldMsField
-						label="Удержание"
-						value={playback.holdMs}
-						disabled={videoMode}
-						onChange={(value) => onPlayback({ holdMs: Math.max(100, Math.round(value)) })}
-					/>
-				</div>
-				<div className="ed-hold-row" data-hold-scope="placement">
-					<CheckField
-						label="длительность = видео"
-						checked={videoMode}
-						onChange={(value) => onPlayback({ holdMode: value ? "video" : "fixed" })}
-					/>
-					{videoMode ? (
-						<span className="ed-hint" data-hold-hint>
-							{videoHoldHint(videoDuration, hasVideo)}
-						</span>
-					) : null}
-				</div>
-				<CheckField
-					label="autoStart — запускать при старте"
-					checked={playback.autoStart}
-					onChange={(value) => onPlayback({ autoStart: value })}
-				/>
-				<div className="ed-hint">
-					Интервал {formatMs(playback.intervalMs)} · удержание {formatMs(playback.holdMs)}
-				</div>
+				{isLoop ? (
+					<div className="ed-hint" data-loop-hint>
+						Цикл висит в эфире, пока у размещения включён «показать» в панели Control, и
+						снимается тем же тумблером. Своей длительности у него нет — анимация
+						циклится сама внутри себя.
+					</div>
+				) : (
+					<>
+						<div className="ed-grid2">
+							<HoldMsField
+								label="Удержание"
+								value={playback.holdMs}
+								disabled={videoMode}
+								onChange={(value) => onPlayback({ holdMs: Math.max(100, Math.round(value)) })}
+							/>
+						</div>
+						<div className="ed-hold-row" data-hold-scope="placement">
+							<CheckField
+								label="длительность = видео"
+								checked={videoMode}
+								onChange={(value) => onPlayback({ holdMode: value ? "video" : "fixed" })}
+							/>
+							{videoMode ? (
+								<span className="ed-hint" data-hold-hint>
+									{videoHoldHint(videoDuration, hasVideo)}
+								</span>
+							) : null}
+						</div>
+						<div className="ed-hint">Удержание {formatMs(playback.holdMs)}</div>
+					</>
+				)}
 			</Section>
 		</div>
 	);
@@ -1712,7 +1709,9 @@ function TemplateSettings({
 	const inTransition = template.inTransition ?? defaultTransition();
 	const outTransition = template.outTransition ?? defaultTransition();
 	const playback = template.playback ?? defaultPlayback();
-	const videoMode = playback.holdMode === "video";
+	const isLoop = playback.mode === "loop";
+	// A loop is held by the toggle, so the hold settings do not apply to it.
+	const videoMode = !isLoop && playback.holdMode === "video";
 	const hasVideo = hasVideoLayer(template);
 	const videoDuration = useVideoDuration(
 		template.id,
@@ -1834,48 +1833,43 @@ function TemplateSettings({
 					options={PLAYBACK_MODES}
 					onChange={(value) => onPatch({ playback: { ...playback, mode: value } })}
 				/>
-				<div className="ed-grid2">
-					<NumField
-						label="Интервал"
-						suffix="ms"
-						step={100}
-						min={100}
-						value={playback.intervalMs}
-						onChange={(value) =>
-							onPatch({ playback: { ...playback, intervalMs: Math.max(100, Math.round(value)) } })
-						}
-					/>
-					<HoldMsField
-						label="Удержание"
-						value={playback.holdMs}
-						disabled={videoMode}
-						onChange={(value) =>
-							onPatch({ playback: { ...playback, holdMs: Math.max(100, Math.round(value)) } })
-						}
-					/>
-				</div>
-				<div className="ed-hold-row" data-hold-scope="template">
-					<CheckField
-						label="длительность = видео"
-						checked={videoMode}
-						onChange={(value) =>
-							onPatch({ playback: { ...playback, holdMode: value ? "video" : "fixed" } })
-						}
-					/>
-					{videoMode ? (
-						<span className="ed-hint" data-hold-hint>
-							{videoHoldHint(videoDuration, hasVideo)}
-						</span>
-					) : null}
-				</div>
-				<CheckField
-					label="autoStart — запускать при старте"
-					checked={playback.autoStart}
-					onChange={(value) => onPatch({ playback: { ...playback, autoStart: value } })}
-				/>
-				<div className="ed-hint">
-					Интервал {formatMs(playback.intervalMs)} · удержание {formatMs(playback.holdMs)}
-				</div>
+				{isLoop ? (
+					<div className="ed-hint" data-loop-hint>
+						Цикл висит в эфире, пока у размещения включён «показать» в панели Control, и
+						снимается тем же тумблером. Своей длительности у него нет — анимация
+						циклится сама внутри себя.
+					</div>
+				) : (
+					<>
+						<div className="ed-grid2">
+							<HoldMsField
+								label="Удержание"
+								value={playback.holdMs}
+								disabled={videoMode}
+								onChange={(value) =>
+									onPatch({
+										playback: { ...playback, holdMs: Math.max(100, Math.round(value)) },
+									})
+								}
+							/>
+						</div>
+						<div className="ed-hold-row" data-hold-scope="template">
+							<CheckField
+								label="длительность = видео"
+								checked={videoMode}
+								onChange={(value) =>
+									onPatch({ playback: { ...playback, holdMode: value ? "video" : "fixed" } })
+								}
+							/>
+							{videoMode ? (
+								<span className="ed-hint" data-hold-hint>
+									{videoHoldHint(videoDuration, hasVideo)}
+								</span>
+							) : null}
+						</div>
+						<div className="ed-hint">Удержание {formatMs(playback.holdMs)}</div>
+					</>
+				)}
 			</Section>
 		</div>
 	);

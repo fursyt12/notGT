@@ -694,7 +694,10 @@ function TriggerItemRow({
 	template: TitleTemplate | undefined;
 	playing: boolean;
 }) {
-	const videoMode = item.playback.holdMode === "video";
+	const isLoop = item.playback.mode === "loop";
+	// A loop has no hold of its own — the «показать» toggle is its power switch —
+	// so the hold settings, and with them the video-duration probe, do not apply.
+	const videoMode = !isLoop && item.playback.holdMode === "video";
 	const hasVideo = hasVideoLayer(template);
 	const canPlay = itemCanPlay(item, template);
 	const videoDuration = useVideoDuration(
@@ -760,51 +763,46 @@ function TriggerItemRow({
 					</select>
 				</label>
 
-				{item.playback.mode === "loop" && (
-					<label className="field" style={{ maxWidth: 100 }}>
-						период, мс
-						<CtlNumberInput
-							title="period"
-							value={item.playback.intervalMs}
-							min={250}
-							step={250}
-							onCommit={(value) =>
-								updateItemPlayback(out.id, item.id, { intervalMs: value })
-							}
-						/>
-					</label>
-				)}
+				{isLoop ? (
+					<span className="hint" data-loop-hint>
+						висит, пока включён «показать»; анимация циклится сама
+					</span>
+				) : (
+					<>
+						<label className="field" style={{ maxWidth: 110 }}>
+							держать, мс
+							<CtlNumberInput
+								title="hold"
+								value={item.playback.holdMs}
+								min={0}
+								step={250}
+								disabled={videoMode}
+								onCommit={(value) =>
+									updateItemPlayback(out.id, item.id, { holdMs: value })
+								}
+							/>
+						</label>
 
-				<label className="field" style={{ maxWidth: 110 }}>
-					держать, мс
-					<CtlNumberInput
-						title="hold"
-						value={item.playback.holdMs}
-						min={0}
-						step={250}
-						disabled={videoMode}
-						onCommit={(value) => updateItemPlayback(out.id, item.id, { holdMs: value })}
-					/>
-				</label>
-
-				<label className="ctl-hold row small" data-hold-scope="item">
-					<input
-						type="checkbox"
-						data-hold-mode
-						checked={videoMode}
-						onChange={(event) =>
-							updateItemPlayback(out.id, item.id, {
-								holdMode: event.target.checked ? "video" : "fixed",
-							})
-						}
-					/>
-					длительность = видео
+						<label className="ctl-hold row small" data-hold-scope="item">
+							<input
+								type="checkbox"
+								data-hold-mode
+								checked={videoMode}
+								onChange={(event) =>
+									updateItemPlayback(out.id, item.id, {
+										holdMode: event.target.checked ? "video" : "fixed",
+									})
+								}
+							/>
+							длительность = видео
 					{videoMode ? (
 						<span className="hint" data-hold-hint>
 							{videoHoldHint(videoDuration, hasVideo)}
 						</span>
 					) : null}
-				</label>
+						</label>
+					</>
+				)}
 			</div>
 		</div>
 	);

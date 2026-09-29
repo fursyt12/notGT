@@ -182,7 +182,9 @@ function ItemRow({ out, item }: { out: Out; item: OutItem }) {
 	const runtime = useRuntime();
 	const template = getTemplate(item.templateId);
 	const playing = (runtime.playing?.[out.id] ?? []).includes(item.id);
-	const videoMode = item.playback.holdMode === "video";
+	const isLoop = item.playback.mode === "loop";
+	// A loop is held by the toggle, so the hold settings do not apply to it.
+	const videoMode = !isLoop && item.playback.holdMode === "video";
 	const hasVideo = hasVideoLayer(template);
 	const videoDuration = useVideoDuration(
 		item.templateId,
@@ -225,43 +227,24 @@ function ItemRow({ out, item }: { out: Out; item: OutItem }) {
 						</select>
 					</label>
 
-					{item.playback.mode === "loop" && (
+					{isLoop ? (
+						<span className="hint" data-loop-hint>
+							висит, пока включён «показать» в панели Control; анимация циклится сама
+						</span>
+					) : (
 						<label className="field" style={{ maxWidth: 100 }}>
-							период, мс
+							держать, мс
 							<NumberInput
-								title="period"
-								value={item.playback.intervalMs}
-								min={250}
+								title="hold"
+								value={item.playback.holdMs}
+								min={0}
 								step={250}
-								onCommit={(value) => updateItemPlayback(out.id, item.id, { intervalMs: value })}
+								disabled={videoMode}
+								onCommit={(value) => updateItemPlayback(out.id, item.id, { holdMs: value })}
 							/>
 						</label>
 					)}
 
-					<label className="field" style={{ maxWidth: 100 }}>
-						держать, мс
-						<NumberInput
-							title="hold"
-							value={item.playback.holdMs}
-							min={0}
-							step={250}
-							disabled={videoMode}
-							onCommit={(value) => updateItemPlayback(out.id, item.id, { holdMs: value })}
-						/>
-					</label>
-
-					{item.playback.mode === "loop" && (
-						<label className="row small" style={{ maxWidth: 120, gap: 4 }}>
-							<input
-								type="checkbox"
-								checked={item.playback.autoStart}
-								onChange={(event) =>
-									updateItemPlayback(out.id, item.id, { autoStart: event.target.checked })
-								}
-							/>
-							авто-старт
-						</label>
-					)}
 				</div>
 
 				<div className="row small" style={{ gap: 6 }} data-hold-scope="item">
