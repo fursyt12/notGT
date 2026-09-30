@@ -402,14 +402,30 @@ export function EditorCanvas({
 	const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] });
 	const clearGuides = useCallback(() => setGuides({ x: [], y: [] }), []);
 
+	/**
+	 * What a placement offers to the magnets — its **visible window**, not the
+	 * template box around it.
+	 *
+	 * A cropped animation is only as big as the window the operator sees, so
+	 * lining it up by the hidden part of its box would put a guide where nothing
+	 * is drawn and stop the title where it does not look aligned.
+	 */
+	const snapBoxOf = useCallback(
+		(geom: Geometry) => {
+			const win = windowOf(withPreview(geom), cropFor(geom, preview));
+			return { boxX: win.x, boxY: win.y, boxW: win.width, boxH: win.height };
+		},
+		[withPreview, preview],
+	);
+
 	const placementLines = useMemo(
 		() =>
 			placementSnapLines(
 				stageW,
 				stageH,
-				geoms.filter((geom) => geom.item.id !== activeItemId),
+				geoms.filter((geom) => geom.item.id !== activeItemId).map(snapBoxOf),
 			),
-		[geoms, activeItemId, stageW, stageH],
+		[geoms, activeItemId, stageW, stageH, snapBoxOf],
 	);
 
 	/** Layer lines are in the active template's own px, so they only exist for it. */
@@ -919,6 +935,10 @@ export function EditorCanvas({
  * the shared preview, every part of the placement (layers, live code iframe,
  * frame, handles) is drawn with it, and the magnets correct it on the way. The
  * new `x`/`y` percentages are written once, when the button comes up.
+ *
+ * The magnets measure the placement's **visible window**: with a crop the box
+ * is not what the operator sees, and guides that line up the hidden part of it
+ * are worse than no guides at all.
  */
 function usePlacementDrag(
 	geom: Geometry,
@@ -928,49 +948,47 @@ function usePlacementDrag(
 ): (event: KonvaEvent<MouseEvent>) => void {
 	const snap = useContext(SnapContext);
 	const drag = useContext(DragContext);
-	const { item, boxX, boxY, boxW, boxH } = geom;
+	const { item } = geom;
+	// The window at the moment the drag starts: the hook's own preview is not
+	// published yet, so the saved crop is the right one.
+	const win = windowOf(geom, cropBox(item, geom.template));
 
 	return useCallback(
 		(event: KonvaEvent<MouseEvent>) => {
 			if (!drag) return;
 			const start = drag.pointOf(event.evt);
 			if (!start) return;
-			let last = { x: boxX, y: boxY };
+			/** How far the window (and so the placement) has moved, in stage px. */
+			let offset = { x: 0, y: 0 };
 			drag.begin(
 				event,
 				(point) => {
 					const raw = {
-						x: boxX + (point.x - start.x),
-						y: boxY + (point.y - start.y),
-						width: boxW,
-						height: boxH,
+						x: win.x + (point.x - start.x),
+						y: win.y + (point.y - start.y),
+						width: win.width,
+						height: win.height,
 					};
 					const moved =
 						snap?.enabled
 							? snapBox(raw, snap.placementX, snap.placementY, snap.threshold)
 							: { box: raw, guidesX: [], guidesY: [] };
-					last = { x: moved.box.x, y: moved.box.y };
-					drag.setPreview({
-						itemId: item.id,
-						dx: last.x - boxX,
-						dy: last.y - boxY,
-					});
+					offset = { x: moved.box.x - win.x, y: moved.box.y - win.y };
+					drag.setPreview({ itemId: item.id, dx: offset.x, dy: offset.y });
 					snap?.showPlacement(moved.guidesX, moved.guidesY);
 				},
 				() => {
 					drag.setPreview(null);
 					snap?.clear();
-					const dx = last.x - boxX;
-					const dy = last.y - boxY;
-					if (dx === 0 && dy === 0) return;
+					if (offset.x === 0 && offset.y === 0) return;
 					onItemChange(item.id, {
-						x: round((item.x ?? 0) + (stageW > 0 ? (dx / stageW) * 100 : 0)),
-						y: round((item.y ?? 0) + (stageH > 0 ? (dy / stageH) * 100 : 0)),
+						x: round((item.x ?? 0) + (stageW > 0 ? (offset.x / stageW) * 100 : 0)),
+						y: round((item.y ?? 0) + (stageH > 0 ? (offset.y / stageH) * 100 : 0)),
 					});
 				},
 			);
 		},
-		[snap, drag, item, boxX, boxY, boxW, boxH, stageW, stageH, onItemChange],
+		[snap, drag, item, win.x, win.y, win.width, win.height, stageW, stageH, onItemChange],
 	);
 }
 
@@ -1405,7 +1423,25 @@ function CropOverlay({
 	};
 	const minSize = Math.max(2, MIN_CROP_PX * geom.k);
 
-	const lines = useMemo(() => boxSnapLines(bounds.width, bounds.height), [bounds.width, bounds.height]);
+	/**
+	 * Lines the crop frame can stick to, in the box's own px:
+	 *  - the template box itself (its edges and centre — where the animation
+	 *    is), and
+	 *  - the lines of the *out* around it, shifted into the box: the out's
+	 *    edges, its safe area, its centre and the other animations' windows.
+	 *    The window is what sits on screen, so "cut exactly at the 5 % line"
+	 *    and "line this window up with the title next to it" are both real
+	 *    requests.
+	 */
+	const lines = useMemo(() => {
+		const base = boxSnapLines(bounds.width, bounds.height);
+		const shiftX = (line: SnapLine): SnapLine => ({ ...line, at: line.at - geom.boxX });
+		const shiftY = (line: SnapLine): SnapLine => ({ ...line, at: line.at - geom.boxY });
+		return {
+			x: [...base.x, ...(snap?.placementX ?? []).map(shiftX)],
+			y: [...base.y, ...(snap?.placementY ?? []).map(shiftY)],
+		};
+	}, [bounds.width, bounds.height, snap, geom.boxX, geom.boxY]);
 	const threshold = snap?.threshold ?? 0;
 
 	const toDesign = (box: SnapBox): ItemCrop => ({
