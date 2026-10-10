@@ -93,6 +93,13 @@ export default function notGTExtension(nodecg: ServerAPI): {
 		if (ack && !ack.handled) ack(null, result);
 	}) as any);
 
+	// "Clear the air" from the dashboard. Held placements are switched off
+	// through the `outs` Replicant; this drops the one-shots still in flight.
+	nodecg.listenFor(MESSAGES.stop, ((data: any, ack: any) => {
+		scheduler.stopOut(data?.outId ?? null);
+		if (ack && !ack.handled) ack(null, { ok: true });
+	}) as any);
+
 	// Out pages ask the extension to re-sync (e.g. after a reconnect).
 	nodecg.listenFor(MESSAGES.refresh, ((_data: any, ack: any) => {
 		scheduler.sync();

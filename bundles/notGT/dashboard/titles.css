@@ -1,0 +1,123 @@
+/* notGT — Titles & Outs panel (fullbleed workspace tab): setup only.
+ *
+ * Only `tt-` prefixed classes live here; everything else comes from ui.css.
+ */
+
+.tt {
+	display: grid;
+	grid-template-columns: minmax(420px, 1.2fr) minmax(360px, 1fr);
+	align-items: start;
+	gap: 20px;
+	width: 100%;
+	max-width: 1480px;
+	margin: 0 auto;
+	padding: 20px;
+}
+
+@media (max-width: 900px) {
+	.tt {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.tt-col {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+}
+
+.tt-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 32px;
+	padding-left: 16px;
+}
+
+/* --------------------------------------------------------------------- outs */
+
+.tt-out__name {
+	font-size: 15px;
+}
+
+.tt-size {
+	width: 70px;
+	text-align: right;
+}
+
+/* The spin buttons only repeat what typing does, and crowd a 70px box. */
+.tt-size::-webkit-inner-spin-button,
+.tt-size::-webkit-outer-spin-button {
+	appearance: none;
+	margin: 0;
+}
+
+.tt-url {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 16px 14px;
+}
+
+.tt-url input {
+	color: var(--ng-muted);
+}
+
+.tt-out__empty {
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.tt-out__foot {
+	padding: 6px 8px;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+/* --------------------------------------------------------------------- rows */
+
+.tt-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 46px;
+	padding: 4px 8px 4px 16px;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.tt-row__name {
+	flex: 1;
+	font-weight: 500;
+}
+
+.tt-row.is-off .tt-row__name {
+	color: var(--ng-muted);
+}
+
+/* Reordering is occasional: the arrows appear with the pointer or the focus. */
+.tt-row__move {
+	display: inline-flex;
+	opacity: 0;
+	transition: opacity 0.12s ease;
+}
+
+.tt-row:hover .tt-row__move,
+.tt-row:focus-within .tt-row__move {
+	opacity: 1;
+}
+
+/* ------------------------------------------------------------------ library */
+
+.tt-lib .tt-row:first-child {
+	border-top: 0;
+}
+
+.tt-row--lib {
+	min-height: 54px;
+}
+
+.tt-lib__main {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+}

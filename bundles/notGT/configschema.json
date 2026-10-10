@@ -22,6 +22,16 @@
 			"default": "main",
 			"description": "Id of the out created on first run."
 		},
+		"language": {
+			"type": "string",
+			"enum": [
+				"",
+				"en",
+				"ru"
+			],
+			"default": "",
+			"description": "Language of the example library and sample data seeded on first run: `en` or `ru`. Empty = the locale of the server process, else English. The dashboard itself follows each operator's browser and its EN/RU switch."
+		},
 		"mediaDir": {
 			"type": "string",
 			"default": "",

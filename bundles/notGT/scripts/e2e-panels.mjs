@@ -38,18 +38,21 @@ function check(name, ok, detail = "") {
 const PANELS = [
 	{
 		file: "control.html",
-		expectText: ["notGT — Control", "Данные (переменные)"],
+		expectText: ["Nothing is on air", "Data"],
+		expectRu: ["В эфире ничего нет", "Данные"],
 		heldToggle: true,
 		shot: "panel-control.png",
 	},
 	{
 		file: "titles.html",
-		expectText: ["Анимации / шаблоны", "Out'ы"],
+		expectText: ["Outs", "Animations"],
+		expectRu: ["Анимации", "Новая анимация"],
 		shot: "panel-titles.png",
 	},
 	{
 		file: "editor.html",
-		expectText: ["Editor"],
+		expectText: ["On the out", "Library"],
+		expectRu: ["Библиотека", "Сохранить"],
 		expectCanvas: true,
 		clickPreview: true,
 		outSwitch: true,
@@ -83,7 +86,9 @@ async function main() {
 			});
 
 			await page.goto(
-				`${BASE}/bundles/notGT/dashboard/${panel.file}?standalone=1`,
+				// English is pinned: without `lang` a panel follows the browser's
+				// language, which differs from machine to machine.
+				`${BASE}/bundles/notGT/dashboard/${panel.file}?standalone=1&lang=en`,
 				{ waitUntil: "networkidle2", timeout: 30_000 },
 			);
 
@@ -131,6 +136,33 @@ async function main() {
 				errors.slice(0, 3).join(" | "),
 			);
 
+			if (panel.expectRu) {
+				// The same panel in Russian: `?lang=` picks the language for one
+				// page view, without touching the saved choice.
+				const ruPage = await browser.newPage();
+				await ruPage.setViewport({ width: 1600, height: 950 });
+				await ruPage.goto(
+					`${BASE}/bundles/notGT/dashboard/${panel.file}?standalone=1&lang=ru`,
+					{ waitUntil: "networkidle2", timeout: 30_000 },
+				);
+				await sleep(1200);
+				const ruText = await ruPage.evaluate(
+					() => document.body.innerText ?? "",
+				);
+				for (const needle of panel.expectRu) {
+					check(
+						`${panel.file}: in Russian contains "${needle}"`,
+						ruText.includes(needle),
+						ruText.slice(0, 120).replace(/\n/g, " / "),
+					);
+				}
+				await ruPage.screenshot({
+					path: path.join(outDir, panel.shot.replace(".png", "-ru.png")),
+					fullPage: false,
+				});
+				await ruPage.close();
+			}
+
 			if (panel.clickPreview) {
 				await fetch(`${BASE}/api/titles/hide`, {
 					method: "POST",
@@ -145,7 +177,7 @@ async function main() {
 
 				const clicked = await page.evaluate(() => {
 					const target = [...document.querySelectorAll("button")].find(
-						(button) => /preview|проиграть/i.test(button.textContent ?? ""),
+						(button) => /^\s*play\s*$/i.test(button.textContent ?? ""),
 					);
 					if (!target) return false;
 					target.click();
@@ -434,7 +466,7 @@ async function main() {
 				);
 				check(
 					"editor.html: the canvas reports the drag while it is in flight",
-					/перетаскивание/.test(duringStatus),
+					/dragging/.test(duringStatus),
 					duringStatus,
 				);
 				check(

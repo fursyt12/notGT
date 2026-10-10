@@ -7,6 +7,8 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { getByPath, interpolate } from "../../shared/binding";
+import { N_, localNumber, t, type Phrase } from "../i18n";
+import { Icon, IconButton } from "../ui";
 import {
 	BUNDLE_NAME,
 	type Layer,
@@ -32,8 +34,8 @@ export function round(value: number, digits = 2): number {
 
 /** Human-readable byte size for the media list / upload result ("13,5 КБ"). */
 export function formatBytes(bytes: number): string {
-	if (!Number.isFinite(bytes) || bytes <= 0) return "0 Б";
-	const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+	if (!Number.isFinite(bytes) || bytes <= 0) return t("0 B");
+	const units = [t("B"), t("KB"), t("MB"), t("GB"), t("TB")];
 	let value = bytes;
 	let unit = 0;
 	while (value >= 1024 && unit < units.length - 1) {
@@ -41,7 +43,7 @@ export function formatBytes(bytes: number): string {
 		unit += 1;
 	}
 	const digits = unit === 0 ? 0 : value >= 10 ? 1 : 2;
-	return `${value.toFixed(digits).replace(".", ",")} ${units[unit]}`;
+	return `${localNumber(value.toFixed(digits))} ${units[unit]}`;
 }
 
 export function stringifyValue(value: unknown): string {
@@ -92,17 +94,17 @@ export function layerDisplayName(layer: Layer): string {
 		const text = (layer.text ?? "").trim();
 		if (text) return text.length > 28 ? `${text.slice(0, 28)}…` : text;
 	}
-	return LAYER_TYPE_LABEL[layer.type];
+	return t(LAYER_TYPE_LABEL[layer.type]);
 }
 
 // ------------------------------------------------------------------ constants
 
-export const LAYER_TYPE_LABEL: Record<LayerType, string> = {
-	text: "Текст",
-	shape: "Фигура",
-	image: "Картинка",
-	gif: "GIF",
-	video: "видео",
+export const LAYER_TYPE_LABEL: Record<LayerType, Phrase> = {
+	text: N_("Text"),
+	shape: N_("Shape"),
+	image: N_("Image"),
+	gif: N_("GIF"),
+	video: N_("Video"),
 };
 
 export const TRANSITION_TYPES: TransitionType[] = [
@@ -117,16 +119,16 @@ export const TRANSITION_TYPES: TransitionType[] = [
 	"wipe-right",
 ];
 
-export const TRANSITION_LABEL: Record<TransitionType, string> = {
-	none: "нет",
-	fade: "fade — растворение",
-	"slide-left": "slide-left — выезд слева",
-	"slide-right": "slide-right — выезд справа",
-	"slide-up": "slide-up — выезд снизу",
-	"slide-down": "slide-down — выезд сверху",
-	scale: "scale — масштаб",
-	"wipe-left": "wipe-left — шторка влево",
-	"wipe-right": "wipe-right — шторка вправо",
+export const TRANSITION_LABEL: Record<TransitionType, Phrase> = {
+	none: N_("No transition"),
+	fade: N_("Fade"),
+	"slide-left": N_("Slide from the left"),
+	"slide-right": N_("Slide from the right"),
+	"slide-up": N_("Slide from below"),
+	"slide-down": N_("Slide from above"),
+	scale: N_("Scale"),
+	"wipe-left": N_("Wipe left"),
+	"wipe-right": N_("Wipe right"),
 };
 
 export const FONT_FAMILIES: string[] = [
@@ -492,14 +494,13 @@ export function ColorField({
 					onChange={(event) => onChange(event.target.value)}
 				/>
 				{current ? (
-					<button
-						type="button"
-						className="ed-icon-btn"
-						title="Очистить"
+					<IconButton
+						className="small"
+						icon="x"
+						size={14}
+						label={t("Clear color")}
 						onClick={() => onChange("")}
-					>
-						✕
-					</button>
+					/>
 				) : null}
 			</div>
 		</Field>
@@ -566,13 +567,14 @@ export function Section({
 }) {
 	const [open, setOpen] = useState(defaultOpen);
 	return (
-		<div className="ed-section">
+		<div className={`ed-section${open ? " is-open" : ""}`}>
 			<button
 				type="button"
 				className="ed-section__head"
+				aria-expanded={open}
 				onClick={() => setOpen((value) => !value)}
 			>
-				<span className="ed-caret">{open ? "▾" : "▸"}</span>
+				<Icon name="chevronRight" size={12} />
 				<span>{title}</span>
 			</button>
 			{open ? <div className="ed-section__body">{children}</div> : null}
@@ -608,7 +610,7 @@ export function InlineName({
 		return (
 			<span
 				className="ed-inline-name"
-				title="Двойной клик — переименовать"
+				title={t("Double-click to rename")}
 				onDoubleClick={() => setEditing(true)}
 			>
 				{value || placeholder || "—"}

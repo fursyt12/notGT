@@ -34,9 +34,10 @@ export const REPLICANTS = {
  * Version of the persisted store layout. Bump it whenever an existing
  * installation needs a one-time migration in `createStore`:
  *   1 — initial layout;
- *   2 — built-in example animations shipped as bundled code templates.
+ *   2 — built-in example animations shipped as bundled code templates;
+ *   3 — the whole examples gallery is part of the default library.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export interface MetaState {
 	initialized: boolean;
@@ -49,6 +50,8 @@ export const MESSAGES = {
 	trigger: "trigger",
 	/** force an out to refresh itself */
 	refresh: "refresh",
+	/** take everything off air now, one-shots in flight included: { outId? } */
+	stop: "stop",
 } as const;
 
 /**

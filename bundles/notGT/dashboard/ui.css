@@ -1,18 +1,38 @@
-/* notGT dashboard UI — shared by all three panels. */
+/* notGT dashboard UI — shared by all three panels.
+ *
+ * One rule runs through the whole dashboard: red means "on air" and nothing
+ * else (`--ng-live`, the tally light). Destructive actions stay quiet until
+ * they are hovered, so the only thing that ever shouts is a live title.
+ *
+ * Element defaults are wrapped in `:where()` so they carry no specificity and
+ * any component class can restyle a button or an input without a fight.
+ */
 
 :root {
+	/* Surfaces — the dashboard shell mirrors these values. */
 	--ng-bg: #1b2430;
 	--ng-bg-2: #222e3c;
 	--ng-bg-3: #2b3947;
+	--ng-bg-4: #35465a;
+	--ng-well: #151d27;
 	--ng-line: #3a4a5c;
+	--ng-line-soft: #2a3746;
+
 	--ng-fg: #e6edf3;
 	--ng-muted: #93a4b5;
+	--ng-faint: #6f8194;
+
 	--ng-accent: #4aa8ff;
 	--ng-accent-2: #1f6feb;
-	--ng-danger: #ff5c5c;
+	--ng-live: #ff3b30;
+	--ng-danger: #ff7b72;
 	--ng-ok: #4ade80;
 	--ng-warn: #fbbf24;
-	--ng-radius: 8px;
+
+	--ng-radius: 10px;
+	--ng-radius-s: 6px;
+	--ng-control: 30px;
+	--ng-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 * {
@@ -21,94 +41,266 @@
 
 body {
 	margin: 0;
-	padding: 10px;
 	background: var(--ng-bg);
 	color: var(--ng-fg);
 	font: 13px/1.45 "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+	-webkit-font-smoothing: antialiased;
 }
 
 h1,
 h2,
 h3 {
-	margin: 0 0 8px;
-	font-weight: 700;
-}
-
-h1 {
-	font-size: 16px;
+	margin: 0;
+	font-weight: 600;
+	letter-spacing: -0.005em;
 }
 
 h2 {
-	font-size: 14px;
+	font-size: 15px;
 }
 
 h3 {
-	font-size: 12px;
-	text-transform: uppercase;
-	letter-spacing: 0.08em;
-	color: var(--ng-muted);
+	font-size: 13px;
+}
+
+p {
+	margin: 0;
 }
 
 a {
 	color: var(--ng-accent);
 }
 
-.card {
-	background: var(--ng-bg-2);
-	border: 1px solid var(--ng-line);
-	border-radius: var(--ng-radius);
-	padding: 10px;
-	margin-bottom: 10px;
+code,
+.mono {
+	font-family: var(--ng-mono);
+	font-size: 12px;
 }
 
-.card__head {
-	display: flex;
+/* ------------------------------------------------------------------ buttons */
+
+:where(button, .btn) {
+	appearance: none;
+	display: inline-flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-	margin-bottom: 8px;
+	justify-content: center;
+	gap: 6px;
+	height: var(--ng-control);
+	padding: 0 11px;
+	border: 1px solid transparent;
+	border-radius: var(--ng-radius-s);
+	background: var(--ng-bg-3);
+	color: var(--ng-fg);
+	font: inherit;
+	font-weight: 500;
+	white-space: nowrap;
+	cursor: pointer;
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease,
+		border-color 0.12s ease;
 }
+
+:where(button, .btn):where(:hover:not(:disabled)) {
+	background: var(--ng-bg-4);
+}
+
+:where(button):where(:disabled) {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+button.primary {
+	background: var(--ng-accent-2);
+	color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+	background: #3381f0;
+}
+
+button.ghost,
+button.danger {
+	background: transparent;
+	color: var(--ng-muted);
+}
+
+button.ghost:hover:not(:disabled) {
+	background: var(--ng-bg-3);
+	color: var(--ng-fg);
+}
+
+button.danger:hover:not(:disabled) {
+	background: rgba(255, 123, 114, 0.12);
+	color: var(--ng-danger);
+}
+
+button.small {
+	height: 24px;
+	padding: 0 8px;
+	font-size: 12px;
+}
+
+button.icon {
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	flex: 0 0 auto;
+}
+
+button.icon.small {
+	width: 24px;
+	height: 24px;
+}
+
+button.is-on {
+	background: rgba(74, 168, 255, 0.16);
+	color: var(--ng-accent);
+}
+
+.ico {
+	flex: 0 0 auto;
+	display: block;
+}
+
+/* ------------------------------------------------------------------- inputs */
+
+:where(input, select, textarea) {
+	width: 100%;
+	min-width: 0;
+	height: var(--ng-control);
+	padding: 0 9px;
+	border: 1px solid var(--ng-line);
+	border-radius: var(--ng-radius-s);
+	background: var(--ng-well);
+	color: var(--ng-fg);
+	font: inherit;
+	transition: border-color 0.12s ease;
+}
+
+:where(input, select, textarea):where(:hover:not(:disabled)) {
+	border-color: var(--ng-faint);
+}
+
+:where(input, select, textarea):where(:focus) {
+	border-color: var(--ng-accent);
+	outline: none;
+}
+
+:where(input, select, textarea):where(:disabled) {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+:where(input)::placeholder,
+:where(textarea)::placeholder {
+	color: var(--ng-faint);
+}
+
+:where(textarea) {
+	height: auto;
+	padding: 7px 9px;
+	resize: vertical;
+}
+
+:where(select) {
+	appearance: none;
+	padding-right: 26px;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2393a4b5' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 8px center;
+	cursor: pointer;
+}
+
+:where(input[type="number"]) {
+	font-variant-numeric: tabular-nums;
+}
+
+:where(input[type="checkbox"], input[type="radio"]) {
+	width: 15px;
+	height: 15px;
+	padding: 0;
+	margin: 0;
+	flex: 0 0 auto;
+	accent-color: var(--ng-accent);
+	cursor: pointer;
+}
+
+:where(input[type="color"]) {
+	width: 30px;
+	padding: 2px;
+	flex: 0 0 auto;
+	cursor: pointer;
+}
+
+:where(button, input, select, textarea, [tabindex]):focus-visible {
+	outline: 2px solid var(--ng-accent);
+	outline-offset: 1px;
+}
+
+.code-area {
+	font-family: var(--ng-mono);
+	font-size: 12px;
+	line-height: 1.5;
+	white-space: pre;
+	tab-size: 2;
+}
+
+/* A number or text input with its unit written inside the box ("5 с"). */
+.unit-input {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	width: 84px;
+}
+
+.unit-input input {
+	padding-right: 22px;
+	font-variant-numeric: tabular-nums;
+}
+
+.unit-input__unit {
+	position: absolute;
+	right: 9px;
+	color: var(--ng-faint);
+	pointer-events: none;
+}
+
+/* An input that reads as plain text until it is hovered or focused. */
+.name-input {
+	height: 28px;
+	padding: 0 6px;
+	margin-left: -6px;
+	border-color: transparent;
+	background: transparent;
+	font-weight: 600;
+	text-overflow: ellipsis;
+}
+
+.name-input:hover:not(:focus) {
+	border-color: var(--ng-line);
+}
+
+.name-input:focus {
+	background: var(--ng-well);
+}
+
+/* ------------------------------------------------------------------- layout */
 
 .row {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	flex-wrap: wrap;
+	gap: 8px;
 }
 
-.row--between {
-	justify-content: space-between;
+.row--wrap {
+	flex-wrap: wrap;
 }
 
 .col {
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
-}
-
-.grid {
-	display: grid;
 	gap: 8px;
-}
-
-.grid--2 {
-	grid-template-columns: 1fr 1fr;
-}
-
-.grid--3 {
-	grid-template-columns: repeat(3, 1fr);
-}
-
-.muted {
-	color: var(--ng-muted);
-}
-
-.small {
-	font-size: 11px;
-}
-
-.mono {
-	font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 
 .grow {
@@ -116,197 +308,304 @@ a {
 	min-width: 0;
 }
 
-button,
-.btn {
-	appearance: none;
-	border: 1px solid var(--ng-line);
-	background: var(--ng-bg-3);
-	color: var(--ng-fg);
-	border-radius: 6px;
-	padding: 6px 10px;
-	font: inherit;
-	cursor: pointer;
-	white-space: nowrap;
-}
-
-button:hover,
-.btn:hover {
-	border-color: var(--ng-accent);
-}
-
-button:disabled {
-	opacity: 0.5;
-	cursor: not-allowed;
-}
-
-button.primary {
-	background: var(--ng-accent-2);
-	border-color: var(--ng-accent-2);
-	color: #fff;
-}
-
-button.danger {
-	background: transparent;
-	border-color: var(--ng-danger);
-	color: var(--ng-danger);
-}
-
-button.ghost {
-	background: transparent;
-}
-
-button.tiny {
-	padding: 2px 6px;
-	font-size: 11px;
-}
-
-button.active {
-	background: var(--ng-accent-2);
-	border-color: var(--ng-accent);
-	color: #fff;
-}
-
-input,
-select,
-textarea {
-	background: var(--ng-bg);
-	border: 1px solid var(--ng-line);
-	color: var(--ng-fg);
-	border-radius: 6px;
-	padding: 5px 7px;
-	font: inherit;
-	width: 100%;
-	min-width: 0;
-}
-
-input[type="checkbox"] {
-	width: auto;
-}
-
-input[type="color"] {
-	padding: 0;
-	height: 28px;
-	width: 40px;
-}
-
-input[type="number"] {
-	width: 100%;
-}
-
-label.field {
-	display: flex;
-	flex-direction: column;
-	gap: 3px;
-	font-size: 11px;
-	color: var(--ng-muted);
-}
-
-.badge {
-	display: inline-block;
-	padding: 1px 6px;
-	border-radius: 999px;
-	font-size: 10px;
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
-	border: 1px solid var(--ng-line);
-	color: var(--ng-muted);
-}
-
-.badge--live {
-	background: #7f1d1d;
-	border-color: #ef4444;
-	color: #fff;
-}
-
-.badge--ok {
-	border-color: var(--ng-ok);
-	color: var(--ng-ok);
-}
-
-.badge--loop {
-	border-color: var(--ng-warn);
-	color: var(--ng-warn);
-}
-
-.list {
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-}
-
-.item {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 6px 8px;
-	background: var(--ng-bg-3);
-	border: 1px solid var(--ng-line);
-	border-radius: 6px;
-}
-
-.item--selected {
-	border-color: var(--ng-accent);
-}
-
-.item--dragging {
-	opacity: 0.6;
-}
-
 .spacer {
 	flex: 1;
 }
 
+.muted {
+	color: var(--ng-muted);
+}
+
 .hint {
 	color: var(--ng-muted);
-	font-size: 11px;
+	font-size: 12px;
 }
 
 .err {
 	color: var(--ng-danger);
-	font-size: 11px;
-}
-
-.ok {
-	color: var(--ng-ok);
-	font-size: 11px;
-}
-
-.warn {
-	color: var(--ng-warn);
-	font-size: 11px;
-}
-
-.scroll {
-	overflow: auto;
-}
-
-.code-area {
-	font-family: ui-monospace, Menlo, Consolas, monospace;
 	font-size: 12px;
-	min-height: 120px;
-	white-space: pre;
 }
 
-.divider {
-	height: 1px;
-	background: var(--ng-line);
-	margin: 8px 0;
+.truncate {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
-.sticky-head {
-	position: sticky;
-	top: 0;
-	z-index: 5;
-	background: var(--ng-bg);
-	padding-bottom: 8px;
-}
-
-.out-link {
+.field {
 	display: flex;
-	gap: 6px;
-	align-items: center;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	font-size: 12px;
+	color: var(--ng-muted);
 }
 
-.out-link input {
+.check {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	cursor: pointer;
+	user-select: none;
+}
+
+/* A raised block. Rows inside are divided by soft lines, never boxed again. */
+.panel {
+	background: var(--ng-bg-2);
+	border-radius: var(--ng-radius);
+}
+
+.panel__head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 48px;
+	padding: 0 8px 0 16px;
+}
+
+.empty {
+	padding: 14px 16px;
+	color: var(--ng-muted);
+}
+
+/* --------------------------------------------------------------------- tags */
+
+.tag {
+	flex: 0 0 auto;
+	padding: 1px 7px;
+	border-radius: 4px;
+	background: var(--ng-bg-3);
+	color: var(--ng-muted);
 	font-size: 11px;
+	white-space: nowrap;
+}
+
+.tag--live {
+	background: var(--ng-live);
+	color: #fff;
+	font-weight: 600;
+}
+
+/* The tally light: dark until its title is on air. */
+.tally {
+	flex: 0 0 auto;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--ng-line);
+	transition:
+		background-color 0.15s ease,
+		box-shadow 0.15s ease;
+}
+
+.tally.is-live {
+	background: var(--ng-live);
+	box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.22);
+}
+
+/* ------------------------------------------------------------------- switch */
+
+.switch {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 0 auto;
+	color: var(--ng-muted);
+	cursor: pointer;
+	user-select: none;
+}
+
+/* The real checkbox covers the whole label: it takes the click and the focus. */
+.switch input {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	opacity: 0;
+	cursor: pointer;
+}
+
+.switch__track {
+	position: relative;
+	width: 38px;
+	height: 22px;
+	border-radius: 999px;
+	background: var(--ng-bg-4);
+	transition: background-color 0.15s ease;
+}
+
+.switch__thumb {
+	position: absolute;
+	top: 3px;
+	left: 3px;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--ng-fg);
+	transition: transform 0.15s ease;
+}
+
+.switch.is-on {
+	color: var(--ng-fg);
+}
+
+.switch.is-on .switch__track {
+	background: var(--ng-accent-2);
+}
+
+.switch--live.is-on .switch__track {
+	background: var(--ng-live);
+}
+
+.switch.is-on .switch__thumb {
+	transform: translateX(16px);
+}
+
+.switch input:focus-visible + .switch__track {
+	outline: 2px solid var(--ng-accent);
+	outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- segmented */
+
+.seg {
+	display: inline-flex;
+	padding: 2px;
+	border-radius: var(--ng-radius-s);
+	background: var(--ng-well);
+}
+
+.seg button {
+	height: 24px;
+	padding: 0 10px;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--ng-muted);
+	font-size: 12px;
+}
+
+.seg button:hover:not(:disabled) {
+	background: transparent;
+	color: var(--ng-fg);
+}
+
+.seg button.is-on {
+	background: var(--ng-bg-4);
+	color: var(--ng-fg);
+}
+
+/* --------------------------------------------------------------------- menu */
+
+.menu__list {
+	position: fixed;
+	z-index: 100;
+	min-width: 180px;
+	max-width: 320px;
+	max-height: min(60vh, 420px);
+	overflow: auto;
+	padding: 4px;
+	border: 1px solid var(--ng-line);
+	border-radius: 8px;
+	background: var(--ng-bg-2);
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.menu__item {
+	display: flex;
+	justify-content: flex-start;
+	width: 100%;
+	height: auto;
+	min-height: 30px;
+	padding: 5px 9px;
+	border-radius: 5px;
+	background: transparent;
+	text-align: left;
+	white-space: normal;
+}
+
+.menu__item:hover:not(:disabled) {
+	background: var(--ng-bg-3);
+}
+
+.menu__item .ico {
+	color: var(--ng-muted);
+}
+
+.menu__item--danger:hover:not(:disabled),
+.menu__item--danger:hover:not(:disabled) .ico {
+	color: var(--ng-danger);
+}
+
+.menu__text {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+}
+
+.menu__hint {
+	color: var(--ng-muted);
+	font-size: 11px;
+	font-weight: 400;
+}
+
+.menu__back {
+	color: var(--ng-muted);
+}
+
+.menu__sep {
+	height: 1px;
+	margin: 4px 0;
+	background: var(--ng-line-soft);
+}
+
+/* --------------------------------------------------------------- disclosure */
+
+.disclosure__head {
+	width: 100%;
+	justify-content: flex-start;
+	height: 40px;
+	padding: 0 12px;
+	background: transparent;
+	color: var(--ng-muted);
+}
+
+.disclosure__head:hover:not(:disabled) {
+	background: transparent;
+	color: var(--ng-fg);
+}
+
+.disclosure__head .ico {
+	transition: transform 0.12s ease;
+}
+
+.disclosure.is-open > .disclosure__head .ico {
+	transform: rotate(90deg);
+}
+
+/* ------------------------------------------------------- playback settings */
+
+.playback {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px 14px;
+}
+
+.playback__hold {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--ng-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition-duration: 0.01ms !important;
+	}
 }

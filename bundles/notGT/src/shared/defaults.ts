@@ -1,12 +1,9 @@
-import { createExampleTemplates } from "./examples";
+import { lowerThirdLayers } from "./examples/layers";
 import {
 	BUNDLE_NAME,
-	type Layer,
 	type Out,
 	type TitleTemplate,
 	defaultPlayback,
-	defaultTransition,
-	newId,
 } from "./types";
 
 /** URL of an out page. This is what goes into OBS as a Browser Source. */
@@ -15,108 +12,25 @@ export function outUrl(outId: string, opts?: { token?: string }): string {
 	return opts?.token ? `${base}&key=${encodeURIComponent(opts.token)}` : base;
 }
 
-function textLayer(
-	partial: Partial<Layer> & { id: string; x: number; y: number; z: number },
-): Layer {
-	return {
-		type: "text",
-		width: 60,
-		style: {
-			fontFamily: "Inter, 'Segoe UI', Roboto, Arial, sans-serif",
-			fontSize: 56,
-			fontWeight: 700,
-			color: "#ffffff",
-			align: "left",
-			lineHeight: 1.15,
-			opacity: 1,
-			rotation: 0,
-		},
-		...partial,
-	} as Layer;
-}
-
-/** A ready to use lower third, seeded on first run. */
+/**
+ * A ready to use lower third: the animation a new installation starts with,
+ * and the starting point of every new layers animation.
+ */
 export function createDefaultTemplate(): TitleTemplate {
 	const now = Date.now();
 	return {
 		id: "lower-third",
 		name: "Lower third",
 		kind: "layers",
-		width: 1920,
-		height: 1080,
-		layers: [
-			{
-				id: newId("layer"),
-				name: "Accent",
-				type: "shape",
-				shape: "rect",
-				x: 4,
-				y: 74,
-				width: 0.9,
-				height: 14,
-				z: 1,
-				style: { fill: "#ff3b30", radius: 6, opacity: 1, rotation: 0 },
-			},
-			{
-				id: newId("layer"),
-				name: "Plate",
-				type: "shape",
-				shape: "rect",
-				x: 4.9,
-				y: 74,
-				width: 44,
-				height: 14,
-				z: 2,
-				style: { fill: "#0b1720", radius: 6, opacity: 0.92, rotation: 0 },
-			},
-			textLayer({
-				id: newId("layer"),
-				name: "Name",
-				x: 6.4,
-				y: 77,
-				width: 40,
-				z: 3,
-				binding: "speaker.name",
-				text: "{{speaker.name ?? Имя Фамилия}}",
-				style: {
-					fontFamily: "Inter, 'Segoe UI', Roboto, Arial, sans-serif",
-					fontSize: 62,
-					fontWeight: 700,
-					color: "#ffffff",
-					align: "left",
-					lineHeight: 1.1,
-					shadowColor: "rgba(0,0,0,0.55)",
-					shadowBlur: 12,
-					shadowOffsetY: 3,
-					opacity: 1,
-					rotation: 0,
-				},
-			}),
-			textLayer({
-				id: newId("layer"),
-				name: "Role",
-				x: 6.4,
-				y: 82.4,
-				width: 40,
-				z: 4,
-				binding: "speaker.role",
-				text: "{{speaker.role ?? Должность}}",
-				style: {
-					fontFamily: "Inter, 'Segoe UI', Roboto, Arial, sans-serif",
-					fontSize: 34,
-					fontWeight: 500,
-					color: "#8fd3ff",
-					align: "left",
-					lineHeight: 1.1,
-					letterSpacing: 0.6,
-					textTransform: "uppercase",
-					opacity: 1,
-					rotation: 0,
-				},
-			}),
-		],
-		inTransition: { type: "slide-left", durationMs: 420, easing: "cubic-bezier(.2,.8,.2,1)" },
-		outTransition: { type: "fade", durationMs: 300, easing: "ease-in" },
+		width: 1040,
+		height: 184,
+		layers: lowerThirdLayers(
+			"ink",
+			{ name: "speaker.name", role: "speaker.role" },
+			{ name: "Имя Фамилия", role: "Должность" },
+		),
+		inTransition: { type: "wipe-right", durationMs: 560, easing: "cubic-bezier(.16,1,.3,1)" },
+		outTransition: { type: "wipe-left", durationMs: 320, easing: "ease-in" },
 		playback: { ...defaultPlayback(), mode: "once", holdMs: 8000, autoStart: false },
 		createdAt: now,
 		updatedAt: now,
@@ -136,22 +50,28 @@ export function createCodeSampleTemplate(): TitleTemplate {
 		code: {
 			html: `<div class="ticker">
   <span class="badge">{{ticker.label ?? LIVE}}</span>
-  <span class="text">{{ticker.text ?? Введите текст бегущей строки}}</span>
+  <div class="track"><span class="text">{{ticker.text ?? Введите текст бегущей строки}}</span></div>
 </div>`,
-			css: `.ticker {
+			css: `/* The bar stays put and only the text travels inside .track, which clips it. */
+.ticker {
   position: absolute; left: 4%; right: 4%; bottom: 8%;
-  display: flex; align-items: stretch; overflow: hidden;
-  border-radius: 10px; font-family: Inter, Arial, sans-serif;
-  box-shadow: 0 10px 30px rgba(0,0,0,.45);
+  display: flex; align-items: stretch;
+  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif; color: #fff;
+  background: linear-gradient(180deg, rgba(24,33,45,.97), rgba(10,14,20,.97));
+  clip-path: polygon(0 0, 100% 0, calc(100% - 26px) 100%, 0 100%);
 }
 .badge {
-  background: #ff3b30; color: #fff; font-weight: 800; letter-spacing: .12em;
-  padding: 18px 28px; text-transform: uppercase; font-size: 30px;
+  position: relative; z-index: 1;
   display: flex; align-items: center;
+  padding: 0 48px 0 28px;
+  background: linear-gradient(135deg, #ff5245, #dc2a20);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 24px) 100%, 0 100%);
+  font-size: 27px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
 }
+.track { flex: 1; overflow: hidden; margin-left: -8px; }
 .text {
-  background: rgba(8,20,28,.94); color: #fff; font-size: 38px; font-weight: 600;
-  padding: 18px 28px; white-space: nowrap; flex: 1;
+  display: inline-block; padding: 19px 0;
+  font-size: 36px; font-weight: 600; white-space: nowrap;
   will-change: transform;
 }`,
 			js: `// Runs inside the animation. \`vars\` holds the resolved {{bindings}},
@@ -159,11 +79,12 @@ export function createCodeSampleTemplate(): TitleTemplate {
 const el = root.querySelector('.text');
 // Start at the left edge so the ticker is visible immediately, then let it
 // scroll out and re-enter from the right.
-let offset = 0;
+const track = root.querySelector('.track');
+let offset = 36;
 
 function frame() {
   offset -= 2.2;
-  if (offset < -el.scrollWidth) offset = root.clientWidth;
+  if (offset < -el.offsetWidth) offset = track.clientWidth;
   el.style.transform = 'translateX(' + offset + 'px)';
   requestAnimationFrame(frame);
 }
@@ -180,7 +101,7 @@ onData(() => {
 onShow(() => {
   root.querySelector('.ticker').animate(
     [{ opacity: 0, transform: 'translateY(120%)' }, { opacity: 1, transform: 'none' }],
-    { duration: 350, easing: 'cubic-bezier(.2,.8,.2,1)' },
+    { duration: 520, easing: 'cubic-bezier(.16,1,.3,1)' },
   );
 });
 
@@ -210,32 +131,5 @@ export function createDefaultOut(outId = "main"): Out {
 		items: [],
 		createdAt: now,
 		updatedAt: now,
-	};
-}
-
-/** Seed data applied when the replicants are empty (first run). */
-export function seedTemplates(): TitleTemplate[] {
-	// The examples are ordinary `kind: "code"` templates, exactly like
-	// `Code sample (ticker)`: their HTML/CSS/JS live in the template, so the
-	// Editor shows the code and previews the animation.
-	return [createDefaultTemplate(), createCodeSampleTemplate(), ...createExampleTemplates()];
-}
-
-export function seedData(): Record<string, unknown> {
-	return {
-		speaker: { name: "Иван Петров", role: "Ведущий" },
-		ticker: { label: "LIVE", text: "notGT — титры, управляемые из Companion" },
-		sponsor: {
-			label: "Партнёр",
-			name: "ACME",
-			meta: "Официальный партнёр трансляции",
-			accent: "#ff3b30",
-		},
-		// Пример переменной-списка: в панели «Control» у неё можно выбрать
-		// «текущий» элемент, и биндинг {{guests.name}} покажет именно его.
-		guests: [
-			{ name: "Анна Смирнова", role: "Эксперт" },
-			{ name: "Пётр Иванов", role: "Гость" },
-		],
 	};
 }

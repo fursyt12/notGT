@@ -8,7 +8,9 @@ import {
 	getByPathRaw,
 	setByPath,
 } from "../shared/binding";
+import { localNumber, t } from "./i18n";
 import { getNodecg, type ClientReplicant } from "../shared/client";
+import type { ExampleLang, GalleryExample } from "../shared/examples/gallery";
 import {
 	createDefaultOut,
 	createDefaultTemplate,
@@ -90,10 +92,56 @@ export function getDb(): Db {
 	return db;
 }
 
+// ----------------------------------------------------- read-your-writes store
+
+/**
+ * NodeCG applies a browser-side write only when the server echoes it back, so
+ * `rep.value` read straight after `rep.value = x` still returns the old value —
+ * and a second write built from that read silently drops the first. Placing an
+ * animation right after creating it, or switching two outs off in one go, are
+ * exactly that.
+ *
+ * `pending` keeps what was written until the echo arrives, so every helper
+ * below reads its own writes. All reads and writes of the editable Replicants
+ * go through `read` / `write`.
+ */
+const pending = new Map<object, { value: unknown; expires: number }>();
+
+/** How long an unconfirmed write is trusted over the Replicant's own value. */
+const PENDING_MS = 2000;
+
+function read<T>(rep: ClientReplicant<T>): T | undefined {
+	const entry = pending.get(rep);
+	if (!entry) return rep.value;
+	// A write the server never echoed as written (rejected or normalised) must
+	// not hide the real value for good.
+	if (Date.now() > entry.expires) {
+		pending.delete(rep);
+		return rep.value;
+	}
+	return entry.value as T;
+}
+
+const watched = new WeakSet<object>();
+
+function write<T>(rep: ClientReplicant<T>, value: T): void {
+	if (!watched.has(rep)) {
+		watched.add(rep);
+		// The echo of the last write of a tick carries the same value: from
+		// then on the Replicant itself is current again.
+		rep.on("change", (next: unknown) => {
+			const entry = pending.get(rep);
+			if (entry && JSON.stringify(next) === JSON.stringify(entry.value)) pending.delete(rep);
+		});
+	}
+	pending.set(rep, { value, expires: Date.now() + PENDING_MS });
+	rep.value = value;
+}
+
 // ------------------------------------------------------------------ reading
 
 export function listTemplates(): TitleTemplate[] {
-	return getDb().templates.value ?? [];
+	return read(getDb().templates) ?? [];
 }
 
 export function getTemplate(id: string | null | undefined): TitleTemplate | undefined {
@@ -102,7 +150,7 @@ export function getTemplate(id: string | null | undefined): TitleTemplate | unde
 }
 
 export function listOuts(): Out[] {
-	return getDb().outs.value ?? [];
+	return read(getDb().outs) ?? [];
 }
 
 export function getOut(id: string | null | undefined): Out | undefined {
@@ -111,12 +159,12 @@ export function getOut(id: string | null | undefined): Out | undefined {
 }
 
 export function readData(): TitleData {
-	return getDb().titleData.value ?? {};
+	return read(getDb().titleData) ?? {};
 }
 
 export function readActive(): ActiveTitleState {
 	return (
-		getDb().activeTitle.value ?? {
+		read(getDb().activeTitle) ?? {
 			templateId: null,
 			visible: false,
 			outId: null,
@@ -138,17 +186,17 @@ export function saveTemplate(template: TitleTemplate): TitleTemplate {
 	const index = list.findIndex((t) => t.id === next.id);
 	if (index >= 0) list[index] = next;
 	else list.push(next);
-	getDb().templates.value = list;
+	write(getDb().templates, list);
 	return next;
 }
 
 export function deleteTemplate(id: string): void {
 	const d = getDb();
-	d.templates.value = listTemplates().filter((t) => t.id !== id);
-	d.outs.value = listOuts().map((out) => ({
+	write(d.templates, listTemplates().filter((t) => t.id !== id));
+	write(d.outs, listOuts().map((out) => ({
 		...out,
 		items: out.items.filter((item) => item.templateId !== id),
-	}));
+	})));
 }
 
 export function newTemplate(kind: TitleTemplate["kind"] = "layers"): TitleTemplate {
@@ -160,6 +208,36 @@ export function newTemplate(kind: TitleTemplate["kind"] = "layers"): TitleTempla
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
+}
+
+/**
+ * Adds an example to the library as an ordinary animation, in `lang`. Sample
+ * values are added only for the variables that do not exist yet, so the
+ * operator's own data is never replaced.
+ */
+export function addExample(example: GalleryExample, lang: ExampleLang): TitleTemplate {
+	const now = Date.now();
+	const saved = saveTemplate({
+		...example.template(lang),
+		id: newId("tpl"),
+		name: example.name[lang],
+		createdAt: now,
+		updatedAt: now,
+	});
+
+	const sample = example.data?.(lang);
+	if (sample) {
+		const current = readData();
+		const next = clone(current);
+		let changed = false;
+		for (const row of flattenData(sample)) {
+			if (getByPathRaw(current, row.path) !== undefined) continue;
+			setByPath(next, row.path, row.value);
+			changed = true;
+		}
+		if (changed) write(getDb().titleData, next);
+	}
+	return saved;
 }
 
 export function duplicateTemplate(id: string): TitleTemplate | undefined {
@@ -204,7 +282,7 @@ export function saveOut(out: Out): Out {
 	const index = list.findIndex((o) => o.id === next.id);
 	if (index >= 0) list[index] = next;
 	else list.push(next);
-	getDb().outs.value = list;
+	write(getDb().outs, list);
 	return next;
 }
 
@@ -220,10 +298,19 @@ export function createOut(name = "New out"): Out {
 }
 
 export function deleteOut(id: string): void {
-	getDb().outs.value = listOuts().filter((o) => o.id !== id);
+	write(getDb().outs, listOuts().filter((o) => o.id !== id));
 }
 
-export function addItem(outId: string, templateId: string): OutItem | undefined {
+/**
+ * Places an animation on an out. `patch` sets where it sits in the same write:
+ * a second write to the out straight after this one would be built from the
+ * list as it was before the placement existed, and would drop it.
+ */
+export function addItem(
+	outId: string,
+	templateId: string,
+	patch: Partial<Pick<OutItem, "x" | "y" | "scale">> = {},
+): OutItem | undefined {
 	const out = getOut(outId);
 	const template = getTemplate(templateId);
 	if (!out || !template) return undefined;
@@ -233,6 +320,7 @@ export function addItem(outId: string, templateId: string): OutItem | undefined 
 		x: 0,
 		y: 0,
 		scale: 1,
+		...patch,
 		playback: { ...defaultPlayback(), ...template.playback },
 		enabled: true,
 		order: out.items.length,
@@ -288,23 +376,23 @@ export function moveItem(outId: string, itemId: string, delta: number): void {
 export function setDataValue(path: string, value: unknown): void {
 	const next = clone(readData());
 	setByPath(next, path, value);
-	getDb().titleData.value = next;
+	write(getDb().titleData, next);
 }
 
 export function removeDataValue(path: string): void {
 	const next = clone(readData());
 	deleteByPath(next, path);
-	getDb().titleData.value = next;
+	write(getDb().titleData, next);
 }
 
 export function replaceData(data: TitleData): void {
-	getDb().titleData.value = clone(data);
+	write(getDb().titleData, clone(data));
 }
 
 export function mergeData(data: TitleData): void {
 	const next = clone(readData());
 	for (const row of flattenData(data)) setByPath(next, row.path, row.value);
-	getDb().titleData.value = next;
+	write(getDb().titleData, next);
 }
 
 // ------------------------------------------------------------------ titles
@@ -313,24 +401,24 @@ export function showTitle(
 	templateId: string,
 	opts: { outId?: string | null; data?: TitleData; label?: string } = {},
 ): void {
-	getDb().activeTitle.value = {
+	write(getDb().activeTitle, {
 		templateId,
 		visible: true,
 		outId: opts.outId ?? null,
 		data: opts.data ?? {},
 		label: opts.label,
 		updatedAt: Date.now(),
-	};
+	});
 }
 
 export function hideTitle(opts: { outId?: string | null } = {}): void {
 	const current = readActive();
-	getDb().activeTitle.value = {
+	write(getDb().activeTitle, {
 		...current,
 		visible: false,
 		updatedAt: Date.now(),
 		outId: opts.outId === undefined ? current.outId : opts.outId,
-	};
+	});
 }
 
 export function toggleTitle(
@@ -346,6 +434,11 @@ export function triggerItem(outId: string, itemId: string, holdMs?: number): voi
 	void getNodecg().sendMessage(MESSAGES.trigger, { outId, itemId, holdMs });
 }
 
+/** Takes everything off air right now, one-shots in flight included. */
+export function stopPlayback(outId?: string | null): void {
+	void getNodecg().sendMessage(MESSAGES.stop, { outId: outId ?? null });
+}
+
 export function triggerTemplate(templateId: string, outId?: string | null): void {
 	void getNodecg().sendMessage(MESSAGES.trigger, { templateId, outId: outId ?? null });
 }
@@ -353,7 +446,7 @@ export function triggerTemplate(templateId: string, outId?: string | null): void
 // ---------------------------------------------------------------- selection
 
 export function readSelection(): VariableSelection {
-	return getDb().selection.value ?? {};
+	return read(getDb().selection) ?? {};
 }
 
 /**
@@ -363,13 +456,13 @@ export function readSelection(): VariableSelection {
  */
 export function setSelection(path: string, index: number): void {
 	if (!Array.isArray(getByPathRaw(readData(), path))) return;
-	getDb().selection.value = { ...readSelection(), [path]: Math.max(0, Math.floor(index)) };
+	write(getDb().selection, { ...readSelection(), [path]: Math.max(0, Math.floor(index)) });
 }
 
 export function clearSelection(path: string): void {
 	const next = { ...readSelection() };
 	delete next[path];
-	getDb().selection.value = next;
+	write(getDb().selection, next);
 }
 
 /** The stored array at `path` (never auto-indexed). */
@@ -381,7 +474,7 @@ export function readArray(path: string): unknown[] {
 function writeArray(path: string, list: unknown[]): void {
 	const next = clone(readData());
 	setByPath(next, path, list);
-	getDb().titleData.value = next;
+	write(getDb().titleData, next);
 	// Keep the chosen index inside the new bounds.
 	const current = readSelection()[path];
 	if (current !== undefined) {
@@ -637,10 +730,10 @@ export function videoHoldHint(
 	hasVideo: boolean,
 ): string {
 	if (typeof duration === "number" && duration > 0) {
-		return `(${(duration / 1000).toFixed(1).replace(".", ",")} с)`;
+		return t("({n} s)", { n: localNumber((duration / 1000).toFixed(1)) });
 	}
-	if (!hasVideo) return "(не определена — нет видео слоя, будет использован holdMs)";
-	return "(не определена — будет использован holdMs)";
+	if (!hasVideo) return t("(the animation has no video layer — “Hold” is used)");
+	return t("(the video length is unknown — “Hold” is used)");
 }
 
 // -------------------------------------------------------------------- utils

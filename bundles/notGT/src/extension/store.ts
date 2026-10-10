@@ -9,10 +9,8 @@ import {
 import {
 	createDefaultOut,
 	outUrl,
-	seedData,
-	seedTemplates,
 } from "../shared/defaults";
-import { missingExampleTemplates } from "../shared/examples";
+import { missingLibrary, seedLanguage, seedLibrary, seedVariables } from "../shared/seed";
 import {
 	BUNDLE_NAME,
 	type ActiveTitleState,
@@ -401,24 +399,29 @@ export function createStore(nodecg: ServerAPI): Store {
 	// ---------------------------------------------------------------------
 	// First-run seeding + schema migrations
 	// ---------------------------------------------------------------------
+	const lang = seedLanguage(
+		nodecg.bundleConfig?.language,
+		process.env["LC_ALL"] || process.env["LC_MESSAGES"] || process.env["LANG"] || "",
+	);
 	if (!meta.value?.initialized) {
 		const defaultOutId = nodecg.bundleConfig?.defaultOutId || "main";
-		if (listTemplates().length === 0) templates.value = seedTemplates();
+		if (listTemplates().length === 0) templates.value = seedLibrary(lang);
 		if (listOuts().length === 0) outs.value = [createDefaultOut(defaultOutId)];
-		if (Object.keys(readData()).length === 0) titleData.value = seedData();
+		if (Object.keys(readData()).length === 0) titleData.value = seedVariables(lang);
 		meta.value = { initialized: true, schemaVersion: SCHEMA_VERSION };
-		log.info("Seeded default templates, out and sample data");
+		log.info("Seeded the example library (%s), an out and sample data", lang);
 	} else if ((meta.value.schemaVersion ?? 1) < SCHEMA_VERSION) {
-		// v2: the built-in example animations stopped being files under
-		// `graphics/animations/` and became ordinary code templates carried by
-		// the bundle (like `Code sample (ticker)`), so the Editor can show and
-		// preview their code. Add the ones this installation is missing; a
-		// template the operator deleted on purpose is not resurrected, because
-		// the migration only runs once.
-		const added = missingExampleTemplates(listTemplates());
+		// The library an installation starts with has grown twice: v2 turned
+		// the file examples into code templates, v3 made the whole examples
+		// gallery part of it. Add what this installation is missing, with
+		// sample values for the variables it does not have. An example the
+		// operator deleted on purpose is not resurrected, because each
+		// migration only runs once.
+		const added = missingLibrary(listTemplates(), lang);
 		for (const template of added) upsertTemplate(template);
+		titleData.value = seedVariables(lang, readData());
 		meta.value = { ...meta.value, schemaVersion: SCHEMA_VERSION };
-		log.info("Added %d built-in example animation(s)", added.length);
+		log.info("Added %d example animation(s) to the library", added.length);
 	}
 
 	return {

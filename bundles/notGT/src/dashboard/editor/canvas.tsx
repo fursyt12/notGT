@@ -62,6 +62,7 @@ import {
 	useHtmlImage,
 	useHtmlVideo,
 } from "./ui";
+import { t } from "../i18n";
 import { useCodeDocument } from "./code-preview";
 import {
 	type SnapBox,
@@ -592,7 +593,10 @@ export function EditorCanvas({
 		setCameraScale(1);
 	}, []);
 
-	const stageSummary = `${designW}×${designH} · анимаций ${geoms.length}`;
+	const stageSummary = t("{size} · {count} animations", {
+		size: `${designW}×${designH}`,
+		count: geoms.length,
+	});
 	/** The active placement as it is drawn right now (drag preview included). */
 	const shownActive = activeGeom ? withPreview(activeGeom) : null;
 	const activePending = Boolean(preview && activeGeom && preview.itemId === activeGeom.item.id);
@@ -835,7 +839,9 @@ export function EditorCanvas({
 											listening={false}
 										/>
 										<Text
-											text={`Предпросмотр шаблона «${draftBox.template.name}» — на этом out'е его нет`}
+											text={t("Preview of “{name}” — it is not on this out yet", {
+												name: draftBox.template.name,
+											})}
 											x={12}
 											y={12}
 											width={Math.max(10, draftBox.boxW - 24)}
@@ -874,7 +880,7 @@ export function EditorCanvas({
 						</Stage>
 					</div>
 				) : (
-					<div className="ed-canvas-placeholder">Область предпросмотра…</div>
+					<div className="ed-canvas-placeholder">{t("Preview area…")}</div>
 				)}
 			</div>
 
@@ -882,14 +888,19 @@ export function EditorCanvas({
 				<span>
 					Out: {out.name} ({stageSummary})
 				</span>
-				<span>Масштаб {Math.round(fit * 100)}% · Зум {Math.round(cameraScale * 100)}%</span>
-				<label className="ed-snap" title="Притягивать к центру и краям out'а, безопасной зоне и другим анимациям">
+				<span>
+					{t("Scale {fit}% · Zoom {zoom}%", {
+						fit: Math.round(fit * 100),
+						zoom: Math.round(cameraScale * 100),
+					})}
+				</span>
+				<label className="ed-snap" title={t("Snap to the centre and edges of the out, the safe area and other animations")}>
 					<input
 						type="checkbox"
 						checked={snapEnabled}
 						onChange={(event) => setSnapEnabled(event.target.checked)}
 					/>
-					магниты
+					{t("snapping")}
 				</label>
 				{(cameraScale !== 1 || cameraX !== 0 || cameraY !== 0) ? (
 					<button
@@ -897,9 +908,9 @@ export function EditorCanvas({
 						className="ed-mini"
 						style={{ padding: "1px 6px", fontSize: "10px" }}
 						onClick={resetCamera}
-						title="Сбросить вид (вернуть зум и положение)"
+						title={t("Reset the view (zoom and position)")}
 					>
-						↺ Сбросить вид
+						{t("↺ Reset view")}
 					</button>
 				) : null}
 				{activeGeom && shownActive ? (
@@ -908,15 +919,15 @@ export function EditorCanvas({
 						{round((shownActive.boxY / stageH) * 100)}% · scale{" "}
 						{round(shownActive.scale, 3)}
 						{activeCrop
-							? ` · обрезка ${Math.round(activeCrop.width)}×${Math.round(
-									activeCrop.height,
-								)}`
+							? t(" · crop {size}", {
+									size: `${Math.round(activeCrop.width)}×${Math.round(activeCrop.height)}`,
+								})
 							: ""}
-						{activePending ? " · перетаскивание" : ""}
+						{activePending ? t(" · dragging") : ""}
 					</span>
 				) : (
 					<span>
-						Клик — выбрать · средняя кнопка — перемещение · колесо — зум
+						{t("Click to select · middle button to pan · wheel to zoom")}
 					</span>
 				)}
 			</div>
@@ -1167,7 +1178,7 @@ function CodeOverlayFrame({
 			    is only created once there is a document to show. */}
 			{doc ? (
 				<iframe
-					title={`${box.template.name} — предпросмотр на холсте`}
+					title={t("{name} — preview on the canvas", { name: box.template.name })}
 					sandbox="allow-scripts allow-same-origin"
 					srcDoc={doc}
 					style={{
@@ -1700,10 +1711,10 @@ function applyTextTransform(text: string, mode: LayerStyle["textTransform"]): st
 
 /** Short `видео — <file>` label for the empty/404 placeholder. */
 function videoPlaceholderLabel(src: string): string {
-	if (!src) return "видео";
-	if (/^data:/i.test(src)) return "видео — data URI";
+	if (!src) return t("video");
+	if (/^data:/i.test(src)) return t("video — data URI");
 	const name = src.split(/[?#]/)[0]?.split("/").pop();
-	return name ? `видео — ${name}` : "видео";
+	return name ? t("video — {name}", { name }) : t("video");
 }
 
 function LayerNode({

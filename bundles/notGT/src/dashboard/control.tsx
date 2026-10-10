@@ -1,16 +1,22 @@
+/**
+ * notGT — Control dashboard panel (fullbleed): live operation only.
+ *
+ * Left: what is placed on each out, one row per placement, with the two things
+ * an operator does on air — play it once, or switch it on and keep it there.
+ * Right: the variables those titles read. Nothing here changes a layout; that
+ * is the Editor's job.
+ */
 import { createRoot } from "react-dom/client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Out, OutItem, TitleData, TitleTemplate, VariableSelection } from "../shared/types";
 import {
 	absoluteOutUrl,
 	appendArrayItem,
 	coerce,
-	copyText,
 	duplicateArrayItem,
 	flattenData,
 	getTemplate,
-	hasVideoLayer,
 	hideTitle,
 	itemCanPlay,
 	makeArray,
@@ -19,12 +25,13 @@ import {
 	removeArrayItem,
 	removeDataValue,
 	replaceData,
+	saveOut,
 	setArrayItem,
 	setByPath,
 	setDataValue,
 	setSelection,
 	showTitle,
-	toggleTitle,
+	stopPlayback,
 	triggerItem,
 	triggerTemplate,
 	updateItem,
@@ -35,21 +42,19 @@ import {
 	useSelection,
 	useTemplates,
 	useTitleData,
-	useVideoDuration,
-	videoHoldHint,
-	videoLayerSignature,
 } from "./shared";
-
-function Badge({
-	children,
-	tone,
-}: {
-	children: React.ReactNode;
-	tone?: "live" | "ok" | "loop";
-}) {
-	const cls = tone ? `badge badge--${tone}` : "badge";
-	return <span className={cls}>{children}</span>;
-}
+import { t, tr, useLang } from "./i18n";
+import {
+	CopyButton,
+	Disclosure,
+	Icon,
+	LangSwitch,
+	Menu,
+	PlaybackFields,
+	Switch,
+	playbackSummary,
+	type MenuItem,
+} from "./ui";
 
 // ------------------------------------------------------------------- helpers
 
@@ -61,23 +66,6 @@ function scalarText(value: unknown): string {
 	if (value === null || value === undefined) return "";
 	if (typeof value === "object") return JSON.stringify(value) ?? "";
 	return String(value);
-}
-
-function truncate(text: string, max = 56): string {
-	const oneLine = text.replace(/\s+/g, " ").trim();
-	return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
-}
-
-/** One-line preview of a value, used in the list and element headers. */
-function summarize(value: unknown): string {
-	if (value === null || value === undefined) return "— пусто —";
-	if (Array.isArray(value)) return `[${value.length}]`;
-	if (typeof value === "object") {
-		const text = JSON.stringify(value);
-		return text && text !== "{}" ? truncate(text) : "{}";
-	}
-	const text = String(value);
-	return text === "" ? "— пусто —" : truncate(text);
 }
 
 /** Keeps a stored selection index inside the array bounds (selection may be stale). */
@@ -95,6 +83,7 @@ function CommitInput({
 	value,
 	onCommit,
 	className,
+	label,
 	dataArray,
 	dataIndex,
 	dataLeaf,
@@ -104,6 +93,7 @@ function CommitInput({
 	value: unknown;
 	onCommit: (raw: string) => void;
 	className?: string;
+	label: string;
 	dataArray?: string;
 	dataIndex?: number;
 	dataLeaf?: string;
@@ -121,6 +111,7 @@ function CommitInput({
 	return (
 		<input
 			className={className}
+			aria-label={label}
 			data-array={dataArray}
 			data-index={dataIndex}
 			data-leaf={dataLeaf}
@@ -140,192 +131,397 @@ function CommitInput({
 	);
 }
 
-// ------------------------------------------------------------------ program
+// ------------------------------------------------------------------- on air
 
-function ProgramCard() {
-	const templates = useTemplates();
+/** Names of everything that is on air right now, across all outs. */
+function useOnAir(): string[] {
 	const outs = useOuts();
+	const templates = useTemplates();
+	const runtime = useRuntime();
 	const active = useActiveTitle();
 
-	const [templateId, setTemplateId] = useState<string>("");
-	const [outId, setOutId] = useState<string>("");
-	const [overrideJson, setOverrideJson] = useState<string>("");
-	const [overrideError, setOverrideError] = useState<string>("");
+	return useMemo(() => {
+		const names = new Set<string>();
+		const nameOf = (templateId: string) =>
+			templates.find((template) => template.id === templateId)?.name ?? templateId;
+		for (const out of outs) {
+			for (const itemId of runtime.playing?.[out.id] ?? []) {
+				const item = out.items.find((candidate) => candidate.id === itemId);
+				if (item) names.add(nameOf(item.templateId));
+			}
+		}
+		if (active.visible && active.templateId) names.add(nameOf(active.templateId));
+		return [...names];
+	}, [outs, templates, runtime, active]);
+}
+
+/**
+ * Empties the air on every out: switches off the held placements, hides the
+ * manually shown animation and drops the one-shots that are still playing.
+ */
+function clearAir(outs: Out[]): void {
+	hideTitle();
+	for (const out of outs) {
+		if (!out.items.some((item) => item.held)) continue;
+		saveOut({
+			...out,
+			items: out.items.map((item) => (item.held ? { ...item, held: false } : item)),
+		});
+	}
+	stopPlayback();
+}
+
+function AirBar() {
+	const outs = useOuts();
+	const onAir = useOnAir();
+	const live = onAir.length > 0;
+
+	return (
+		<header className={`ctl-bar${live ? " is-live" : ""}`}>
+			<span className={`tally${live ? " is-live" : ""}`} aria-hidden="true" />
+			<span className="ctl-bar__text truncate" role="status">
+				{live ? t("On air: {names}", { names: onAir.join(", ") }) : t("Nothing is on air")}
+			</span>
+			<span className="spacer" />
+			<button
+				type="button"
+				disabled={!live}
+				title={t("Clears every out at once: turns off the “On air” switches, stops what is playing and hides the animation shown by hand.")}
+				onClick={() => clearAir(outs)}
+			>
+				{t("Take everything off air")}
+			</button>
+			<LangSwitch />
+		</header>
+	);
+}
+
+// ---------------------------------------------------------------- placements
+
+function CueRow({
+	out,
+	item,
+	template,
+	playing,
+}: {
+	out: Out;
+	item: OutItem;
+	template: TitleTemplate | undefined;
+	playing: boolean;
+}) {
+	const [open, setOpen] = useState(false);
+	const canPlay = itemCanPlay(item, template);
+	const name = template?.name ?? item.templateId;
+
+	return (
+		<div className={`cue${playing ? " is-live" : ""}`} data-out={out.id} data-item={item.id}>
+			<div className="cue__main">
+				<span className={`tally${playing ? " is-live" : ""}`} aria-hidden="true" />
+				<div className="cue__title">
+					<span className="cue__name truncate" title={name}>
+						{name}
+					</span>
+					<button
+						type="button"
+						className="cue__meta"
+						aria-expanded={open}
+						title={t("Playback settings")}
+						onClick={() => setOpen((value) => !value)}
+					>
+						{playbackSummary(item, template)}
+						<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
+					</button>
+				</div>
+				{!item.enabled && !item.held ? (
+					<span
+						className="tag"
+						title={t("Does not start by animation name from the API or Companion. Turn it on in Editor, on the “Placement” tab.")}
+					>
+						{t("API start is off")}
+					</span>
+				) : null}
+				{/* A loop and a held title have no one-shot: the switch is their only control. */}
+				{canPlay ? (
+					<button
+						type="button"
+						className="ctl-play"
+						data-can-play="true"
+						title={t("Play once")}
+						onClick={() => triggerItem(out.id, item.id)}
+					>
+						<Icon name="play" size={14} />
+						{t("Play")}
+					</button>
+				) : null}
+				<Switch
+					className="ctl-switch"
+					live
+					label={t("On air")}
+					title={item.held ? t("Take off air") : t("Show and keep on air")}
+					checked={Boolean(item.held)}
+					data-out={out.id}
+					data-item={item.id}
+					data-held={item.held ? "true" : "false"}
+					onChange={() => updateItem(out.id, item.id, { held: !item.held })}
+				/>
+			</div>
+			{open ? (
+				<div className="cue__settings">
+					<PlaybackFields
+						playback={item.playback}
+						template={template}
+						scope="item"
+						onChange={(patch) => updateItemPlayback(out.id, item.id, patch)}
+					/>
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function OutBlock({ out }: { out: Out }) {
+	const templates = useTemplates();
+	const runtime = useRuntime();
+	const playing = runtime.playing?.[out.id] ?? [];
+	const items = [...out.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+	return (
+		<section className="panel ctl-out">
+			<header className="panel__head">
+				<h2 className="truncate">{out.name}</h2>
+				<span className="hint">
+					{out.width}×{out.height}
+				</span>
+				<span className="spacer" />
+				<CopyButton text={absoluteOutUrl(out.id)} label={t("Link for OBS")} />
+			</header>
+			{items.length === 0 ? (
+				<div className="empty">
+					{t("Nothing on this out yet. Place an animation in Editor or in Titles & Outs.")}
+				</div>
+			) : (
+				items.map((item) => (
+					<CueRow
+						key={item.id}
+						out={out}
+						item={item}
+						template={templates.find((template) => template.id === item.templateId)}
+						playing={playing.includes(item.id)}
+					/>
+				))
+			)}
+		</section>
+	);
+}
+
+/**
+ * Shows any animation without placing it first — the same manual "program"
+ * the REST API and Companion drive.
+ */
+function QuickShow() {
+	const templates = useTemplates();
+	const outs = useOuts();
+
+	const [templateId, setTemplateId] = useState("");
+	const [outId, setOutId] = useState("");
+	const [withData, setWithData] = useState(false);
+	const [overrideJson, setOverrideJson] = useState("");
+	const [overrideError, setOverrideError] = useState("");
 
 	useEffect(() => {
-		if (!templateId && templates.length > 0) setTemplateId(templates[0]!.id);
-		if (templateId && !templates.some((t) => t.id === templateId)) {
-			setTemplateId(templates[0]?.id ?? "");
-		}
+		if (templates.some((template) => template.id === templateId)) return;
+		setTemplateId(templates[0]?.id ?? "");
 	}, [templates, templateId]);
 
-	function overrideData(): TitleData | undefined {
-		const trimmed = overrideJson.trim();
+	/** `undefined` = no override; `null` = the JSON does not parse. */
+	function readOverride(): TitleData | undefined | null {
+		const trimmed = withData ? overrideJson.trim() : "";
 		if (!trimmed) return undefined;
 		try {
 			const parsed = JSON.parse(trimmed) as TitleData;
 			setOverrideError("");
 			return parsed;
 		} catch (error) {
-			setOverrideError(String(error));
-			return undefined;
+			setOverrideError(t("This is not JSON: {error}", { error: (error as Error).message }));
+			return null;
 		}
 	}
 
-	const target = { outId: outId || null, data: overrideData() };
+	return (
+		<section className="panel">
+			<Disclosure title={t("Show an animation without placing it")} storageKey="notgt.control.quick">
+				<div className="ctl-quick">
+					<div className="row">
+						<label className="field grow">
+							{t("Animation")}
+							<select value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+								{templates.length === 0 ? <option value="">{t("No animations yet")}</option> : null}
+								{templates.map((template) => (
+									<option key={template.id} value={template.id}>
+										{template.name}
+									</option>
+								))}
+							</select>
+						</label>
+						<label className="field ctl-quick__out">
+							Out
+							<select value={outId} onChange={(event) => setOutId(event.target.value)}>
+								<option value="">{t("All")}</option>
+								{outs.map((out) => (
+									<option key={out.id} value={out.id}>
+										{out.name}
+									</option>
+								))}
+							</select>
+						</label>
+					</div>
+
+					<div className="row row--wrap">
+						<button
+							type="button"
+							className="primary"
+							disabled={!templateId}
+							onClick={() => {
+								const data = readOverride();
+								if (data === null) return;
+								showTitle(templateId, { outId: outId || null, data });
+							}}
+						>
+							{t("Show")}
+						</button>
+						<button
+							type="button"
+							disabled={!templateId}
+							onClick={() => triggerTemplate(templateId, outId || null)}
+						>
+							{t("Play once")}
+						</button>
+						<button type="button" onClick={() => hideTitle({ outId: outId || undefined })}>
+							{t("Hide")}
+						</button>
+						<span className="spacer" />
+						<label className="check muted">
+							<input
+								type="checkbox"
+								checked={withData}
+								onChange={(event) => setWithData(event.target.checked)}
+							/>
+							{t("Custom data for this show")}
+						</label>
+					</div>
+
+					{withData ? (
+						<>
+							<textarea
+								className="code-area"
+								rows={3}
+								aria-label={t("Data for this show only, JSON")}
+								placeholder='{"speaker":{"name":"Guest"}}'
+								value={overrideJson}
+								onChange={(event) => setOverrideJson(event.target.value)}
+							/>
+							{overrideError ? (
+								<div className="err">{overrideError}</div>
+							) : (
+								<div className="hint">
+									{t("Applies to this show only. The variables on the right stay as they are.")}
+								</div>
+							)}
+						</>
+					) : null}
+				</div>
+			</Disclosure>
+		</section>
+	);
+}
+
+// --------------------------------------------------------------------- data
+
+interface VarRow {
+	path: string;
+	/** The path without its group prefix: `name` for `speaker.name`. */
+	label: string;
+	value: unknown;
+}
+
+/** Groups `speaker.name`, `speaker.role` under `speaker`, in first-seen order. */
+function groupRows(rows: Array<{ path: string; value: unknown }>): Array<{ name: string; rows: VarRow[] }> {
+	const groups = new Map<string, VarRow[]>();
+	for (const row of rows) {
+		const dot = row.path.indexOf(".");
+		const name = dot > 0 ? row.path.slice(0, dot) : "";
+		const label = dot > 0 ? row.path.slice(dot + 1) : row.path;
+		const list = groups.get(name) ?? [];
+		list.push({ ...row, label });
+		groups.set(name, list);
+	}
+	return [...groups.entries()].map(([name, list]) => ({ name, rows: list }));
+}
+
+function ScalarRow({ row }: { row: VarRow }) {
+	const menu: MenuItem[] = [
+		{
+			label: t("Turn into a list"),
+			hint: t("Several options; the chosen one goes on air"),
+			icon: "list",
+			onSelect: () => makeArray(row.path),
+		},
+		{
+			label: t("Delete variable"),
+			icon: "trash",
+			danger: true,
+			separated: true,
+			onSelect: () => removeDataValue(row.path),
+		},
+	];
 
 	return (
-		<div className="card">
-			<div className="card__head">
-				<h2>Программа</h2>
-				{active.visible ? (
-					<Badge tone="live">В эфире: {getTemplate(active.templateId)?.name ?? active.templateId}</Badge>
-				) : (
-					<Badge>скрыто</Badge>
-				)}
-			</div>
-
-			<div className="col">
-				<label className="field">
-					Титр / анимация
-					<select
-						value={templateId}
-						onChange={(event) => setTemplateId(event.target.value)}
-					>
-						{templates.length === 0 && <option value="">— нет шаблонов —</option>}
-						{templates.map((template) => (
-							<option key={template.id} value={template.id}>
-								{template.name} ({template.kind})
-							</option>
-						))}
-					</select>
-				</label>
-
-				<label className="field">
-					Out
-					<select value={outId} onChange={(event) => setOutId(event.target.value)}>
-						<option value="">все out'ы</option>
-						{outs.map((out) => (
-							<option key={out.id} value={out.id}>
-								{out.name} ({out.id})
-							</option>
-						))}
-					</select>
-				</label>
-
-				<div className="row">
-					<button
-						className="primary"
-						disabled={!templateId}
-						onClick={() => templateId && showTitle(templateId, target)}
-					>
-						Показать
-					</button>
-					<button disabled={!templateId} onClick={() => hideTitle({ outId: outId || undefined })}>
-						Скрыть
-					</button>
-					<button
-						disabled={!templateId}
-						onClick={() => templateId && toggleTitle(templateId, target)}
-					>
-						Переключить
-					</button>
-					<button
-						disabled={!templateId}
-						onClick={() => templateId && triggerTemplate(templateId, outId || null)}
-					>
-						Проиграть один раз
-					</button>
-				</div>
-
-				<label className="field">
-					Overrides для показа (JSON, необязательно)
-					<textarea
-						className="code-area"
-						style={{ minHeight: 60 }}
-						placeholder='{"speaker":{"name":"Гость"}}'
-						value={overrideJson}
-						onChange={(event) => setOverrideJson(event.target.value)}
-					/>
-				</label>
-				{overrideError && <div className="err">{overrideError}</div>}
-				<div className="hint">
-					Overrides действуют только на текущий показ и не меняют постоянные значения.
-				</div>
-				<div className="hint">
-					Переменная-список: <code className="mono">{"{{speakers.name}}"}</code> подставляет
-					выбранный элемент (см. «Данные (переменные)»).
-				</div>
-			</div>
+		<div className="var ctl-var-row">
+			<span className="var__key mono truncate" title={row.path}>
+				{row.label}
+			</span>
+			<CommitInput
+				className="ctl-scalar-input"
+				label={row.path}
+				dataPath={row.path}
+				value={row.value}
+				onCommit={(raw) => setDataValue(row.path, coerce(raw))}
+			/>
+			<Menu items={menu} label={t("Actions: {name}", { name: row.path })} />
 		</div>
 	);
 }
 
-// -------------------------------------------------------------------- data
-
-function DataEmptyState() {
-	return (
-		<div className="ctl-empty">
-			<h3>Выберите переменную слева</h3>
-			<p className="hint">
-				Переменная может быть одним значением или <strong>списком</strong>. Список — это «выбери
-				одного»: на экран попадает только выбранный элемент, а переключение происходит сразу, без
-				перезагрузки графики.
-			</p>
-			<p className="hint">
-				Пример: <code className="mono">speakers</code> = список из{" "}
-				<code className="mono">{`[{"name":"A","role":"rA"},{"name":"B","role":"rB"}]`}</code>, и{" "}
-				<code className="mono">{"{{speakers.name}}"}</code> показывает выбранного.
-			</p>
-			<p className="hint">
-				Обычное значение можно превратить в список кнопкой «сделать списком», затем добавить
-				варианты и выбрать активный.
-			</p>
-		</div>
-	);
+/**
+ * Columns for a list whose elements are flat objects of a few fields — such a
+ * list reads best as a small table. Anything else is edited field by field.
+ */
+function tableColumns(list: unknown[]): string[] | null {
+	if (list.length === 0 || !list.every(isPlainObject)) return null;
+	const columns: string[] = [];
+	for (const element of list) {
+		for (const leaf of flattenData(element as TitleData)) {
+			if (Array.isArray(leaf.value)) return null;
+			if (!columns.includes(leaf.path)) columns.push(leaf.path);
+		}
+	}
+	return columns.length > 0 && columns.length <= 4 ? columns : null;
 }
 
-function ScalarEditor({ path, value }: { path: string; value: unknown }) {
-	return (
-		<div className="ctl-editor">
-			<div className="ctl-editor__head">
-				<span className="mono ctl-editor__path">{path}</span>
-				<Badge>значение</Badge>
-			</div>
-			<label className="field">
-				Значение
-				<CommitInput
-					className="ctl-scalar-input"
-					dataPath={path}
-					value={value}
-					onCommit={(raw) => setDataValue(path, coerce(raw))}
-				/>
-			</label>
-			<div className="row">
-				<button className="ctl-make-array" onClick={() => makeArray(path)}>
-					сделать списком
-				</button>
-				<span className="hint">
-					Создаст список из одного элемента — дальше можно добавлять варианты и выбирать
-					активный.
-				</span>
-			</div>
-		</div>
-	);
-}
-
-function ArrayElement({
+function ListRow({
 	path,
 	index,
 	element,
 	count,
 	current,
+	columns,
 }: {
 	path: string;
 	index: number;
 	element: unknown;
 	count: number;
 	current: boolean;
+	columns: string[] | null;
 }) {
 	const leaves = useMemo(
 		() => (isPlainObject(element) ? flattenData(element as TitleData) : []),
@@ -340,78 +536,78 @@ function ArrayElement({
 		setArrayItem(path, index, next);
 	}
 
+	const menu: MenuItem[] = [
+		{ label: t("Move up"), icon: "up", disabled: index === 0, onSelect: () => moveArrayItem(path, index, -1) },
+		{
+			label: t("Move down"),
+			icon: "down",
+			disabled: index >= count - 1,
+			onSelect: () => moveArrayItem(path, index, 1),
+		},
+		{ label: t("Duplicate"), icon: "copy", onSelect: () => duplicateArrayItem(path, index) },
+		{
+			label: t("Delete row"),
+			icon: "trash",
+			danger: true,
+			separated: true,
+			onSelect: () => removeArrayItem(path, index),
+		},
+	];
+
+	const leafInput = (leaf: string, value: unknown) => (
+		<CommitInput
+			key={leaf}
+			className="ctl-leaf__input"
+			label={`${path} ${index + 1}: ${leaf}`}
+			dataArray={path}
+			dataIndex={index}
+			dataLeaf={leaf}
+			value={value}
+			onCommit={(raw) => commitLeaf(leaf, raw)}
+		/>
+	);
+
 	return (
 		<div
-			className={`item ctl-element${current ? " ctl-element--current item--selected" : ""}`}
+			className={`vlist__row ctl-element${current ? " is-current ctl-element--current" : ""}`}
 			data-array={path}
 			data-index={index}
 		>
-			<div className="row ctl-element__head">
-				<label className="ctl-current" title="этот элемент идёт в эфир">
-					<input
-						type="radio"
-						name={`ctl-sel-${path}`}
-						className="ctl-current__input"
-						checked={current}
-						data-array={path}
-						data-index={index}
-						onChange={() => setSelection(path, index)}
-					/>
-					<span>{current ? "текущий" : "сделать текущим"}</span>
-				</label>
-				<span className="hint mono">#{index + 1}</span>
-				<span className="spacer" />
-				<button
-					className="tiny"
-					title="выше"
-					disabled={index === 0}
-					onClick={() => moveArrayItem(path, index, -1)}
+			<input
+				type="radio"
+				name={`ctl-sel-${path}`}
+				className="ctl-current__input"
+				aria-label={t("{path}: row {n} goes on air", { path, n: index + 1 })}
+				title={current ? t("This row goes on air") : t("Send this row on air")}
+				checked={current}
+				data-array={path}
+				data-index={index}
+				onChange={() => setSelection(path, index)}
+			/>
+			{columns ? (
+				<div
+					className="vlist__cells"
+					style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
 				>
-					↑
-				</button>
-				<button
-					className="tiny"
-					title="ниже"
-					disabled={index >= count - 1}
-					onClick={() => moveArrayItem(path, index, 1)}
-				>
-					↓
-				</button>
-				<button
-					className="tiny"
-					title="дублировать"
-					onClick={() => duplicateArrayItem(path, index)}
-				>
-					⧉
-				</button>
-				<button
-					className="tiny danger"
-					title="удалить элемент"
-					onClick={() => removeArrayItem(path, index)}
-				>
-					×
-				</button>
-			</div>
-
-			{leaves.length > 0 ? (
-				<div className="col ctl-leaves">
+					{columns.map((column) =>
+						leafInput(column, leaves.find((leaf) => leaf.path === column)?.value),
+					)}
+				</div>
+			) : leaves.length > 0 ? (
+				<div className="vlist__stack">
 					{leaves.map((leaf) => (
-						<label className="ctl-leaf" key={leaf.path}>
-							<span className="ctl-leaf__key mono">{leaf.path}</span>
-							<CommitInput
-								className="ctl-leaf__input"
-								dataArray={path}
-								dataIndex={index}
-								dataLeaf={leaf.path}
-								value={leaf.value}
-								onCommit={(raw) => commitLeaf(leaf.path, raw)}
-							/>
+						<label className="vlist__pair" key={leaf.path}>
+							<span className="mono muted truncate" title={leaf.path}>
+								{leaf.path}
+							</span>
+							{leafInput(leaf.path, leaf.value)}
 						</label>
 					))}
 				</div>
 			) : (
 				<CommitInput
 					className="ctl-leaf__input"
+					label={t("{path}: row {n}", { path, n: index + 1 })}
 					dataArray={path}
 					dataIndex={index}
 					dataLeaf=""
@@ -419,513 +615,283 @@ function ArrayElement({
 					onCommit={(raw) => setArrayItem(path, index, coerce(raw))}
 				/>
 			)}
+			<Menu items={menu} label={t("Actions: row {n}", { n: index + 1 })} />
 		</div>
 	);
 }
 
-function ArrayEditor({
-	path,
-	list,
-	selection,
-}: {
-	path: string;
-	list: unknown[];
-	selection: VariableSelection;
-}) {
-	const current = chosenIndex(list.length, selection[path]);
+function ListBlock({ row, selection }: { row: VarRow; selection: VariableSelection }) {
+	const list = row.value as unknown[];
+	const current = chosenIndex(list.length, selection[row.path]);
+	const columns = useMemo(() => tableColumns(list), [list]);
+
+	const menu: MenuItem[] = [
+		{
+			label: t("Delete list"),
+			icon: "trash",
+			danger: true,
+			onSelect: () => removeDataValue(row.path),
+		},
+	];
 
 	return (
-		<div className="ctl-editor">
-			<div className="ctl-editor__head">
-				<span className="mono ctl-editor__path">{path}</span>
-				<Badge tone="ok">список · {list.length}</Badge>
+		<div className="vlist" data-path={row.path}>
+			<div className="vlist__head">
+				<span className="var__key mono truncate" title={row.path}>
+					{row.label}
+				</span>
+				<span className="tag" title={t("{{{path}.field}} inserts the chosen row", { path: row.path })}>
+					{t("list")}
+				</span>
 				<span className="spacer" />
-				<button className="primary ctl-add" onClick={() => appendArrayItem(path)}>
-					＋ добавить значение
-				</button>
-			</div>
-			<div className="hint">
-				{"{{" + path + ".поле}}"} подставляет выбранный элемент — сейчас выбран #{" "}
-				{list.length === 0 ? "—" : current + 1} из {list.length}.
-			</div>
-
-			<div className="col ctl-elements">
-				{list.length === 0 && (
-					<div className="hint">Список пуст — добавьте значение кнопкой выше.</div>
-				)}
-				{list.map((element, index) => (
-					<ArrayElement
-						key={`${path}:${index}`}
-						path={path}
-						index={index}
-						element={element}
-						count={list.length}
-						current={index === current}
-					/>
-				))}
-			</div>
-		</div>
-	);
-}
-
-function DataCard() {
-	const data = useTitleData();
-	const selection = useSelection();
-	const rows = useMemo(() => flattenData(data), [data]);
-	const [selectedPath, setSelectedPath] = useState<string>("");
-	const [newPath, setNewPath] = useState("");
-	const [newValue, setNewValue] = useState("");
-	const [bulk, setBulk] = useState("");
-	const [bulkMessage, setBulkMessage] = useState("");
-
-	const selectedRow = rows.find((row) => row.path === selectedPath) ?? null;
-
-	return (
-		<div className="card ctl-data-card">
-			<div className="card__head">
-				<h2>Данные (переменные)</h2>
-				<span className="hint">{rows.length} шт.</span>
-			</div>
-
-			<div className="ctl-data">
-				{/* ------------------------------------------------ left: variable list */}
-				<div className="ctl-data__pane ctl-data__list-pane">
-					<div className="list ctl-data__list">
-						{rows.length === 0 && (
-							<div className="hint">
-								Нет переменных. Добавьте, например,{" "}
-								<code className="mono">speaker.name</code>.
-							</div>
-						)}
-						{rows.map((row) => {
-							const list = Array.isArray(row.value) ? row.value : null;
-							const chosen = list
-								? list[chosenIndex(list.length, selection[row.path])]
-								: row.value;
-							return (
-								<div className="row ctl-var-row" key={row.path}>
-									<button
-										type="button"
-										className={`ctl-var${row.path === selectedPath ? " ctl-var--selected" : ""}`}
-										data-path={row.path}
-										title={row.path}
-										onClick={() => setSelectedPath(row.path)}
-									>
-										<span className="ctl-var__meta">
-											<span className="ctl-var__path mono small">{row.path}</span>
-											<span className="ctl-var__summary" title={summarize(chosen)}>
-												{summarize(chosen)}
-											</span>
-										</span>
-										<span className="spacer" />
-										{list ? (
-											<Badge tone="ok">список · {list.length}</Badge>
-										) : (
-											<Badge>значение</Badge>
-										)}
-									</button>
-									<button
-										className="danger tiny ctl-var-delete"
-										title="удалить переменную"
-										onClick={() => removeDataValue(row.path)}
-									>
-										×
-									</button>
-								</div>
-							);
-						})}
-					</div>
-
-					<div className="divider" />
-
-					<div className="row">
-						<input
-							placeholder="путь, напр. speaker.role"
-							value={newPath}
-							onChange={(event) => setNewPath(event.target.value)}
-							style={{ maxWidth: 180 }}
-						/>
-						<input
-							placeholder="значение"
-							value={newValue}
-							onChange={(event) => setNewValue(event.target.value)}
-						/>
-						<button
-							className="ctl-add-var"
-							onClick={() => {
-								if (!newPath.trim()) return;
-								setDataValue(newPath.trim(), coerce(newValue));
-								setNewPath("");
-								setNewValue("");
-							}}
-						>
-							Добавить
-						</button>
-					</div>
-
-					<div className="divider" />
-
-					<label className="field">
-						Массовое обновление (JSON)
-						<textarea
-							className="code-area"
-							style={{ minHeight: 80 }}
-							placeholder='{"speaker":{"name":"Иван","role":"Ведущий"}}'
-							value={bulk}
-							onChange={(event) => setBulk(event.target.value)}
-						/>
-					</label>
-					<div className="row">
-						<button
-							onClick={() => {
-								try {
-									mergeData(JSON.parse(bulk || "{}") as TitleData);
-									setBulkMessage("Объединено");
-								} catch (error) {
-									setBulkMessage(`Ошибка: ${String(error)}`);
-								}
-							}}
-						>
-							Объединить
-						</button>
-						<button
-							onClick={() => {
-								try {
-									replaceData(JSON.parse(bulk || "{}") as TitleData);
-									setBulkMessage("Заменено");
-								} catch (error) {
-									setBulkMessage(`Ошибка: ${String(error)}`);
-								}
-							}}
-						>
-							Заменить всё
-						</button>
-						{bulkMessage && <span className="hint">{bulkMessage}</span>}
-					</div>
-				</div>
-
-				{/* ------------------------------------------------ right: value editor */}
-				<div className="ctl-data__pane ctl-data__editor-pane">
-					{selectedRow ? (
-						Array.isArray(selectedRow.value) ? (
-							<ArrayEditor
-								path={selectedRow.path}
-								list={selectedRow.value}
-								selection={selection}
-							/>
-						) : (
-							<ScalarEditor path={selectedRow.path} value={selectedRow.value} />
-						)
-					) : (
-						<DataEmptyState />
-					)}
-				</div>
-			</div>
-		</div>
-	);
-}
-
-// ----------------------------------------------------------------- triggers
-
-/** Compact integer input for the per-item playback row; commits on blur / Enter. */
-function CtlNumberInput({
-	value,
-	onCommit,
-	step = 100,
-	min,
-	disabled,
-	title,
-}: {
-	value: number | undefined;
-	onCommit: (next: number) => void;
-	step?: number;
-	min?: number;
-	disabled?: boolean;
-	title?: string;
-}) {
-	const [draft, setDraft] = useState(value === undefined ? "" : String(value));
-	const [focused, setFocused] = useState(false);
-
-	useEffect(() => {
-		if (!focused) setDraft(value === undefined ? "" : String(value));
-	}, [value, focused]);
-
-	const commit = (raw: string) => {
-		const parsed = Number(raw);
-		if (!Number.isFinite(parsed)) {
-			setDraft(value === undefined ? "" : String(value));
-			return;
-		}
-		const rounded = Math.round(parsed);
-		onCommit(min !== undefined ? Math.max(min, rounded) : rounded);
-	};
-
-	return (
-		<input
-			type="number"
-			className="ctl-num"
-			data-hold-ms={title === "hold" ? "true" : undefined}
-			title={title}
-			step={step}
-			min={min}
-			disabled={disabled}
-			value={draft}
-			onFocus={() => setFocused(true)}
-			onChange={(event) => setDraft(event.target.value)}
-			onBlur={(event) => {
-				setFocused(false);
-				commit(event.target.value);
-			}}
-			onKeyDown={(event) => {
-				if (event.key === "Enter") (event.target as HTMLInputElement).blur();
-			}}
-		/>
-	);
-}
-
-function TriggerItemRow({
-	out,
-	item,
-	template,
-	playing,
-}: {
-	out: Out;
-	item: OutItem;
-	template: TitleTemplate | undefined;
-	playing: boolean;
-}) {
-	const isLoop = item.playback.mode === "loop";
-	// A loop has no hold of its own — the «показать» toggle is its power switch —
-	// so the hold settings, and with them the video-duration probe, do not apply.
-	const videoMode = !isLoop && item.playback.holdMode === "video";
-	const hasVideo = hasVideoLayer(template);
-	const canPlay = itemCanPlay(item, template);
-	const videoDuration = useVideoDuration(
-		item.templateId,
-		videoMode && hasVideo,
-		videoLayerSignature(template),
-	);
-
-	return (
-		<div className="item ctl-item" data-out={out.id} data-item={item.id}>
-			<div className="ctl-item__head row">
-				<strong className="grow">{template?.name ?? item.templateId}</strong>
-				{playing && <Badge tone="ok">играет</Badge>}
-				{!item.enabled && !item.held && <Badge>авто выкл</Badge>}
-				<label
-					className={`ctl-switch${item.held ? " ctl-switch--on" : ""}`}
-					data-out={out.id}
-					data-item={item.id}
-					data-held={item.held ? "true" : "false"}
-					title={item.held ? "Снять с эфира" : "Показать и держать в эфире"}
-				>
-					<input
-						type="checkbox"
-						className="ctl-switch__input"
-						checked={Boolean(item.held)}
-						onChange={() => updateItem(out.id, item.id, { held: !item.held })}
-					/>
-					<span className="ctl-switch__track">
-						<span className="ctl-switch__thumb" />
-					</span>
-					<span className="ctl-switch__label">показать</span>
-				</label>
 				<button
-					className="tiny ctl-play"
-					data-can-play={canPlay ? "true" : "false"}
-					title={
-						canPlay
-							? "Проиграть один раз"
-							: item.held
-								? "Титр держится в эфире: снимается тумблером «показать»"
-								: "Цикл включается и выключается тумблером «показать»"
-					}
-					disabled={!canPlay}
-					onClick={() => triggerItem(out.id, item.id)}
+					type="button"
+					className="ghost small ctl-add"
+					onClick={() => appendArrayItem(row.path)}
 				>
-					Проиграть
+					<Icon name="plus" size={14} />
+					{t("Row")}
 				</button>
+				<Menu items={menu} label={t("Actions: {name}", { name: row.path })} />
 			</div>
 
-			<div className="ctl-item__playback row">
-				<label className="field" style={{ maxWidth: 90 }}>
-					режим
-					<select
-						value={item.playback.mode}
-						onChange={(event) =>
-							updateItemPlayback(out.id, item.id, {
-								mode: event.target.value === "loop" ? "loop" : "once",
-							})
-						}
+			{list.length === 0 ? (
+				<div className="hint">{t("The list is empty. Add a row and it becomes the chosen one.")}</div>
+			) : null}
+
+			{columns && list.length > 0 ? (
+				<div className="vlist__row vlist__row--head" aria-hidden="true">
+					<span />
+					<div
+						className="vlist__cells"
+						style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
 					>
-						<option value="once">once</option>
-						<option value="loop">loop</option>
-					</select>
-				</label>
-
-				{isLoop ? (
-					<span className="hint" data-loop-hint>
-						висит, пока включён «показать»; анимация циклится сама
-					</span>
-				) : (
-					<>
-						<label className="field" style={{ maxWidth: 110 }}>
-							держать, мс
-							<CtlNumberInput
-								title="hold"
-								value={item.playback.holdMs}
-								min={0}
-								step={250}
-								disabled={videoMode}
-								onCommit={(value) =>
-									updateItemPlayback(out.id, item.id, { holdMs: value })
-								}
-							/>
-						</label>
-
-						<label className="ctl-hold row small" data-hold-scope="item">
-							<input
-								type="checkbox"
-								data-hold-mode
-								checked={videoMode}
-								onChange={(event) =>
-									updateItemPlayback(out.id, item.id, {
-										holdMode: event.target.checked ? "video" : "fixed",
-									})
-								}
-							/>
-							длительность = видео
-					{videoMode ? (
-						<span className="hint" data-hold-hint>
-							{videoHoldHint(videoDuration, hasVideo)}
-						</span>
-					) : null}
-						</label>
-					</>
-				)}
-			</div>
-		</div>
-	);
-}
-
-function TriggersCard() {
-	const outs = useOuts();
-	const templates = useTemplates();
-	const runtime = useRuntime();
-
-	return (
-		<div className="card">
-			<div className="card__head">
-				<h2>Анимации на out'ах</h2>
-				<span className="hint">revision {runtime.revision ?? 0}</span>
-			</div>
-
-			{outs.length === 0 && <div className="hint">Out'ы ещё не созданы.</div>}
-
-			{outs.map((out: Out) => (
-				<div key={out.id} style={{ marginBottom: 8 }}>
-					<div className="row row--between">
-						<strong>{out.name}</strong>
-						<span className="hint mono">
-							{out.id} · {out.width}×{out.height}
-						</span>
-					</div>
-					<div className="list" style={{ marginTop: 4 }}>
-						{out.items.length === 0 && <div className="hint">Нет анимаций на этом out.</div>}
-						{out.items.map((item) => (
-							<TriggerItemRow
-								key={item.id}
-								out={out}
-								item={item}
-								template={templates.find((t) => t.id === item.templateId)}
-								playing={(runtime.playing?.[out.id] ?? []).includes(item.id)}
-							/>
+						{columns.map((column) => (
+							<span className="mono truncate" key={column}>
+								{column}
+							</span>
 						))}
 					</div>
+					<span />
 				</div>
+			) : null}
+
+			{list.map((element, index) => (
+				<ListRow
+					key={`${row.path}:${index}`}
+					path={row.path}
+					index={index}
+					element={element}
+					count={list.length}
+					current={index === current}
+					columns={columns}
+				/>
 			))}
 		</div>
 	);
 }
 
-// -------------------------------------------------------------------- outs
+/**
+ * Variables an added path would replace: the path itself, a group it would
+ * flatten (`speaker` over `speaker.name`), or a value it would turn into a
+ * group (`speaker.name.first` over `speaker.name`).
+ */
+function overwrittenBy(path: string, rows: Array<{ path: string }>): string[] {
+	return rows
+		.map((row) => row.path)
+		.filter(
+			(existing) =>
+				existing === path ||
+				existing.startsWith(`${path}.`) ||
+				path.startsWith(`${existing}.`),
+		);
+}
 
-function OutsCard() {
-	const outs = useOuts();
-	const [copied, setCopied] = useState("");
+function AddVariable({ rows }: { rows: Array<{ path: string }> }) {
+	const [path, setPath] = useState("");
+	const [value, setValue] = useState("");
+	const pathRef = useRef<HTMLInputElement | null>(null);
+
 	return (
-		<div className="card">
-			<div className="card__head">
-				<h2>Out'ы для OBS</h2>
-			</div>
-			<div className="list">
-				{outs.map((out) => {
-					const url = absoluteOutUrl(out.id);
-					return (
-						<div className="col" key={out.id} style={{ gap: 2 }}>
-							<span className="small">{out.name}</span>
-							<div className="out-link">
-								<input readOnly value={url} onFocus={(event) => event.target.select()} />
-								<button
-									className="tiny"
-									onClick={() => {
-										void copyText(url).then(() => {
-											setCopied(out.id);
-											window.setTimeout(() => setCopied(""), 1500);
-										});
-									}}
-								>
-									{copied === out.id ? "скопировано" : "копировать"}
-								</button>
-							</div>
-						</div>
-					);
-				})}
-				{outs.length === 0 && <div className="hint">Создайте out в панели «Titles &amp; Outs».</div>}
+		<form
+			className="ctl-tool"
+			onSubmit={(event) => {
+				event.preventDefault();
+				const target = path.trim();
+				if (!target) return;
+				const lost = overwrittenBy(target, rows);
+				if (
+					lost.length > 0 &&
+					!window.confirm(
+						t("This will replace what already exists: {list}. Continue?", { list: lost.join(", ") }),
+					)
+				) {
+					return;
+				}
+				setDataValue(target, coerce(value));
+				setPath("");
+				setValue("");
+				pathRef.current?.focus();
+			}}
+		>
+			<input
+				ref={pathRef}
+				autoFocus
+				className="mono ctl-tool__path"
+				aria-label={t("Path of the new variable")}
+				placeholder="speaker.role"
+				value={path}
+				onChange={(event) => setPath(event.target.value)}
+			/>
+			<input
+				aria-label={t("Value of the new variable")}
+				placeholder={t("Value")}
+				value={value}
+				onChange={(event) => setValue(event.target.value)}
+			/>
+			<button type="submit" className="primary ctl-add-var" disabled={!path.trim()}>
+				{t("Add")}
+			</button>
+		</form>
+	);
+}
+
+function BulkJson() {
+	const [text, setText] = useState("");
+	const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+	const apply = (mode: "merge" | "replace") => {
+		let parsed: TitleData;
+		try {
+			parsed = JSON.parse(text || "{}") as TitleData;
+		} catch (error) {
+			setMessage({
+				ok: false,
+				text: t("This is not JSON: {error}", { error: (error as Error).message }),
+			});
+			return;
+		}
+		if (mode === "replace") {
+			if (!window.confirm(t("Replace all variables with the contents of the field? The current values will be lost."))) {
+				return;
+			}
+			replaceData(parsed);
+			setMessage({ ok: true, text: t("All variables replaced") });
+		} else {
+			mergeData(parsed);
+			setMessage({ ok: true, text: t("Added to the current ones") });
+		}
+	};
+
+	return (
+		<div className="ctl-tool ctl-tool--col">
+			<textarea
+				className="code-area"
+				rows={5}
+				autoFocus
+				aria-label={t("Variables as JSON")}
+				placeholder='{"speaker":{"name":"John","role":"Host"}}'
+				value={text}
+				onChange={(event) => setText(event.target.value)}
+			/>
+			<div className="row row--wrap">
+				<button type="button" onClick={() => apply("merge")}>
+					{t("Add to current")}
+				</button>
+				<button type="button" className="danger" onClick={() => apply("replace")}>
+					{t("Replace all")}
+				</button>
+				{message ? <span className={message.ok ? "hint" : "err"}>{message.text}</span> : null}
 			</div>
 		</div>
 	);
 }
 
-// ------------------------------------------------------------------ status
-
-function StateLine() {
-	const active = useActiveTitle();
-	const runtime = useRuntime();
+function DataPanel() {
+	const data = useTitleData();
 	const selection = useSelection();
-	const activeName = getTemplate(active.templateId)?.name ?? active.templateId;
-	const chosenLists = Object.keys(selection).length;
+	const rows = useMemo(() => flattenData(data), [data]);
+	const groups = useMemo(() => groupRows(rows), [rows]);
+	const [tool, setTool] = useState<"add" | "json" | null>(null);
+
+	const toggle = (next: "add" | "json") => setTool((value) => (value === next ? null : next));
 
 	return (
-		<div className="ctl-status">
-			{/* The workspace tab already shows the panel name; keep only a compact brand. */}
-			<span className="ctl-status__brand">notGT — Control</span>
-			{active.visible ? (
-				<Badge tone="live">В эфире: {activeName ?? "—"}</Badge>
+		<section className="panel ctl-data">
+			<header className="panel__head">
+				<h2>{t("Data")}</h2>
+				<span className="spacer" />
+				<button
+					type="button"
+					className={`ghost${tool === "json" ? " is-on" : ""}`}
+					aria-expanded={tool === "json"}
+					onClick={() => toggle("json")}
+				>
+					<Icon name="code" size={14} />
+					JSON
+				</button>
+				<button
+					type="button"
+					className={`ghost${tool === "add" ? " is-on" : ""}`}
+					aria-expanded={tool === "add"}
+					onClick={() => toggle("add")}
+				>
+					<Icon name="plus" size={14} />
+					{t("Variable")}
+				</button>
+			</header>
+
+			{tool === "add" ? <AddVariable rows={rows} /> : null}
+			{tool === "json" ? <BulkJson /> : null}
+
+			{rows.length === 0 ? (
+				<div className="empty">
+					{tr(
+						"No variables yet. Add one, for example {path} — an animation reads it as {token}.",
+						{ path: <code>speaker.name</code>, token: <code>{"{{speaker.name}}"}</code> },
+					)}
+				</div>
 			) : (
-				<Badge>скрыто</Badge>
+				groups.map((group) => (
+					<div className="vgroup" key={group.name}>
+						{group.name ? <h3 className="vgroup__name mono">{group.name}</h3> : null}
+						{group.rows.map((row) =>
+							Array.isArray(row.value) ? (
+								<ListBlock key={row.path} row={row} selection={selection} />
+							) : (
+								<ScalarRow key={row.path} row={row} />
+							),
+						)}
+					</div>
+				))
 			)}
-			<span className="hint mono">
-				active: {active.templateId ?? "—"} · rev {runtime.revision ?? 0}
-			</span>
-			{chosenLists > 0 && <span className="hint">списков с выбором: {chosenLists}</span>}
-		</div>
+		</section>
 	);
 }
+
+// ---------------------------------------------------------------------- app
 
 function App() {
+	const outs = useOuts();
+	useLang();
+
 	return (
-		<div className="ctl-app">
-			<StateLine />
-			<div className="ctl-layout">
-				<div className="ctl-col">
-					<ProgramCard />
-					<TriggersCard />
-					<OutsCard />
+		<div className="ctl">
+			<AirBar />
+			<div className="ctl-body">
+				<div className="ctl-air">
+					{outs.length === 0 ? (
+						<section className="panel">
+							<div className="empty">
+								{t("An out is one Browser Source in OBS. Create the first one in Titles & Outs.")}
+							</div>
+						</section>
+					) : (
+						outs.map((out) => <OutBlock key={out.id} out={out} />)
+					)}
+					<QuickShow />
 				</div>
-				<div className="ctl-col">
-					<DataCard />
-				</div>
+				<DataPanel />
 			</div>
 		</div>
 	);

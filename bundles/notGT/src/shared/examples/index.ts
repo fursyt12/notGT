@@ -23,8 +23,8 @@ export const EXAMPLES: ExampleCode[] = [
  * the template itself, so the Editor shows the code and can edit it, and the
  * live preview renders it.
  *
- * They are ordinary operator data once seeded — renaming, editing, duplicating
- * or deleting them is allowed and never overwritten.
+ * These three are the source of their gallery entries (`gallery.ts`), which is
+ * where they are named and localized.
  */
 export function createExampleTemplates(): TitleTemplate[] {
 	const now = Date.now();
@@ -42,14 +42,4 @@ export function createExampleTemplates(): TitleTemplate[] {
 		createdAt: now,
 		updatedAt: now,
 	}));
-}
-
-/**
- * Examples that an already populated store is still missing. Used by the
- * one-time migration, so an existing installation picks the examples up after
- * an update while a deliberately deleted one stays deleted.
- */
-export function missingExampleTemplates(existing: TitleTemplate[]): TitleTemplate[] {
-	const ids = new Set(existing.map((template) => template.id));
-	return createExampleTemplates().filter((template) => !ids.has(template.id));
 }

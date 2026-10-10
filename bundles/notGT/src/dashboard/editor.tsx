@@ -12,15 +12,20 @@
  *     Replicant writes applied immediately;
  *   - layer + template edits happen on a local draft clone of the active
  *     animation and only reach the Replicant on "Сохранить" (also implied by
- *     Preview / Показать / Toggle).
+ *     «Проиграть» and «В эфир»).
+ *
+ * Screen layout: one toolbar; placements, layers and the library on the left;
+ * the canvas in the middle with the code dock under it for `kind: "code"`; and
+ * an inspector on the right, split into tabs by what is being edited — the
+ * layer, the placement on this out, or the animation itself.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
-import { codeSource } from "../graphics/code-runtime";
+import { CODE_HIDE_FALLBACK_MS, codeSource } from "../graphics/code-runtime";
 import { interpolate } from "../shared/binding";
 import { cropBox } from "../shared/crop";
-import { BUNDLE_NAME } from "../shared/types";
+import { BUNDLE_NAME, CODE_EXIT_MAX_MS, CODE_MESSAGES } from "../shared/types";
 import type {
 	CodeBlock,
 	Layer,
@@ -34,6 +39,7 @@ import type {
 	TitleTemplate,
 	VariableSelection,
 } from "../shared/types";
+import type { GalleryExample } from "../shared/examples/gallery";
 import { EditorCanvas } from "./editor/canvas";
 import { useCodeDocument } from "./editor/code-preview";
 import {
@@ -55,9 +61,12 @@ import {
 	resolveAssetUrl,
 	round,
 	sortByZ,
+	useElementSize,
 } from "./editor/ui";
+import { N_, getLang, t, tr, useLang, type Phrase } from "./i18n";
 import {
 	absoluteOutUrl,
+	addExample,
 	addItem,
 	clone,
 	copyText,
@@ -66,11 +75,9 @@ import {
 	deleteTemplate,
 	duplicateTemplate,
 	flattenData,
-	formatMs,
 	getDb,
 	getTemplate,
 	itemCanPlay,
-	hasVideoLayer,
 	hideTitle,
 	moveItem,
 	newId,
@@ -78,47 +85,94 @@ import {
 	removeItem,
 	saveTemplate,
 	showTitle,
-	toggleTitle,
 	triggerItem,
 	triggerTemplate,
 	updateItem,
 	updateItemPlayback,
+	useActiveTitle,
 	useOuts,
 	useRuntime,
 	useSelection,
 	useTemplates,
 	useTitleData,
-	useVideoDuration,
-	videoHoldHint,
-	videoLayerSignature,
 } from "./shared";
+import {
+	Icon,
+	IconButton,
+	LangSwitch,
+	Menu,
+	PlaybackFields,
+	exampleMenuItem,
+	type IconName,
+	type MenuItem,
+} from "./ui";
 
 // ------------------------------------------------------------------ helpers
 
-const LAYER_ICON: Record<LayerType, string> = {
-	text: "T",
-	shape: "◻",
-	image: "▣",
-	gif: "▶",
-	video: "🎞",
+const LAYER_ICON: Record<LayerType, IconName> = {
+	text: "text",
+	shape: "shape",
+	image: "image",
+	gif: "gif",
+	video: "video",
 };
 
-const TEXT_ALIGNS: Array<{ value: NonNullable<LayerStyle["align"]>; label: string }> = [
-	{ value: "left", label: "слева" },
-	{ value: "center", label: "по центру" },
-	{ value: "right", label: "справа" },
+const LAYER_TYPES: LayerType[] = ["text", "shape", "image", "gif", "video"];
+
+/** The "add a layer" choices — the toolbar and the layer list share them. */
+function layerMenu(onAdd: (type: LayerType) => void): MenuItem[] {
+	return LAYER_TYPES.map((type) => ({
+		label: t(LAYER_TYPE_LABEL[type]),
+		icon: LAYER_ICON[type],
+		onSelect: () => onAdd(type),
+	}));
+}
+
+/** The ways to start an animation: from scratch, or from an example. */
+function createMenu(
+	onCreate: (kind: TemplateKind) => void,
+	onExample: (example: GalleryExample) => void,
+): MenuItem[] {
+	return [
+		{
+			label: t("From layers"),
+			hint: t("Text, shapes, images and video — built with the mouse"),
+			icon: "layers",
+			onSelect: () => onCreate("layers"),
+		},
+		{
+			label: t("From code"),
+			hint: t("Your own HTML, CSS and JavaScript"),
+			icon: "code",
+			onSelect: () => onCreate("code"),
+		},
+		exampleMenuItem(onExample),
+	];
+}
+
+const TEXT_ALIGNS: Array<{ value: NonNullable<LayerStyle["align"]>; label: Phrase }> = [
+	{ value: "left", label: N_("left") },
+	{ value: "center", label: N_("center") },
+	{ value: "right", label: N_("right") },
 ];
 
-const VERTICAL_ALIGNS: Array<{ value: NonNullable<LayerStyle["verticalAlign"]>; label: string }> = [
-	{ value: "top", label: "сверху" },
-	{ value: "middle", label: "по центру" },
-	{ value: "bottom", label: "снизу" },
+const VERTICAL_ALIGNS: Array<{ value: NonNullable<LayerStyle["verticalAlign"]>; label: Phrase }> = [
+	{ value: "top", label: N_("top") },
+	{ value: "middle", label: N_("center") },
+	{ value: "bottom", label: N_("bottom") },
 ];
 
-const TEXT_TRANSFORMS: Array<{ value: NonNullable<LayerStyle["textTransform"]>; label: string }> = [
-	{ value: "none", label: "как есть" },
-	{ value: "uppercase", label: "ВЕРХНИЙ РЕГИСТР" },
-	{ value: "lowercase", label: "нижний регистр" },
+/** Options kept in a constant, with their labels in the current language. */
+function localized<T extends string>(
+	options: Array<{ value: T; label: Phrase }>,
+): Array<{ value: T; label: string }> {
+	return options.map((option) => ({ value: option.value, label: t(option.label) }));
+}
+
+const TEXT_TRANSFORMS: Array<{ value: NonNullable<LayerStyle["textTransform"]>; label: Phrase }> = [
+	{ value: "none", label: N_("as typed") },
+	{ value: "uppercase", label: N_("UPPERCASE") },
+	{ value: "lowercase", label: N_("lowercase") },
 ];
 
 const FONT_WEIGHTS: Array<{ value: string; label: string }> = [
@@ -129,11 +183,6 @@ const FONT_WEIGHTS: Array<{ value: string; label: string }> = [
 	{ value: "700", label: "700 bold" },
 	{ value: "800", label: "800 extrabold" },
 	{ value: "900", label: "900 black" },
-];
-
-const PLAYBACK_MODES: Array<{ value: PlaybackConfig["mode"]; label: string }> = [
-	{ value: "once", label: "once — по триггеру" },
-	{ value: "loop", label: "loop — цикл" },
 ];
 
 function normalizeZ(layers: Layer[]): Layer[] {
@@ -152,8 +201,8 @@ function makeLayer(type: LayerType, z: number): Layer {
 	if (type === "text") {
 		return {
 			...base,
-			name: "Текст",
-			text: "Новый текст",
+			name: t("Text"),
+			text: t("New text"),
 			width: 40,
 			style: {
 				...base.style,
@@ -170,7 +219,7 @@ function makeLayer(type: LayerType, z: number): Layer {
 	if (type === "shape") {
 		return {
 			...base,
-			name: "Фигура",
+			name: t("Shape"),
 			shape: "rect",
 			width: 30,
 			height: 12,
@@ -182,7 +231,7 @@ function makeLayer(type: LayerType, z: number): Layer {
 		// spelled out, so it is selectable/visible even before a `src` is set.
 		return {
 			...base,
-			name: "Видео",
+			name: t("Video"),
 			src: "",
 			width: 32,
 			height: 18,
@@ -197,7 +246,7 @@ function makeLayer(type: LayerType, z: number): Layer {
 	}
 	return {
 		...base,
-		name: type === "gif" ? "GIF" : "Картинка",
+		name: type === "gif" ? "GIF" : t("Image"),
 		src: "",
 		width: 24,
 		height: 24,
@@ -210,7 +259,7 @@ function orderedItems(out: Out | null): OutItem[] {
 	return [...out.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
 
-/** Textarea used for layer text and code blocks. */
+/** Textarea used for layer text. */
 function CodeArea({
 	label,
 	value,
@@ -238,7 +287,7 @@ function CodeArea({
 	);
 }
 
-// ------------------------------------------------- "на этом out'е" item list
+// ------------------------------------------------------ placements on the out
 
 function OutItemsList({
 	out,
@@ -247,7 +296,6 @@ function OutItemsList({
 	activeItemId,
 	playing,
 	onActivate,
-	onToggleEnabled,
 	onMove,
 	onTrigger,
 	onRemove,
@@ -258,29 +306,28 @@ function OutItemsList({
 	activeItemId: string | null;
 	playing: string[];
 	onActivate: (itemId: string) => void;
-	onToggleEnabled: (itemId: string, enabled: boolean) => void;
 	onMove: (itemId: string, delta: number) => void;
 	onTrigger: (itemId: string) => void;
 	onRemove: (itemId: string) => void;
 }) {
 	const items = orderedItems(out);
 	return (
-		<div className="ed-card">
-			<div className="ed-card__head">
-				<strong>На этом out&apos;е</strong>
-				<span className="ed-muted ed-small">{items.length}</span>
-			</div>
+		<section className="ed-group">
+			<header className="ed-group__head">
+				<h3>{t("On the out")}</h3>
+			</header>
 			{items.length === 0 ? (
-				<p className="ed-hint">
-					На этом out&apos;е пока ничего нет — разместите анимацию из библиотеки ниже.
+				<p className="ed-hint ed-group__hint">
+					{t("Nothing here yet. Place an animation from the library below.")}
 				</p>
 			) : (
 				<div className="ed-list">
-					{items.map((item) => {
+					{items.map((item, index) => {
 						const template = templates.find((candidate) => candidate.id === item.templateId);
 						const live = draft && draft.id === item.templateId ? draft : template;
 						const canPlay = itemCanPlay(item, live);
 						const name = live?.name ?? "—";
+						const onAir = playing.includes(item.id);
 						return (
 							<div
 								key={item.id}
@@ -289,68 +336,63 @@ function OutItemsList({
 								}`}
 								onClick={() => onActivate(item.id)}
 							>
-								<input
-									type="checkbox"
-									title={item.enabled ? "Выключить на out'е" : "Включить на out'е"}
-									checked={item.enabled}
-									onClick={(event) => event.stopPropagation()}
-									onChange={(event) => onToggleEnabled(item.id, event.target.checked)}
+								<span
+									className={`tally${onAir ? " is-live" : ""}`}
+									title={onAir ? t("On air") : undefined}
 								/>
-								<span className="ed-list-item__name" title={name}>
+								<span
+									className="ed-list-item__name"
+									title={item.enabled ? name : t("{name} — API start is off", { name })}
+								>
 									{name}
 								</span>
-								{playing.includes(item.id) ? (
-									<span className="ed-badge ed-badge--live">играет</span>
-								) : null}
 								<span
 									className="ed-list-item__actions"
 									onClick={(event) => event.stopPropagation()}
 								>
-									<button
-										type="button"
-										className="ed-icon-btn"
-										title="Выше"
+									<IconButton
+										className="small"
+										icon="up"
+										size={14}
+										label={t("Move up")}
+										disabled={index === 0}
 										onClick={() => onMove(item.id, -1)}
-									>
-										↑
-									</button>
-									<button
-										type="button"
-										className="ed-icon-btn"
-										title="Ниже"
+									/>
+									<IconButton
+										className="small"
+										icon="down"
+										size={14}
+										label={t("Move down")}
+										disabled={index >= items.length - 1}
 										onClick={() => onMove(item.id, 1)}
-									>
-										↓
-									</button>
-									<button
-										type="button"
-										className="ed-icon-btn"
+									/>
+									<IconButton
+										className="small"
+										icon="play"
+										size={14}
 										data-can-play={canPlay ? "true" : "false"}
-										title={
+										label={
 											canPlay
-												? "Проиграть один раз"
-												: "Цикл и «показать и держать» переключаются в панели Control"
+												? t("Play once")
+												: t("An animation that stays up is switched on in Control")
 										}
 										disabled={!canPlay}
 										onClick={() => onTrigger(item.id)}
-									>
-										проиграть
-									</button>
-									<button
-										type="button"
-										className="ed-icon-btn ed-icon-btn--danger"
-										title="Убрать с out'а"
+									/>
+									<IconButton
+										className="small ed-danger"
+										icon="x"
+										size={14}
+										label={t("Remove from out")}
 										onClick={() => onRemove(item.id)}
-									>
-										✕
-									</button>
+									/>
 								</span>
 							</div>
 						);
 					})}
 				</div>
 			)}
-		</div>
+		</section>
 	);
 }
 
@@ -365,6 +407,7 @@ function TemplateLibrary({
 	onSelect,
 	onPlace,
 	onCreate,
+	onExample,
 	onDuplicate,
 	onDelete,
 	onRename,
@@ -377,18 +420,26 @@ function TemplateLibrary({
 	onSelect: (id: string) => void;
 	onPlace: (id: string) => void;
 	onCreate: (kind: TemplateKind) => void;
+	onExample: (example: GalleryExample) => void;
 	onDuplicate: (id: string) => void;
 	onDelete: (id: string) => void;
 	onRename: (id: string, name: string) => void;
 }) {
 	return (
-		<div className="ed-card">
-			<div className="ed-card__head">
-				<strong>Все анимации</strong>
-				<span className="ed-muted ed-small">{templates.length}</span>
-			</div>
+		<section className="ed-group">
+			<header className="ed-group__head">
+				<h3>{t("Library")}</h3>
+				<Menu
+					className="small"
+					icon="plus"
+					label={t("New animation")}
+					items={createMenu(onCreate, onExample)}
+				/>
+			</header>
 			{templates.length === 0 ? (
-				<p className="ed-hint">Анимаций пока нет — создайте первую.</p>
+				<p className="ed-hint ed-group__hint">
+					{t("No animations yet. The “+” button creates one or adds a ready-made example.")}
+				</p>
 			) : (
 				<div className="ed-list">
 					{templates.map((template) => {
@@ -402,13 +453,16 @@ function TemplateLibrary({
 								className={`ed-list-item${highlight ? " is-selected" : ""}`}
 								onClick={() => onSelect(template.id)}
 							>
-								<span className={`ed-badge ed-badge--${template.kind}`}>
-									{template.kind === "code" ? "код" : "слои"}
+								<span
+									className="ed-kind"
+									title={template.kind === "code" ? t("Code") : t("Layers")}
+								>
+									<Icon name={template.kind === "code" ? "code" : "layers"} size={14} />
 								</span>
 								<span className="ed-list-item__name">
 									<InlineName
 										value={name}
-										placeholder="Без имени"
+										placeholder={t("Untitled")}
 										onChange={(next) => onRename(template.id, next)}
 									/>
 								</span>
@@ -417,46 +471,35 @@ function TemplateLibrary({
 									onClick={(event) => event.stopPropagation()}
 								>
 									{!placed ? (
-										<button
-											type="button"
-											className="ed-mini"
-											title="Разместить на выбранном out'е"
+										<IconButton
+											className="small"
+											icon="plus"
+											size={14}
+											label={t("Place on this out")}
 											onClick={() => onPlace(template.id)}
-										>
-											на out
-										</button>
+										/>
 									) : null}
-									<button
-										type="button"
-										className="ed-icon-btn"
-										title="Дублировать"
+									<IconButton
+										className="small"
+										icon="copy"
+										size={14}
+										label={t("Duplicate")}
 										onClick={() => onDuplicate(template.id)}
-									>
-										⧉
-									</button>
-									<button
-										type="button"
-										className="ed-icon-btn ed-icon-btn--danger"
-										title="Удалить"
+									/>
+									<IconButton
+										className="small ed-danger"
+										icon="trash"
+										size={14}
+										label={t("Delete")}
 										onClick={() => onDelete(template.id)}
-									>
-										✕
-									</button>
+									/>
 								</span>
 							</div>
 						);
 					})}
 				</div>
 			)}
-			<div className="ed-row ed-mt">
-				<button type="button" onClick={() => onCreate("layers")}>
-					+ Слои
-				</button>
-				<button type="button" onClick={() => onCreate("code")}>
-					+ Код
-				</button>
-			</div>
-		</div>
+		</section>
 	);
 }
 
@@ -483,33 +526,18 @@ function LayerList({
 }) {
 	const ordered = useMemo(() => sortByZ(layers).reverse(), [layers]);
 	return (
-		<div className="ed-card">
-			<div className="ed-card__head">
-				<strong>Слои активной анимации</strong>
-				<span className="ed-muted ed-small">{layers.length}</span>
-			</div>
-			<div className="ed-row ed-mb">
-				<button type="button" onClick={() => onAdd("text")}>
-					+ Текст
-				</button>
-				<button type="button" onClick={() => onAdd("shape")}>
-					+ Фигура
-				</button>
-				<button type="button" onClick={() => onAdd("image")}>
-					+ Картинка
-				</button>
-				<button type="button" onClick={() => onAdd("gif")}>
-					+ GIF
-				</button>
-				<button type="button" onClick={() => onAdd("video")}>
-					+ Видео
-				</button>
-			</div>
+		<section className="ed-group">
+			<header className="ed-group__head">
+				<h3>{t("Layers")}</h3>
+				<Menu className="small" icon="plus" label={t("Add layer")} items={layerMenu(onAdd)} />
+			</header>
 			{ordered.length === 0 ? (
-				<p className="ed-hint">Слоёв пока нет — добавьте текст, фигуру или картинку.</p>
+				<p className="ed-hint ed-group__hint">
+					{t("No layers yet. Add text, a shape or an image with the “+” button.")}
+				</p>
 			) : (
 				<div className="ed-list">
-					{ordered.map((layer) => (
+					{ordered.map((layer, index) => (
 						<div
 							key={layer.id}
 							className={`ed-list-item${layer.id === selectedLayerId ? " is-selected" : ""}${
@@ -517,8 +545,8 @@ function LayerList({
 							}`}
 							onClick={() => onSelect(layer.id)}
 						>
-							<span className="ed-layer-icon" title={LAYER_TYPE_LABEL[layer.type]}>
-								{LAYER_ICON[layer.type]}
+							<span className="ed-kind" title={t(LAYER_TYPE_LABEL[layer.type])}>
+								<Icon name={LAYER_ICON[layer.type]} size={14} />
 							</span>
 							<span className="ed-list-item__name">
 								<InlineName
@@ -527,56 +555,83 @@ function LayerList({
 									onChange={(name) => onRename(layer.id, name)}
 								/>
 							</span>
+							{/* A state that is on stays visible and is its own "off" button. */}
+							{layer.hidden || layer.locked ? (
+								<span
+									className="ed-list-item__state"
+									onClick={(event) => event.stopPropagation()}
+								>
+									{layer.hidden ? (
+										<IconButton
+											className="small"
+											icon="eyeOff"
+											size={14}
+											label={t("Hidden — show it")}
+											onClick={() => onPatch(layer.id, { hidden: false })}
+										/>
+									) : null}
+									{layer.locked ? (
+										<IconButton
+											className="small"
+											icon="lock"
+											size={14}
+											label={t("Locked — unlock it")}
+											onClick={() => onPatch(layer.id, { locked: false })}
+										/>
+									) : null}
+								</span>
+							) : null}
 							<span
 								className="ed-list-item__actions"
 								onClick={(event) => event.stopPropagation()}
 							>
-								<button
-									type="button"
-									className="ed-icon-btn"
-									title="Выше"
+								<IconButton
+									className="small"
+									icon="up"
+									size={14}
+									label={t("Move up")}
+									disabled={index === 0}
 									onClick={() => onMove(layer.id, 1)}
-								>
-									↑
-								</button>
-								<button
-									type="button"
-									className="ed-icon-btn"
-									title="Ниже"
+								/>
+								<IconButton
+									className="small"
+									icon="down"
+									size={14}
+									label={t("Move down")}
+									disabled={index >= ordered.length - 1}
 									onClick={() => onMove(layer.id, -1)}
-								>
-									↓
-								</button>
-								<button
-									type="button"
-									className={`ed-icon-btn${layer.hidden ? " is-on" : ""}`}
-									title={layer.hidden ? "Показать" : "Скрыть"}
-									onClick={() => onPatch(layer.id, { hidden: !layer.hidden })}
-								>
-									{layer.hidden ? "◌" : "◉"}
-								</button>
-								<button
-									type="button"
-									className={`ed-icon-btn${layer.locked ? " is-on" : ""}`}
-									title={layer.locked ? "Разблокировать" : "Заблокировать"}
-									onClick={() => onPatch(layer.id, { locked: !layer.locked })}
-								>
-									{layer.locked ? "🔒" : "🔓"}
-								</button>
-								<button
-									type="button"
-									className="ed-icon-btn ed-icon-btn--danger"
-									title="Удалить"
+								/>
+								{!layer.hidden ? (
+									<IconButton
+										className="small"
+										icon="eye"
+										size={14}
+										label={t("Hide")}
+										onClick={() => onPatch(layer.id, { hidden: true })}
+									/>
+								) : null}
+								{!layer.locked ? (
+									<IconButton
+										className="small"
+										icon="unlock"
+										size={14}
+										label={t("Lock")}
+										onClick={() => onPatch(layer.id, { locked: true })}
+									/>
+								) : null}
+								<IconButton
+									className="small ed-danger"
+									icon="x"
+									size={14}
+									label={t("Delete layer")}
 									onClick={() => onDelete(layer.id)}
-								>
-									✕
-								</button>
+								/>
 							</span>
 						</div>
 					))}
 				</div>
 			)}
-		</div>
+		</section>
 	);
 }
 
@@ -591,7 +646,7 @@ function isVideoFile(name: string): boolean {
 
 function mediaExt(name: string): string {
 	const match = /\.([a-z0-9]+)$/i.exec(name);
-	return match ? match[1]!.toLowerCase() : "файл";
+	return match ? match[1]!.toLowerCase() : t("file");
 }
 const MEDIA_ACCEPT =
 	"video/*,image/*,.mov,.mp4,.mkv,.webm,.webp,.gif,.m4v,.avi";
@@ -688,7 +743,11 @@ function MediaDropZone({
 			setListError("");
 		} catch (err) {
 			if (!aliveRef.current) return;
-			setListError(`Не удалось получить список: ${String((err as Error)?.message ?? err)}`);
+			setListError(
+				t("Could not load the list: {error}", {
+					error: String((err as Error)?.message ?? err),
+				}),
+			);
 		}
 	}, []);
 
@@ -705,7 +764,7 @@ function MediaDropZone({
 		setStage("error");
 		setProgress(0);
 		setMessage("");
-		setError(text || "Не удалось загрузить файл");
+		setError(text || t("Could not upload the file"));
 	}, []);
 
 	const pollJob = useCallback(
@@ -721,19 +780,19 @@ function MediaDropZone({
 					};
 					if (!aliveRef.current) return;
 					if (!res.ok || !json.job) {
-						fail(json.message ?? json.error ?? `Сервер вернул HTTP ${res.status}`);
+						fail(json.message ?? json.error ?? t("The server returned HTTP {status}", { status: res.status }));
 						return;
 					}
 					const job = json.job;
 					if (job.state === "error") {
-						fail(job.error ?? job.message ?? "Конвертация не удалась");
+						fail(job.error ?? job.message ?? t("Conversion failed"));
 						return;
 					}
 					if (job.state === "done") {
 						const src = job.src ?? "";
 						setStage("done");
 						setProgress(1);
-						setMessage(job.message || "Готово");
+						setMessage(job.message || t("Done"));
 						setError("");
 						setResult({
 							name: src ? mediaNameFromSrc(src) : job.originalName,
@@ -753,12 +812,16 @@ function MediaDropZone({
 					setProgress(
 						Number.isFinite(job.progress) ? Math.max(0, Math.min(1, job.progress)) : 0,
 					);
-					setMessage(job.message || "Конвертация");
+					setMessage(job.message || t("Converting"));
 					pollRef.current = window.setTimeout(() => {
 						void tick();
 					}, 500);
 				} catch (err) {
-					fail(`Не удалось узнать статус: ${String((err as Error)?.message ?? err)}`);
+					fail(
+						t("Could not get the status: {error}", {
+							error: String((err as Error)?.message ?? err),
+						}),
+					);
 				}
 			};
 			void tick();
@@ -796,7 +859,7 @@ function MediaDropZone({
 			};
 			xhr.onerror = () => {
 				xhrRef.current = null;
-				fail("Ошибка сети при загрузке файла");
+				fail(t("Network error while uploading the file"));
 			};
 			xhr.onabort = () => {
 				xhrRef.current = null;
@@ -817,11 +880,11 @@ function MediaDropZone({
 					if (!aliveRef.current) return;
 					setStage("convert");
 					setProgress(0);
-					setMessage("Ожидание сервера…");
+					setMessage(t("Waiting for the server…"));
 					pollJob(payload.jobId);
 					return;
 				}
-				fail(payload.error ?? `Сервер отклонил загрузку (HTTP ${xhr.status})`);
+				fail(payload.error ?? t("The server rejected the upload (HTTP {status})", { status: xhr.status }));
 			};
 			xhr.send(file);
 		},
@@ -834,7 +897,10 @@ function MediaDropZone({
 			if (picked.length === 0) return;
 			if (picked.length > 1) {
 				setNotice(
-					`Выбрано файлов: ${picked.length} — берём первый: ${picked[0]!.name}`,
+					t("{count} files chosen — taking the first: {name}", {
+						count: picked.length,
+						name: picked[0]!.name,
+					}),
 				);
 			} else {
 				setNotice("");
@@ -846,7 +912,7 @@ function MediaDropZone({
 
 	const removeFile = useCallback(
 		async (file: MediaFile) => {
-			if (!window.confirm(`Удалить «${file.name}» из хранилища?`)) return;
+			if (!window.confirm(t("Delete “{name}” from storage?", { name: file.name }))) return;
 			try {
 				const res = await fetch(`${MEDIA_BASE}/file/${encodeURIComponent(file.name)}`, {
 					method: "DELETE",
@@ -854,7 +920,7 @@ function MediaDropZone({
 				if (!res.ok) {
 					const json = (await res.json().catch(() => ({}))) as { message?: string };
 					if (aliveRef.current) {
-						setListError(json.message ?? `Не удалось удалить (HTTP ${res.status})`);
+						setListError(json.message ?? t("Could not delete (HTTP {status})", { status: res.status }));
 					}
 					return;
 				}
@@ -872,7 +938,7 @@ function MediaDropZone({
 		inputRef.current?.click();
 	};
 
-	const stageLabel = stage === "upload" ? "Загрузка" : stage === "convert" ? "Конвертация" : "";
+	const stageLabel = stage === "upload" ? t("Uploading") : stage === "convert" ? t("Converting") : "";
 
 	return (
 		<>
@@ -881,7 +947,7 @@ function MediaDropZone({
 				role="button"
 				tabIndex={0}
 				aria-disabled={busy}
-				title={busy ? "Идёт обработка файла…" : "Перетащите файл или нажмите, чтобы выбрать"}
+				title={busy ? t("The file is being processed…") : t("Drop a file or click to choose one")}
 				onClick={openPicker}
 				onKeyDown={(event) => {
 					if (event.key === "Enter" || event.key === " ") {
@@ -925,12 +991,12 @@ function MediaDropZone({
 					}}
 				/>
 				<div className="ed-drop__title">
-					{busy ? "Обработка…" : "Перетащите видео или картинку сюда"}
+					{busy ? t("Processing…") : t("Drop a video or an image here")}
 				</div>
 				<div className="ed-drop__hint">
 					{busy
-						? "Не закрывайте панель, пока файл не будет готов"
-						: "…или нажмите, чтобы выбрать файл"}
+						? t("Keep this panel open until the file is ready")
+						: t("…or click to choose a file")}
 				</div>
 			</div>
 
@@ -964,7 +1030,7 @@ function MediaDropZone({
 						{result.format ? ` · ${result.format}` : ""}
 					</div>
 					<div className="ed-hint">
-						Файл подставлен в поле ниже. Нажмите «Сохранить», чтобы применить.
+						{t("The file is set in the field below. “Save” applies it.")}
 					</div>
 				</div>
 			) : null}
@@ -979,15 +1045,14 @@ function MediaDropZone({
 
 			<div className="ed-media">
 				<div className="ed-media__head">
-					<span className="ed-media__title">уже загружено</span>
-					<button
-						type="button"
-						className="ed-mini"
-						title="Обновить список"
+					<span className="ed-media__title">{t("Uploaded files")}</span>
+					<IconButton
+						className="small"
+						icon="restart"
+						size={14}
+						label={t("Refresh the list")}
 						onClick={() => void refreshList()}
-					>
-						обновить
-					</button>
+					/>
 				</div>
 				{listError ? (
 					<div className="ed-drop__error" role="alert">
@@ -995,7 +1060,7 @@ function MediaDropZone({
 					</div>
 				) : null}
 				{files.length === 0 ? (
-					<div className="ed-hint">Пока ничего не загружено.</div>
+					<div className="ed-hint">{t("Nothing uploaded yet.")}</div>
 				) : (
 					<div className="ed-media__list">
 						{files.slice(0, MEDIA_LIST_LIMIT).map((file) => (
@@ -1009,16 +1074,16 @@ function MediaDropZone({
 									className="ed-media__pick"
 									title={
 										isVideoFile(file.name)
-											? `Подставить: ${file.src}`
-											: "Картинка — видео-слой её не проиграет"
+											? t("Use: {src}", { src: file.src })
+											: t("An image — a video layer cannot play it")
 									}
 									onClick={() => {
 										if (!isVideoFile(file.name)) {
 											setNotice(
-												`«${file.name}» — это картинка (${mediaExt(file.name)}). ` +
-													"Видео-слой играет только .webm, поэтому поле src не меняю. " +
-													"Перетащите исходник сюда — сервер сконвертирует его в видео; " +
-													"а картинку положите в слой «Картинка» или «GIF».",
+												t(
+													"“{name}” is an image ({ext}). A video layer only plays .webm, so the field is left as it is. Drop the source here and the server converts it to video; put an image into an “Image” or “GIF” layer.",
+													{ name: file.name, ext: mediaExt(file.name) },
+												),
 											);
 											return;
 										}
@@ -1028,18 +1093,17 @@ function MediaDropZone({
 								>
 									<span className="ed-media__name">{file.name}</span>
 									{!isVideoFile(file.name) ? (
-										<span className="ed-media__tag">картинка</span>
+										<span className="ed-media__tag">{t("image")}</span>
 									) : null}
 									<span className="ed-media__size">{formatBytes(file.bytes)}</span>
 								</button>
-								<button
-									type="button"
-									className="ed-icon-btn ed-icon-btn--danger"
-									title="Удалить файл"
+								<IconButton
+									className="small ed-danger"
+									icon="trash"
+									size={14}
+									label={t("Delete file")}
 									onClick={() => void removeFile(file)}
-								>
-									✕
-								</button>
+								/>
 							</div>
 						))}
 					</div>
@@ -1081,9 +1145,9 @@ function LayerInspector({
 
 	return (
 		<div className="ed-panel-body">
-			<Section title={`Слой — ${LAYER_TYPE_LABEL[layer.type]}`}>
+			<Section title={t("Position and size")}>
 				<TextField
-					label="Имя"
+					label={t("Name")}
 					value={layer.name}
 					placeholder={layerDisplayName(layer)}
 					onChange={(value) => onPatch({ name: value })}
@@ -1104,95 +1168,80 @@ function LayerInspector({
 						onChange={(value) => onPatch({ y: round(value) })}
 					/>
 					<NumField
-						label="Ширина"
+						label={t("Width")}
 						suffix="%"
 						step={0.5}
 						value={layer.width}
 						onChange={(value) => onPatch({ width: Math.max(0.1, round(value)) })}
 					/>
 					<NumField
-						label="Высота"
+						label={t("Height")}
 						suffix="%"
 						step={0.5}
 						value={layer.height}
 						onChange={(value) => onPatch({ height: Math.max(0.1, round(value)) })}
 					/>
 					<NumField
-						label="Поворот"
+						label={t("Rotation")}
 						suffix="°"
 						step={1}
 						value={style.rotation ?? 0}
 						onChange={(value) => onStyle({ rotation: round(value, 1) })}
 					/>
 					<NumField
-						label="Прозрачность"
+						label={t("Opacity")}
 						step={0.05}
 						min={0}
 						max={1}
 						value={style.opacity ?? 1}
 						onChange={(value) => onStyle({ opacity: clamp(value, 0, 1) })}
 					/>
-					<NumField
-						label="Z"
-						step={1}
-						value={layer.z}
-						onChange={(value) => onPatch({ z: Math.round(value) })}
-					/>
-				</div>
-				<div className="ed-row">
-					<button
-						type="button"
-						className="ed-mini"
-						title="Ширина/высота по содержимому"
-						onClick={() => onPatch({ width: undefined, height: undefined })}
-					>
-						auto W/H
-					</button>
-					<CheckField
-						label="скрыт"
-						checked={Boolean(layer.hidden)}
-						onChange={(value) => onPatch({ hidden: value })}
-					/>
-					<CheckField
-						label="замок"
-						checked={Boolean(layer.locked)}
-						onChange={(value) => onPatch({ locked: value })}
-					/>
-				</div>
+					</div>
+				<button
+					type="button"
+					className="small ed-start"
+					title={t("Drop the set width and height: the layer takes the size of its content")}
+					onClick={() => onPatch({ width: undefined, height: undefined })}
+				>
+					{t("Size to content")}
+				</button>
 			</Section>
 
 			{layer.type === "text" ? (
 				<>
-					<Section title="Текст">
+					<Section title={t("Text")}>
 						<CodeArea
-							label="Содержимое (поддерживает {{path}})"
+							label={t("Text")}
 							value={layer.text}
 							rows={3}
-							placeholder="{{speaker.name ?? Имя}}"
+							placeholder={t("{{speaker.name ?? Name}}")}
 							onChange={(value) => onPatch({ text: value })}
 						/>
-						<TextField
-							label="Binding (переменная)"
-							mono
-							value={layer.binding}
-							placeholder="speaker.name"
-							onChange={(value) => onPatch({ binding: value })}
-						/>
-						{dataPaths.length > 0 ? (
-							<SelectField
-								label="Подставить путь из данных"
-								value={undefined}
-								options={dataPaths.map((path) => ({ value: path, label: path }))}
-								onChange={(value) => onPatch({ binding: value })}
+						<Field label={t("Variable")}>
+							<input
+								type="text"
+								className="ed-mono"
+								list="ed-data-paths"
+								value={layer.binding ?? ""}
+								placeholder="speaker.name"
+								onChange={(event) => onPatch({ binding: event.target.value })}
 							/>
-						) : null}
+							<datalist id="ed-data-paths">
+								{dataPaths.map((path) => (
+									<option key={path} value={path} />
+								))}
+							</datalist>
+						</Field>
 						<div className="ed-hint">
-							Если binding задан, берётся его значение; иначе подставляются {"{{...}}"}.
+							{tr(
+								"With a variable set, the layer shows its value. Otherwise it shows the text above, where {token} is replaced by a value.",
+								{ token: <code>{t("{{path}}")}</code> },
+							)}
 						</div>
 					</Section>
 
-					<Section title="Типографика" defaultOpen={false}>
-						<Field label="Шрифт">
+					<Section title={t("Typography")} defaultOpen={false}>
+						<Field label={t("Font")}>
 							<input
 								type="text"
 								list="ed-fonts"
@@ -1208,7 +1257,7 @@ function LayerInspector({
 						</Field>
 						<div className="ed-grid2">
 							<NumField
-								label="Размер"
+								label={t("Size")}
 								suffix="px"
 								step={1}
 								min={1}
@@ -1216,114 +1265,114 @@ function LayerInspector({
 								onChange={(value) => onStyle({ fontSize: Math.max(1, Math.round(value)) })}
 							/>
 							<SelectField
-								label="Насыщенность"
+								label={t("Weight")}
 								value={String(style.fontWeight ?? 400)}
 								options={FONT_WEIGHTS}
 								onChange={(value) => onStyle({ fontWeight: Number(value) })}
 							/>
 							<NumField
-								label="Интерлиньяж"
+								label={t("Line height")}
 								step={0.05}
 								min={0.5}
 								value={style.lineHeight ?? 1.2}
 								onChange={(value) => onStyle({ lineHeight: clamp(value, 0.5, 5) })}
 							/>
 							<NumField
-								label="Трекинг"
+								label={t("Letter spacing")}
 								suffix="px"
 								step={0.1}
 								value={style.letterSpacing ?? 0}
 								onChange={(value) => onStyle({ letterSpacing: value })}
 							/>
 							<NumField
-								label="Отступ"
+								label={t("Padding")}
 								suffix="px"
 								step={1}
 								value={style.padding ?? 0}
 								onChange={(value) => onStyle({ padding: value })}
 							/>
 							<SelectField
-								label="Курсив"
+								label={t("Italic")}
 								value={style.fontStyle ?? "normal"}
 								options={[
-									{ value: "normal", label: "обычный" },
-									{ value: "italic", label: "курсив" },
+									{ value: "normal", label: t("normal") },
+									{ value: "italic", label: t("italic") },
 								]}
 								onChange={(value) => onStyle({ fontStyle: value })}
 							/>
 							<SelectField
-								label="Выравнивание"
+								label={t("Align")}
 								value={style.align ?? "left"}
-								options={TEXT_ALIGNS}
+								options={localized(TEXT_ALIGNS)}
 								onChange={(value) => onStyle({ align: value })}
 							/>
 							<SelectField
-								label="По вертикали"
+								label={t("Vertical align")}
 								value={style.verticalAlign ?? "top"}
-								options={VERTICAL_ALIGNS}
+								options={localized(VERTICAL_ALIGNS)}
 								onChange={(value) => onStyle({ verticalAlign: value })}
 							/>
 							<SelectField
-								label="Регистр"
+								label={t("Case")}
 								value={style.textTransform ?? "none"}
-								options={TEXT_TRANSFORMS}
+								options={localized(TEXT_TRANSFORMS)}
 								onChange={(value) => onStyle({ textTransform: value })}
 							/>
 							<ColorField
-								label="Цвет"
+								label={t("Color")}
 								value={style.color}
 								onChange={(value) => onStyle({ color: value })}
 							/>
 						</div>
 					</Section>
 
-					<Section title="Обводка, тень, плашка" defaultOpen={false}>
+					<Section title={t("Stroke, shadow, plate")} defaultOpen={false}>
 						<div className="ed-grid2">
 							<ColorField
-								label="Цвет обводки"
+								label={t("Stroke color")}
 								value={style.textStrokeColor}
 								onChange={(value) => onStyle({ textStrokeColor: value })}
 							/>
 							<NumField
-								label="Толщина обводки"
+								label={t("Stroke width")}
 								suffix="px"
 								step={1}
 								value={style.textStrokeWidth ?? 0}
 								onChange={(value) => onStyle({ textStrokeWidth: value })}
 							/>
 							<ColorField
-								label="Цвет тени"
+								label={t("Shadow color")}
 								value={style.shadowColor}
 								onChange={(value) => onStyle({ shadowColor: value })}
 							/>
 							<NumField
-								label="Размытие тени"
+								label={t("Shadow blur")}
 								suffix="px"
 								step={1}
 								value={style.shadowBlur ?? 0}
 								onChange={(value) => onStyle({ shadowBlur: value })}
 							/>
 							<NumField
-								label="Тень X"
+								label={t("Shadow X")}
 								suffix="px"
 								step={1}
 								value={style.shadowOffsetX ?? 0}
 								onChange={(value) => onStyle({ shadowOffsetX: value })}
 							/>
 							<NumField
-								label="Тень Y"
+								label={t("Shadow Y")}
 								suffix="px"
 								step={1}
 								value={style.shadowOffsetY ?? 0}
 								onChange={(value) => onStyle({ shadowOffsetY: value })}
 							/>
 							<ColorField
-								label="Фон плашки"
+								label={t("Plate fill")}
 								value={style.fill}
 								onChange={(value) => onStyle({ fill: value })}
 							/>
 							<NumField
-								label="Скругление"
+								label={t("Corner radius")}
 								suffix="px"
 								step={1}
 								value={style.radius ?? 0}
@@ -1331,69 +1380,69 @@ function LayerInspector({
 							/>
 						</div>
 						<div className="ed-hint">
-							Плашка рисуется только если заданы ширина и высота слоя.
+							{t("The plate is drawn only when the layer has a width and a height.")}
 						</div>
 					</Section>
 				</>
 			) : null}
 
 			{layer.type === "shape" ? (
-				<Section title="Фигура">
+				<Section title={t("Shape")}>
 					<SelectField
-						label="Форма"
+						label={t("Shape type")}
 						value={layer.shape ?? "rect"}
 						options={[
-							{ value: "rect", label: "прямоугольник" },
-							{ value: "ellipse", label: "эллипс" },
+							{ value: "rect", label: t("rectangle") },
+							{ value: "ellipse", label: t("ellipse") },
 						]}
 						onChange={(value) => onPatch({ shape: value })}
 					/>
 					<div className="ed-grid2">
 						<ColorField
-							label="Заливка"
+							label={t("Fill")}
 							value={style.fill}
 							onChange={(value) => onStyle({ fill: value })}
 						/>
 						<ColorField
-							label="Обводка"
+							label={t("Stroke")}
 							value={style.stroke}
 							onChange={(value) => onStyle({ stroke: value })}
 						/>
 						<NumField
-							label="Толщина обводки"
+							label={t("Stroke width")}
 							suffix="px"
 							step={1}
 							value={style.strokeWidth ?? 0}
 							onChange={(value) => onStyle({ strokeWidth: Math.max(0, value) })}
 						/>
 						<NumField
-							label="Скругление"
+							label={t("Corner radius")}
 							suffix="px"
 							step={1}
 							value={style.radius ?? 0}
 							onChange={(value) => onStyle({ radius: Math.max(0, value) })}
 						/>
 						<ColorField
-							label="Цвет тени"
+							label={t("Shadow color")}
 							value={style.shadowColor}
 							onChange={(value) => onStyle({ shadowColor: value })}
 						/>
 						<NumField
-							label="Размытие тени"
+							label={t("Shadow blur")}
 							suffix="px"
 							step={1}
 							value={style.shadowBlur ?? 0}
 							onChange={(value) => onStyle({ shadowBlur: value })}
 						/>
 						<NumField
-							label="Тень X"
+							label={t("Shadow X")}
 							suffix="px"
 							step={1}
 							value={style.shadowOffsetX ?? 0}
 							onChange={(value) => onStyle({ shadowOffsetX: value })}
 						/>
 						<NumField
-							label="Тень Y"
+							label={t("Shadow Y")}
 							suffix="px"
 							step={1}
 							value={style.shadowOffsetY ?? 0}
@@ -1404,68 +1453,67 @@ function LayerInspector({
 			) : null}
 
 			{layer.type === "video" ? (
-				<Section title="Видео">
+				<Section title={t("Video")}>
 					<MediaDropZone
 						currentSrc={layer.src ?? ""}
 						onPick={(src) => onPatch({ src })}
 						onUploaded={onUploaded}
 					/>
 					<TextField
-						label="URL или путь"
+						label={t("URL or path")}
 						mono
 						value={layer.src}
-						placeholder="media/clip.mp4 или https://…"
+						placeholder={t("media/clip.mp4 or https://…")}
 						onChange={(value) => onPatch({ src: value })}
 					/>
 					<div className="ed-hint">
-						Файлы из <code>graphics/media/</code> отдаются напрямую:{" "}
-						<code>/bundles/notGT/graphics/media/&lt;файл&gt;</code>. Относительные
-						пути ищутся в /bundles/notGT/graphics/. Поддерживаются {"{{...}}"}.
+						{tr("A full URL, or a path relative to {dir}. {token} works here.", {
+							dir: <code>/bundles/notGT/graphics/</code>,
+							token: <code>{t("{{path}}")}</code>,
+						})}
 					</div>
 					<div className="ed-preview">
 						<button
 							type="button"
-							className={`ed-mini ed-preview__btn${previewPlaying ? " is-on" : ""}`}
-							title={previewPlaying ? "Пауза" : "Проиграть выбранный слой"}
+							className={`small${previewPlaying ? " is-on" : ""}`}
+							title={previewPlaying ? t("Stop the preview") : t("Watch the clip on the canvas")}
 							aria-pressed={previewPlaying}
 							onClick={onTogglePreview}
 						>
-							{previewPlaying ? "⏸ пауза" : "▶ проиграть"}
+							<Icon name={previewPlaying ? "pause" : "play"} size={14} />
+							{previewPlaying ? t("Pause") : t("Watch")}
 						</button>
 						<button
 							type="button"
-							className="ed-mini ed-preview__btn"
-							title="Вернуть выбранный клип в начало"
+							className="ghost small"
+							title={t("Rewind the clip")}
 							onClick={onRestartPreview}
 						>
-							⟲ в начало
+							<Icon name="restart" size={14} />
+							{t("Rewind")}
 						</button>
-						<span className="ed-muted ed-small">
-							{previewPlaying ? "идёт предпросмотр" : "предпросмотр на паузе"}
-						</span>
 					</div>
 					<div className="ed-hint">
-						Предпросмотр играет только выбранный слой; на выходе клип
-						воспроизводится по настройкам анимации.
+						{t("The preview plays only this layer and is always muted. On the out the clip follows the settings below.")}
 					</div>
 					<div className="ed-grid2">
 						<CheckField
-							label="videoAutoplay — автозапуск"
+							label={t("Autoplay")}
 							checked={style.videoAutoplay ?? true}
 							onChange={(value) => onStyle({ videoAutoplay: value })}
 						/>
 						<CheckField
-							label="videoLoop — цикл"
+							label={t("Loop")}
 							checked={style.videoLoop ?? true}
 							onChange={(value) => onStyle({ videoLoop: value })}
 						/>
 						<CheckField
-							label="videoMuted — без звука"
+							label={t("Muted")}
 							checked={style.videoMuted ?? true}
 							onChange={(value) => onStyle({ videoMuted: value })}
 						/>
 						<NumField
-							label="videoRate — скорость"
+							label={t("Speed")}
 							step={0.05}
 							min={0.05}
 							max={4}
@@ -1473,51 +1521,44 @@ function LayerInspector({
 							onChange={(value) => onStyle({ videoRate: clamp(value, 0.05, 4) })}
 						/>
 						<NumField
-							label="Скругление"
+							label={t("Corner radius")}
 							suffix="px"
 							step={1}
 							value={style.radius ?? 0}
 							onChange={(value) => onStyle({ radius: Math.max(0, value) })}
 						/>
 					</div>
-					<div className="ed-hint">
-						Предпросмотр всегда без звука: поле videoMuted влияет только на выход.
-					</div>
+					
 				</Section>
 			) : null}
 
 			{layer.type === "image" || layer.type === "gif" ? (
-				<Section title={layer.type === "gif" ? "GIF" : "Картинка"}>
+				<Section title={layer.type === "gif" ? "GIF" : t("Image")}>
 					<TextField
-						label="URL или путь"
+						label={t("URL or path")}
 						mono
 						value={layer.src}
-						placeholder="media/logo.png или https://…"
+						placeholder={t("media/logo.png or https://…")}
 						onChange={(value) => onPatch({ src: value })}
 					/>
 					<div className="ed-hint">
-						Относительные пути ищутся в /bundles/notGT/graphics/. Поддерживаются {"{{...}}"}.
+						{tr("A full URL, or a path relative to {dir}. {token} works here.", {
+							dir: <code>/bundles/notGT/graphics/</code>,
+							token: <code>{t("{{path}}")}</code>,
+						})}
 					</div>
 					{srcPreview ? (
 						<img className="ed-image-preview" src={srcPreview} alt="" />
 					) : (
-						<div className="ed-image-preview ed-image-preview--empty">нет изображения</div>
+						<div className="ed-image-preview ed-image-preview--empty">{t("No image set")}</div>
 					)}
 					<div className="ed-grid2">
 						<NumField
-							label="Скругление"
+							label={t("Corner radius")}
 							suffix="px"
 							step={1}
 							value={style.radius ?? 0}
 							onChange={(value) => onStyle({ radius: Math.max(0, value) })}
-						/>
-						<NumField
-							label="Прозрачность"
-							step={0.05}
-							min={0}
-							max={1}
-							value={style.opacity ?? 1}
-							onChange={(value) => onStyle({ opacity: clamp(value, 0, 1) })}
 						/>
 					</div>
 				</Section>
@@ -1528,58 +1569,6 @@ function LayerInspector({
 
 // ------------------------------------------------------- placement inspector
 
-/**
- * `holdMs` input that can be disabled while «длительность = видео» is on.
- * Mirrors `NumField`'s forgiving draft behaviour; the shared atom has no
- * `disabled` prop and lives outside the files this change may touch.
- */
-function HoldMsField({
-	label,
-	value,
-	disabled,
-	onChange,
-}: {
-	label: string;
-	value: number | undefined;
-	disabled: boolean;
-	onChange: (value: number) => void;
-}) {
-	const [draft, setDraft] = useState(value === undefined ? "" : String(value));
-	const [focused, setFocused] = useState(false);
-
-	useEffect(() => {
-		if (!focused) setDraft(value === undefined ? "" : String(value));
-	}, [value, focused]);
-
-	return (
-		<Field label={`${label} (ms)`}>
-			<input
-				type="number"
-				className="ed-hold-ms"
-				data-hold-ms
-				step={100}
-				min={100}
-				title="hold"
-				disabled={disabled}
-				value={draft}
-				onFocus={() => setFocused(true)}
-				onBlur={() => {
-					setFocused(false);
-					setDraft(value === undefined ? "" : String(value));
-				}}
-				onChange={(event) => {
-					const raw = event.target.value;
-					setDraft(raw);
-					if (raw.trim() === "") return;
-					const parsed = Number(raw);
-					if (!Number.isFinite(parsed)) return;
-					onChange(parsed);
-				}}
-			/>
-		</Field>
-	);
-}
-
 function PlacementInspector({
 	out,
 	item,
@@ -1588,6 +1577,7 @@ function PlacementInspector({
 	onPlayback,
 	onRemove,
 	onFitOut,
+	onCrop,
 }: {
 	out: Out;
 	item: OutItem;
@@ -1596,23 +1586,16 @@ function PlacementInspector({
 	onPlayback: (patch: Partial<PlaybackConfig>) => void;
 	onRemove: () => void;
 	onFitOut: () => void;
+	/** Turns the crop tool on. */
+	onCrop: () => void;
 }) {
 	const playback = item.playback ?? defaultPlayback();
-	const fittedScale = template.width > 0 ? out.width / template.width : 1;
-	const isLoop = playback.mode === "loop";
-	// A loop is held by the toggle, so the hold settings do not apply to it.
-	const videoMode = !isLoop && playback.holdMode === "video";
-	const hasVideo = hasVideoLayer(template);
-	const videoDuration = useVideoDuration(
-		item.templateId,
-		videoMode && hasVideo,
-		videoLayerSignature(template),
-	);
+	const crop = item.crop ? cropBox(item, template) : null;
 
 	return (
 		<div className="ed-panel-body">
-			<Section title="Размещение на out'е">
-				<div className="ed-grid2">
+			<Section title={t("Position")}>
+				<div className="ed-grid3">
 					<NumField
 						label="X"
 						suffix="%"
@@ -1628,137 +1611,138 @@ function PlacementInspector({
 						onChange={(value) => onPatch({ y: round(value) })}
 					/>
 					<NumField
-						label="Масштаб"
+						label={t("Scale")}
 						step={0.05}
 						min={0.02}
 						max={20}
 						value={item.scale}
 						onChange={(value) => onPatch({ scale: round(clamp(value, 0.02, 20), 4) })}
 					/>
-					<Field label="По ширине out'а">
-						<button type="button" className="ed-mini" onClick={onFitOut}>
-							по размеру out&apos;а
-						</button>
-					</Field>
 				</div>
-				<div className="ed-hint">
-					X/Y — проценты от {out.width}×{out.height}; масштаб умножает бокс анимации{" "}
-					{template.width}×{template.height} (полная ширина ≈ {round(fittedScale, 3)}).
-				</div>
-				<Field label="Обрезка">
-					{item.crop ? (
-						<div className="ed-crop-row">
-							<span className="ed-ok" data-crop-info>
-								{Math.round(cropBox(item, template).width)}×
-								{Math.round(cropBox(item, template).height)} px (
-								{Math.round(cropBox(item, template).x)},
-								{Math.round(cropBox(item, template).y)})
-							</span>
-							<button
-								type="button"
-								className="ed-mini"
-								onClick={() => onPatch({ crop: undefined })}
-								data-crop-clear
-							>
-								убрать
-							</button>
-						</div>
-					) : (
-						<span className="ed-hint" data-crop-none>
-							нет — обрезать можно кнопкой «⛶ Обрезка» в панели сверху
-						</span>
-					)}
-				</Field>
-				<CheckField
-					label="включено на out'е"
-					checked={item.enabled}
-					onChange={(value) => onPatch({ enabled: value })}
-				/>
-				<button type="button" className="danger" onClick={onRemove}>
-					Убрать с out&apos;а
+				<button
+					type="button"
+					className="small ed-start"
+					title={t("Stretch {box} to the full width of the out, {out}", {
+						box: `${template.width}×${template.height}`,
+						out: `${out.width}×${out.height}`,
+					})}
+					onClick={onFitOut}
+				>
+					<Icon name="fit" size={14} />
+					{t("Fit out width")}
 				</button>
 			</Section>
 
-			<Section title="Проигрывание на out'е" defaultOpen={false}>
-				<SelectField
-					label="Режим"
-					value={playback.mode}
-					options={PLAYBACK_MODES}
-					onChange={(value) => onPlayback({ mode: value })}
-				/>
-				{isLoop ? (
-					<div className="ed-hint" data-loop-hint>
-						Цикл висит в эфире, пока у размещения включён «показать» в панели Control, и
-						снимается тем же тумблером. Своей длительности у него нет — анимация
-						циклится сама внутри себя.
+			<Section title={t("Crop")}>
+				{crop ? (
+					<div className="ed-crop-row">
+						<span data-crop-info>
+							{t("{size} px from ({x}, {y})", {
+								size: `${Math.round(crop.width)}×${Math.round(crop.height)}`,
+								x: Math.round(crop.x),
+								y: Math.round(crop.y),
+							})}
+						</span>
+						<button
+							type="button"
+							className="ghost small"
+							onClick={() => onPatch({ crop: undefined })}
+							data-crop-clear
+						>
+							{t("Clear")}
+						</button>
 					</div>
 				) : (
-					<>
-						<div className="ed-grid2">
-							<HoldMsField
-								label="Удержание"
-								value={playback.holdMs}
-								disabled={videoMode}
-								onChange={(value) => onPlayback({ holdMs: Math.max(100, Math.round(value)) })}
-							/>
-						</div>
-						<div className="ed-hold-row" data-hold-scope="placement">
-							<CheckField
-								label="длительность = видео"
-								checked={videoMode}
-								onChange={(value) => onPlayback({ holdMode: value ? "video" : "fixed" })}
-							/>
-							{videoMode ? (
-								<span className="ed-hint" data-hold-hint>
-									{videoHoldHint(videoDuration, hasVideo)}
-								</span>
-							) : null}
-						</div>
-						<div className="ed-hint">Удержание {formatMs(playback.holdMs)}</div>
-					</>
+					<div className="ed-crop-row">
+						<span className="ed-hint" data-crop-none>
+							{t("The whole animation is visible")}
+						</span>
+						<button type="button" className="small" onClick={onCrop}>
+							<Icon name="crop" size={14} />
+							{t("Set crop")}
+						</button>
+					</div>
 				)}
 			</Section>
+
+			<Section title={t("Playback")}>
+				<PlaybackFields
+					playback={playback}
+					template={template}
+					scope="placement"
+					onChange={onPlayback}
+				/>
+				<CheckField
+					label={t("Starts from the API and Companion")}
+					checked={item.enabled}
+					onChange={(value) => onPatch({ enabled: value })}
+				/>
+			</Section>
+
+			<button type="button" className="danger ed-start" onClick={onRemove}>
+				<Icon name="trash" size={14} />
+				{t("Remove from out")}
+			</button>
 		</div>
 	);
 }
 
 // --------------------------------------------------------- template settings
 
+/** Which phases a code animation animates itself, as its own runtime reports. */
+interface CodeHooks {
+	show: boolean;
+	hide: boolean;
+	hideMs: number;
+}
+
+/**
+ * The exit length of a code animation has one source: what the code declares
+ * with `onHide(fn, ms)`. `code.exitMs` — the number the scheduler uses to start
+ * the exit early — is derived from it instead of being typed in a second time.
+ */
+function declaredExitMs(hooks: CodeHooks, stored: number): number {
+	if (!hooks.hide) return 0;
+	if (hooks.hideMs > 0) return Math.min(CODE_EXIT_MAX_MS, Math.round(hooks.hideMs));
+	// `onHide(fn)` without a number: the out page waits the stored budget, or
+	// its own fallback — keep the scheduler on the same figure.
+	return stored > 0 ? stored : CODE_HIDE_FALLBACK_MS;
+}
+
 function TemplateSettings({
 	template,
+	hooks,
 	onPatch,
 }: {
 	template: TitleTemplate;
+	/** Reported by the live preview; `null` until it has loaded. */
+	hooks: CodeHooks | null;
 	onPatch: (patch: Partial<TitleTemplate>) => void;
 }) {
 	const inTransition = template.inTransition ?? defaultTransition();
 	const outTransition = template.outTransition ?? defaultTransition();
 	const playback = template.playback ?? defaultPlayback();
-	const isLoop = playback.mode === "loop";
-	// A loop is held by the toggle, so the hold settings do not apply to it.
-	const videoMode = !isLoop && playback.holdMode === "video";
 	// A code animation animates its own entrance and exit (`onShow` / `onHide`),
 	// so it has no transition settings to show: the system never animates its
 	// wrapper, and the fields would be a lie.
 	const isCode = template.kind === "code";
-	const hasVideo = hasVideoLayer(template);
-	const videoDuration = useVideoDuration(
-		template.id,
-		videoMode && hasVideo,
-		videoLayerSignature(template),
-	);
+	const exitMs = template.code?.exitMs ?? 0;
+	const transitionOptions = TRANSITION_TYPES.map((type) => ({
+		value: type,
+		label: t(TRANSITION_LABEL[type]),
+	}));
 
 	return (
 		<div className="ed-panel-body">
-			<Section title="Анимация (шаблон)">
+			<Section title={t("Animation")}>
 				<TextField
-					label="Имя"
+					label={t("Name")}
 					value={template.name}
 					onChange={(value) => onPatch({ name: value })}
 				/>
 				<div className="ed-grid2">
 					<NumField
-						label="Ширина"
+						label={t("Width")}
 						suffix="px"
 						step={10}
 						min={16}
@@ -1766,7 +1750,7 @@ function TemplateSettings({
 						onChange={(value) => onPatch({ width: Math.max(16, Math.round(value)) })}
 					/>
 					<NumField
-						label="Высота"
+						label={t("Height")}
 						suffix="px"
 						step={10}
 						min={16}
@@ -1774,265 +1758,353 @@ function TemplateSettings({
 						onChange={(value) => onPatch({ height: Math.max(16, Math.round(value)) })}
 					/>
 				</div>
-				<SelectField
-					label="Тип анимации"
-					value={template.kind}
-					options={[
-						{ value: "layers", label: "слои (визуальный редактор)" },
-						{ value: "code", label: "код (HTML / CSS / JS)" },
-					]}
-					onChange={(value) => onPatch({ kind: value })}
-				/>
-				<div className="ed-hint">
-					ID: <code>{template.id}</code>
-				</div>
+				<dl className="ed-facts">
+					<dt>{t("Built")}</dt>
+					<dd>{isCode ? t("from code: HTML, CSS, JavaScript") : t("from layers on the canvas")}</dd>
+					<dt>{t("ID for the API")}</dt>
+					<dd>
+						<code>{template.id}</code>
+					</dd>
+				</dl>
 			</Section>
 
 			{isCode ? (
-				<Section title="Переходы" defaultOpen={false}>
+				<Section title={t("Entrance and exit")}>
 					<div className="ed-hint" data-code-transitions-hint>
-						Появление и исчезновение код-анимации делает её собственный JavaScript:
-						<code> onShow(fn) </code> и <code>onHide(fn, ms)</code> в секции JavaScript.
-						Система обёртку не анимирует — если код фаз не зарегистрировал, титр
-						появляется и исчезает мгновенно.
+						{t("A code animation enters and leaves by itself — its JavaScript does it, and the timing is read from that code.")}
 					</div>
+					<dl className="ed-facts">
+						<dt>{t("Entrance")}</dt>
+						<dd>
+							{!hooks
+								? t("detecting…")
+								: hooks.show
+									? t("animated by the code (onShow)")
+									: t("instant: the code has no onShow")}
+						</dd>
+						<dt>{t("Exit")}</dt>
+						<dd data-code-exit>
+							{!hooks
+								? t("detecting…")
+								: hooks.hide
+									? t("animated by the code, {ms} ms", { ms: exitMs })
+									: t("instant: the code has no onHide")}
+						</dd>
+					</dl>
+					{hooks?.hide ? (
+						<div className="ed-hint">
+							{t(
+								"The exit is part of the “Hold” time: the animation starts leaving {ms} ms before it ends.",
+								{ ms: exitMs },
+							)}
+						</div>
+					) : null}
 				</Section>
 			) : (
 				<>
-			<Section title="Появление" defaultOpen={false}>
-				<SelectField
-					label="Тип"
-					value={inTransition.type}
-					options={TRANSITION_TYPES.map((type) => ({
-						value: type,
-						label: TRANSITION_LABEL[type],
-					}))}
-					onChange={(value) => onPatch({ inTransition: { ...inTransition, type: value } })}
-				/>
-				<div className="ed-grid2">
-					<NumField
-						label="Длительность"
-						suffix="ms"
-						step={10}
-						min={0}
-						value={inTransition.durationMs}
-						onChange={(value) =>
-							onPatch({
-								inTransition: { ...inTransition, durationMs: Math.max(0, Math.round(value)) },
-							})
-						}
-					/>
-					<TextField
-						label="Easing"
-						value={inTransition.easing}
-						placeholder="ease-out"
-						onChange={(value) => onPatch({ inTransition: { ...inTransition, easing: value } })}
-					/>
-				</div>
-			</Section>
-
-			<Section title="Исчезновение" defaultOpen={false}>
-				<SelectField
-					label="Тип"
-					value={outTransition.type}
-					options={TRANSITION_TYPES.map((type) => ({
-						value: type,
-						label: TRANSITION_LABEL[type],
-					}))}
-					onChange={(value) => onPatch({ outTransition: { ...outTransition, type: value } })}
-				/>
-				<div className="ed-grid2">
-					<NumField
-						label="Длительность"
-						suffix="ms"
-						step={10}
-						min={0}
-						value={outTransition.durationMs}
-						onChange={(value) =>
-							onPatch({
-								outTransition: {
-									...outTransition,
-									durationMs: Math.max(0, Math.round(value)),
-								},
-							})
-						}
-					/>
-					<TextField
-						label="Easing"
-						value={outTransition.easing}
-						placeholder="ease-in"
-						onChange={(value) => onPatch({ outTransition: { ...outTransition, easing: value } })}
-					/>
-				</div>
-			</Section>
-
-				</>
-			)}
-
-			<Section title="Проигрывание по умолчанию" defaultOpen={false}>
-				<SelectField
-					label="Режим"
-					value={playback.mode}
-					options={PLAYBACK_MODES}
-					onChange={(value) => onPatch({ playback: { ...playback, mode: value } })}
-				/>
-				{isLoop ? (
-					<div className="ed-hint" data-loop-hint>
-						Цикл висит в эфире, пока у размещения включён «показать» в панели Control, и
-						снимается тем же тумблером. Своей длительности у него нет — анимация
-						циклится сама внутри себя.
-					</div>
-				) : (
-					<>
+					<Section title={t("Entrance")} defaultOpen={false}>
+						<SelectField
+							label={t("Transition")}
+							value={inTransition.type}
+							options={transitionOptions}
+							onChange={(value) => onPatch({ inTransition: { ...inTransition, type: value } })}
+						/>
 						<div className="ed-grid2">
-							<HoldMsField
-								label="Удержание"
-								value={playback.holdMs}
-								disabled={videoMode}
+							<NumField
+								label={t("Duration")}
+								suffix={t("ms")}
+								step={10}
+								min={0}
+								value={inTransition.durationMs}
 								onChange={(value) =>
 									onPatch({
-										playback: { ...playback, holdMs: Math.max(100, Math.round(value)) },
+										inTransition: { ...inTransition, durationMs: Math.max(0, Math.round(value)) },
 									})
 								}
 							/>
+							<TextField
+								label={t("Easing (CSS)")}
+								value={inTransition.easing}
+								placeholder="ease-out"
+								onChange={(value) => onPatch({ inTransition: { ...inTransition, easing: value } })}
+							/>
 						</div>
-						<div className="ed-hold-row" data-hold-scope="template">
-							<CheckField
-								label="длительность = видео"
-								checked={videoMode}
+					</Section>
+
+					<Section title={t("Exit")} defaultOpen={false}>
+						<SelectField
+							label={t("Transition")}
+							value={outTransition.type}
+							options={transitionOptions}
+							onChange={(value) => onPatch({ outTransition: { ...outTransition, type: value } })}
+						/>
+						<div className="ed-grid2">
+							<NumField
+								label={t("Duration")}
+								suffix={t("ms")}
+								step={10}
+								min={0}
+								value={outTransition.durationMs}
 								onChange={(value) =>
-									onPatch({ playback: { ...playback, holdMode: value ? "video" : "fixed" } })
+									onPatch({
+										outTransition: {
+											...outTransition,
+											durationMs: Math.max(0, Math.round(value)),
+										},
+									})
 								}
 							/>
-							{videoMode ? (
-								<span className="ed-hint" data-hold-hint>
-									{videoHoldHint(videoDuration, hasVideo)}
-								</span>
-							) : null}
+							<TextField
+								label={t("Easing (CSS)")}
+								value={outTransition.easing}
+								placeholder="ease-in"
+								onChange={(value) =>
+									onPatch({ outTransition: { ...outTransition, easing: value } })
+								}
+							/>
 						</div>
-						<div className="ed-hint">Удержание {formatMs(playback.holdMs)}</div>
-					</>
-				)}
+					</Section>
+				</>
+			)}
+
+			<Section title={t("Default playback")} defaultOpen={false}>
+				<PlaybackFields
+					playback={playback}
+					template={template}
+					scope="template"
+					onChange={(patch) => onPatch({ playback: { ...playback, ...patch } })}
+				/>
+				<div className="ed-hint">
+					{t("What the animation gets when it is placed on an out. After that each placement has its own settings.")}
+				</div>
 			</Section>
 		</div>
 	);
 }
 
-// ---------------------------------------------------------------- code panel
+// ----------------------------------------------------------------- code dock
 
-function CodePreviewCard({ template, data }: { template: TitleTemplate; data: TitleData }) {
-	const [nonce, setNonce] = useState(0);
-	const doc = useCodeDocument(template, data, nonce);
+type CodeTab = "html" | "css" | "js" | "help";
 
+const CODE_TABS: CodeTab[] = ["html", "css", "js", "help"];
+
+/** The three languages are names, not words; only the reference tab is translated. */
+function codeTabLabel(tab: CodeTab): string {
+	if (tab === "html") return "HTML";
+	if (tab === "css") return "CSS";
+	if (tab === "js") return "JavaScript";
+	return t("Reference");
+}
+
+/** What the runtime hands to a code animation. */
+function CodeHelp() {
 	return (
-		<div className="ed-card">
-			<div className="ed-card__head">
-				<strong>Живой предпросмотр</strong>
-				<button type="button" className="ed-mini" onClick={() => setNonce((value) => value + 1)}>
-					Перезапустить
-				</button>
-			</div>
-			<div className="ed-code-preview ed-code-preview--panel">
-				{/* The iframe only exists once there is a document to show: an
-				    iframe created with an empty `srcdoc` and filled in a moment
-				    later sometimes keeps its initial about:blank and never
-				    paints, which reads as "the preview is broken". */}
-				{doc ? (
-					<iframe
-						className="ed-preview-frame"
-						title="Предпросмотр код-анимации"
-						sandbox="allow-scripts allow-same-origin"
-						srcDoc={doc}
-					/>
-				) : null}
-			</div>
-			<p className="ed-hint">
-				{template.width}×{template.height} · пересобирается при каждом изменении кода
+		<div className="ed-help">
+			<dl>
+				<dt>
+					<code>vars("path", "fallback")</code>
+				</dt>
+				<dd>{t("a variable's value as a string; the second argument is used when it is empty")}</dd>
+				<dt>
+					<code>onData(fn)</code>
+				</dt>
+				<dd>{t("called at once and on every data change")}</dd>
+				<dt>
+					<code>data</code>
+				</dt>
+				<dd>{t("all variables as one object")}</dd>
+				<dt>
+					<code>root</code>
+				</dt>
+				<dd>{t("the animation's container")}</dd>
+				<dt>
+					<code>[data-bind="path"]</code>
+				</dt>
+				<dd>{t("the element's text updates by itself")}</dd>
+				<dt>
+					<code>onShow(fn)</code>
+				</dt>
+				<dd>{t("the animation is shown: play the entrance and start whatever runs while it is on air")}</dd>
+				<dt>
+					<code>onHide(fn, ms)</code>
+				</dt>
+				<dd>
+					{tr("the animation is being hidden: play the exit; {ms} is how long the system waits for it", {
+						ms: <code>ms</code>,
+					})}
+				</dd>
+				<dt>
+					<code>hideDone()</code>
+				</dt>
+				<dd>
+					{tr("the exit is over, no need to wait out {ms}", { ms: <code>ms</code> })}
+				</dd>
+			</dl>
+			<p>
+				{tr(
+					"{token} in HTML and CSS is filled in once, on load. For live values use {vars}, {onData} and {bind}.",
+					{
+						token: <code>{"{{path}}"}</code>,
+						vars: <code>vars()</code>,
+						onData: <code>onData()</code>,
+						bind: <code>data-bind</code>,
+					},
+				)}
+			</p>
+			<p>
+				{tr(
+					"Only the code animates the entrance and the exit: without {show} and {hide} the animation appears and disappears instantly.",
+					{ show: <code>onShow</code>, hide: <code>onHide</code> },
+				)}
 			</p>
 		</div>
 	);
 }
 
-function CodeEditors({
+/**
+ * The code of a `kind: "code"` animation, docked under the canvas where a line
+ * of code has room, next to a preview of the animation on its own.
+ */
+function CodeDock({
 	template,
+	data,
 	onCode,
+	onHooks,
 }: {
 	template: TitleTemplate;
+	data: TitleData;
 	onCode: (patch: Partial<CodeBlock>) => void;
+	/** Called with the phases the previewed animation says it animates itself. */
+	onHooks: (hooks: CodeHooks) => void;
 }) {
+	const [tab, setTab] = useState<CodeTab>("html");
+	const [open, setOpen] = useState(true);
+	const [nonce, setNonce] = useState(0);
+	const doc = useCodeDocument(template, data, nonce);
+	const box = useElementSize<HTMLDivElement>();
+	const frameRef = useRef<HTMLIFrameElement | null>(null);
+
+	// The preview runs the real runtime, so it reports the same hooks the out
+	// page will get. Only this dock's own frame is listened to: the canvas
+	// hosts frames of other animations.
+	useEffect(() => {
+		const onMessage = (event: MessageEvent) => {
+			if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
+			const message = event.data as {
+				type?: string;
+				show?: unknown;
+				hide?: unknown;
+				hideMs?: unknown;
+			} | null;
+			if (!message || message.type !== CODE_MESSAGES.hooks) return;
+			onHooks({
+				show: Boolean(message.show),
+				hide: Boolean(message.hide),
+				hideMs:
+					typeof message.hideMs === "number" && Number.isFinite(message.hideMs)
+						? message.hideMs
+						: 0,
+			});
+		};
+		window.addEventListener("message", onMessage);
+		return () => window.removeEventListener("message", onMessage);
+	}, [onHooks]);
+
 	const code = template.code ?? { html: "", css: "", js: "" };
+	const fromFile = codeSource(template) === "file" && code.src ? code.src : "";
+	// The preview is the animation at its design size, scaled to fit the box —
+	// the same way the canvas and the out page show it.
+	const scale =
+		template.width > 0 && template.height > 0
+			? Math.min(box.width / template.width, box.height / template.height)
+			: 0;
+
 	return (
-		<div className="ed-panel-body">
-			{codeSource(template) === "file" && code.src ? (
-				<div className="ed-hint">
-					HTML/CSS/JS загружаются из файла <code>{code.src}</code>. Если написать HTML
-					здесь, он перекроет файл.
+		<div className="ed-dock">
+			<div className="ed-dock__bar">
+				<div className="ed-tabs" role="tablist" aria-label={t("Animation code")}>
+					{CODE_TABS.map((item) => (
+						<button
+							key={item}
+							type="button"
+							role="tab"
+							aria-selected={open && tab === item}
+							className={`ed-tab${open && tab === item ? " is-on" : ""}`}
+							onClick={() => {
+								setTab(item);
+								setOpen(true);
+							}}
+						>
+							{codeTabLabel(item)}
+						</button>
+					))}
 				</div>
-			) : null}
-			<Section title="HTML">
-				<CodeArea value={code.html} rows={8} onChange={(value) => onCode({ html: value })} />
-			</Section>
-			<Section title="CSS">
-				<CodeArea value={code.css} rows={10} onChange={(value) => onCode({ css: value })} />
-			</Section>
-			<Section title="JavaScript">
-				<CodeArea value={code.js} rows={10} onChange={(value) => onCode({ js: value })} />
-			</Section>
-			<Section title="Выход">
-				<NumField
-					label="Длительность обратной анимации"
-					suffix="ms"
-					step={50}
-					value={code.exitMs}
-					title="Сколько длится уход, который анимирует код (onHide)"
-					onChange={(value) => onCode({ exitMs: Math.max(0, Math.round(value)) })}
+				{fromFile ? (
+					<span className="ed-hint truncate" title={fromFile}>
+						{tr("The code comes from the file {file}. HTML written here overrides the file.", {
+							file: <code>{fromFile}</code>,
+						})}
+					</span>
+				) : null}
+				<span className="ed-spacer" />
+				<IconButton
+					icon={open ? "chevronDown" : "up"}
+					label={open ? t("Collapse the code") : t("Expand the code")}
+					aria-expanded={open}
+					onClick={() => setOpen((value) => !value)}
 				/>
-				<div className="ed-hint">
-					Столько система вычтет из «держать», чтобы вход, показ и уход уложились в
-					настроенное время. <code>0</code> — уход начинается после удержания.
+			</div>
+			{/* Folded, not unmounted: the preview keeps running and reporting its hooks. */}
+			<div className="ed-dock__body" hidden={!open}>
+				{tab === "help" ? (
+					<CodeHelp />
+				) : (
+					<textarea
+						className="ed-code"
+						spellCheck={false}
+						aria-label={codeTabLabel(tab)}
+						value={code[tab] ?? ""}
+						onChange={(event) => onCode({ [tab]: event.target.value })}
+					/>
+				)}
+				<div className="ed-dock__preview">
+					<div className="ed-code-preview" ref={box.ref}>
+						{/* The iframe only exists once there is a document to show: an
+						    iframe created with an empty `srcdoc` and filled in a moment
+						    later sometimes keeps its initial about:blank and never
+						    paints, which reads as "the preview is broken". */}
+						{doc ? (
+							<iframe
+								ref={frameRef}
+								className="ed-preview-frame"
+								title={t("Code animation preview")}
+								sandbox="allow-scripts allow-same-origin"
+								srcDoc={doc}
+								style={{
+									width: template.width,
+									height: template.height,
+									left: (box.width - template.width * scale) / 2,
+									top: (box.height - template.height * scale) / 2,
+									transform: `scale(${scale})`,
+								}}
+							/>
+						) : null}
+					</div>
+					<div className="ed-dock__preview-foot">
+						<span className="ed-hint">
+							{t("Preview {size}", { size: `${template.width}×${template.height}` })}
+						</span>
+						<button
+							type="button"
+							className="ghost small"
+							title={t("Play the entrance again")}
+							onClick={() => setNonce((value) => value + 1)}
+						>
+							<Icon name="restart" size={14} />
+							{t("Replay")}
+						</button>
+					</div>
 				</div>
-			</Section>
-			<div className="ed-note">
-				<strong>Доступно внутри анимации</strong>
-				<ul>
-					<li>
-						<code>vars('path')</code> — значение переменной (2-й аргумент — fallback)
-					</li>
-					<li>
-						<code>data</code> — весь стор переменных
-					</li>
-					<li>
-						<code>onData(fn)</code> — вызов сразу и при каждом изменении данных
-					</li>
-					<li>
-						<code>root</code> — контейнер анимации
-					</li>
-					<li>
-						<code>{"onShow(fn)"}</code> — анимация показана: проиграйте появление (и запустите
-						то, что живёт, пока титр в эфире)
-					</li>
-					<li>
-						<code>{"onHide(fn, ms)"}</code> — анимацию скрывают: проиграйте обратную
-						анимацию; <code>ms</code> — сколько система подождёт её конца
-					</li>
-					<li>
-						<code>hideDone()</code> — «обратная анимация кончилась», не ждать <code>ms</code>
-					</li>
-					<li>
-						<code>[data-bind="path"]</code> — текст, обновляемый автоматически
-					</li>
-				</ul>
-				<p>
-					Зарегистрировали <code>onShow</code> / <code>onHide</code> — эту фазу анимирует сам
-					код, и системный <code>inTransition</code> / <code>outTransition</code> для неё не
-					применяется.
-				</p>
-				<p>
-					<code>{"{{path}}"}</code> в HTML и CSS подставляется один раз при загрузке — для
-					живых значений используйте <code>vars()</code>, <code>onData()</code> и{" "}
-					<code>data-bind</code>.
-				</p>
-				<p>Переходы (появление/исчезновение) и режим проигрывания применяются как обычно.</p>
 			</div>
 		</div>
 	);
@@ -2040,12 +2112,23 @@ function CodeEditors({
 
 // --------------------------------------------------------------------- app
 
+/** What the inspector is showing: the layer, the placement or the animation. */
+type InspectorTab = "layer" | "placement" | "template";
+
+const INSPECTOR_TAB_LABEL: Record<InspectorTab, Phrase> = {
+	layer: N_("Layer"),
+	placement: N_("Placement"),
+	template: N_("Animation"),
+};
+
 export function EditorApp() {
 	const templates = useTemplates();
 	const outs = useOuts();
 	const data = useTitleData();
 	const runtime = useRuntime();
 	const selection = useSelection();
+	const active = useActiveTitle();
+	useLang();
 
 	const [outId, setOutId] = useState<string>("");
 	const [activeItemId, setActiveItemId] = useState<string | null>(null);
@@ -2059,6 +2142,9 @@ export function EditorApp() {
 	const [flash, setFlash] = useState("");
 	/** The crop tool is on: the canvas edits the active placement's window. */
 	const [cropMode, setCropMode] = useState(false);
+	const [inspectorTab, setInspectorTab] = useState<InspectorTab>("placement");
+	/** What the edited code animation animates itself; `null` until its preview reports. */
+	const [codeHooks, setCodeHooks] = useState<CodeHooks | null>(null);
 
 	const dirtyRef = useRef(dirty);
 	const draftRef = useRef<TitleTemplate | null>(draft);
@@ -2125,6 +2211,7 @@ export function EditorApp() {
 
 	// Load a fresh working copy whenever the edited template changes.
 	useEffect(() => {
+		setCodeHooks(null);
 		if (!editingTemplateId) {
 			setDraft(null);
 			setDirty(false);
@@ -2149,9 +2236,17 @@ export function EditorApp() {
 		setPreviewPlaying(false);
 	}, [selectedLayerId]);
 
+	// The inspector follows the selection: a layer brings up its own tab, and
+	// letting go of it falls back to the placement.
+	useEffect(() => {
+		setInspectorTab((tab) =>
+			selectedLayerId ? "layer" : tab === "layer" ? "placement" : tab,
+		);
+	}, [selectedLayerId]);
+
 	const confirmDiscard = useCallback((): boolean => {
 		if (!dirtyRef.current) return true;
-		return window.confirm("Есть несохранённые изменения. Продолжить без сохранения?");
+		return window.confirm(t("There are unsaved changes. Continue without saving?"));
 	}, []);
 
 	const mutate = useCallback((fn: (template: TitleTemplate) => TitleTemplate) => {
@@ -2189,6 +2284,20 @@ export function EditorApp() {
 		},
 		[mutate],
 	);
+
+	// Keep `code.exitMs` equal to what the code itself declares. A mismatch is
+	// a real unsaved difference (the scheduler would start the exit at the
+	// wrong moment), so it goes through the draft like any other edit.
+	useEffect(() => {
+		if (!codeHooks || !draft || draft.kind !== "code") return;
+		const stored = draft.code?.exitMs ?? 0;
+		const wanted = declaredExitMs(codeHooks, stored);
+		if (wanted === stored) return;
+		mutate((template) => ({
+			...template,
+			code: { ...(template.code ?? { html: "", css: "", js: "" }), exitMs: wanted },
+		}));
+	}, [codeHooks, draft, mutate]);
 
 	// ------------------------------------------------------ video preview
 
@@ -2236,13 +2345,13 @@ export function EditorApp() {
 	const triggerItemOnOut = (itemId: string) => {
 		if (!out) return;
 		triggerItem(out.id, itemId);
-		notify("Триггер отправлен");
+		notify(t("Played"));
 	};
 
 	const removeItemFromOut = (itemId: string) => {
 		if (!out) return;
 		if (itemId === activeItemId && dirty) {
-			if (!window.confirm("Убрать анимацию с out'а? Несохранённые изменения будут потеряны.")) {
+			if (!window.confirm(t("Remove the animation from the out? Unsaved changes will be lost."))) {
 				return;
 			}
 		}
@@ -2253,7 +2362,7 @@ export function EditorApp() {
 			setDraft(null);
 			setDirty(false);
 		}
-		notify("Убрано с out'а");
+		notify(t("Removed from the out"));
 	};
 
 	const fitItemToOut = (item: OutItem) => {
@@ -2287,7 +2396,7 @@ export function EditorApp() {
 			const next = !value;
 			if (next) {
 				setSelectedLayerId(null);
-				notify("Обрезка: тяните рамку, края и углы");
+				setInspectorTab("placement");
 			}
 			return next;
 		});
@@ -2341,7 +2450,7 @@ export function EditorApp() {
 		setActiveItemId(item.id);
 		setSelectedLayerId(null);
 		setLibraryId(null);
-		notify("Анимация размещена на out'е");
+		notify(t("Placed on the out"));
 	};
 
 	// ------------------------------------------------------------- templates
@@ -2351,7 +2460,7 @@ export function EditorApp() {
 		const base = newTemplate("layers");
 		const saved = saveTemplate({
 			...base,
-			name: "Новая анимация",
+			name: t("New animation"),
 			width: out.width,
 			height: out.height,
 			layers: [],
@@ -2415,14 +2524,35 @@ export function EditorApp() {
 
 	const createTemplate = (kind: TemplateKind) => {
 		if (!confirmDiscard()) return;
-		const saved = saveTemplate(newTemplate(kind));
+		const saved = saveTemplate({
+			...newTemplate(kind),
+			name: kind === "code" ? t("New code animation") : t("New animation"),
+		});
 		if (out) {
 			const item = addItem(out.id, saved.id);
 			if (item) setActiveItemId(item.id);
 		}
 		setLibraryId(null);
 		setSelectedLayerId(null);
-		notify(kind === "code" ? "Создана код-анимация" : "Создана анимация слоёв");
+		notify(kind === "code" ? t("Code animation created") : t("Animation created"));
+	};
+
+	const createFromExample = (example: GalleryExample) => {
+		if (!confirmDiscard()) return;
+		const saved = addExample(example, getLang());
+		if (out) {
+			// Examples are drawn for a 1920-wide frame: scale them with the out,
+			// so they keep their proportions on any size.
+			const item = addItem(out.id, saved.id, {
+				x: example.place?.x ?? 0,
+				y: example.place?.y ?? 0,
+				scale: round(out.width / 1920, 4),
+			});
+			if (item) setActiveItemId(item.id);
+		}
+		setLibraryId(null);
+		setSelectedLayerId(null);
+		notify(t("Example added: {name}", { name: saved.name }));
 	};
 
 	const duplicate = (id: string) => {
@@ -2435,13 +2565,13 @@ export function EditorApp() {
 		}
 		setLibraryId(null);
 		setSelectedLayerId(null);
-		notify(`Дубликат: ${copy.name}`);
+		notify(t("Duplicate: {name}", { name: copy.name }));
 	};
 
 	const removeTemplate = (id: string) => {
 		const template = getTemplate(id);
 		if (!template) return;
-		if (!window.confirm(`Удалить «${template.name}»?`)) return;
+		if (!window.confirm(t("Delete “{name}”?", { name: template.name }))) return;
 		if (editingTemplateId === id) {
 			setActiveItemId(null);
 			setLibraryId(null);
@@ -2450,7 +2580,7 @@ export function EditorApp() {
 			setSelectedLayerId(null);
 		}
 		deleteTemplate(id);
-		notify("Анимация удалена");
+		notify(t("Animation deleted"));
 	};
 
 	const renameTemplate = (id: string, name: string) => {
@@ -2466,36 +2596,40 @@ export function EditorApp() {
 	// --------------------------------------------------------------- toolbar
 
 	const resolveForAction = (): TitleTemplate | null => {
-		const saved = persist();
-		if (saved) return saved;
+		// Saving rebuilds the animation wherever it is on air, so it only
+		// happens when there is something to save.
+		if (dirtyRef.current) {
+			const saved = persist();
+			if (saved) return saved;
+		}
+		if (draftRef.current) return draftRef.current;
 		if (editingTemplateId) return getTemplate(editingTemplateId) ?? null;
 		return null;
 	};
 
+	// Play and "on air" act on the selected placement — the same play and the
+	// same switch Control has. Only an animation that is not on this out falls
+	// back to the manual show.
 	const preview = () => {
 		const target = resolveForAction();
 		if (!target) return;
-		triggerTemplate(target.id, outId || null);
-		notify(`Preview → ${out ? out.name : "out"}`);
+		if (out && activeItem) triggerItem(out.id, activeItem.id);
+		else triggerTemplate(target.id, outId || null);
+		notify(t("Played on {name}", { name: out ? out.name : "out" }));
 	};
 
 	const showOnOut = () => {
 		const target = resolveForAction();
 		if (!target) return;
-		showTitle(target.id, { outId: outId || null });
-		notify("Показано");
-	};
-
-	const toggleOnOut = () => {
-		const target = resolveForAction();
-		if (!target) return;
-		toggleTitle(target.id, { outId: outId || null });
-		notify("Переключено");
+		if (out && activeItem) updateItem(out.id, activeItem.id, { held: true });
+		else showTitle(target.id, { outId: outId || null });
+		notify(t("On air"));
 	};
 
 	const hideOnOut = () => {
-		hideTitle({ outId: outId || null });
-		notify("Скрыто");
+		if (out && activeItem) updateItem(out.id, activeItem.id, { held: false });
+		else hideTitle({ outId: outId || null });
+		notify(t("Taken off air"));
 	};
 
 	// Arrow-key nudging: the layer when one is selected, otherwise the placement.
@@ -2561,39 +2695,54 @@ export function EditorApp() {
 	const playingIds = out ? runtime.playing?.[out.id] ?? [] : [];
 	const placedIds = useMemo(() => new Set(items.map((item) => item.templateId)), [items]);
 
+	const canAct = Boolean(draft || editingTemplateId);
+	// "On air" follows the placement's own switch; an animation that is not on
+	// this out can only be on air through the manual show.
+	const onAir = activeItem
+		? Boolean(activeItem.held)
+		: Boolean(
+				active.visible &&
+					editingTemplateId &&
+					active.templateId === editingTemplateId &&
+					(!active.outId || active.outId === outId),
+			);
+	// A code animation has no layers, so it has no layer tab either.
+	const tabs: InspectorTab[] =
+		draft?.kind === "layers" ? ["layer", "placement", "template"] : ["placement", "template"];
+	const tab = tabs.includes(inspectorTab) ? inspectorTab : "placement";
+
 	return (
 		<div className="ed-root">
 			<div className="ed-toolbar">
-				<span className="ed-toolbar__title">notGT — Editor</span>
-				{draft ? (
-					<span className={`ed-chip${dirty ? " is-dirty" : ""}`}>
-						{dirty ? "● не сохранено" : "сохранено"}
-					</span>
-				) : null}
+				<label className="ed-toolbar__out">
+					Out
+					<select
+						className="ed-out-select"
+						value={outId}
+						onChange={(event) => chooseOut(event.target.value)}
+					>
+						{outs.map((candidate) => (
+							<option key={candidate.id} value={candidate.id}>
+								{candidate.name}
+							</option>
+						))}
+					</select>
+				</label>
+				<IconButton
+					icon="link"
+					label={out ? t("Copy the out's address for OBS") : t("Create an out first")}
+					disabled={!out}
+					onClick={() => {
+						if (!out) return;
+						void copyText(absoluteOutUrl(out.id)).then(() => notify(t("Address for OBS copied")));
+					}}
+				/>
 				<span className="ed-vline" />
-				<button type="button" onClick={() => addLayer("text")}>
-					+ Текст
-				</button>
-				<button type="button" onClick={() => addLayer("shape")}>
-					+ Фигура
-				</button>
-				<button type="button" onClick={() => addLayer("image")}>
-					+ Картинка
-				</button>
-				<button type="button" onClick={() => addLayer("gif")}>
-					+ GIF
-				</button>
-				<button type="button" onClick={() => addLayer("video")}>
-					+ Видео
-				</button>
-				<span className="ed-vline" />
-				<button type="button" className="primary" onClick={persist} disabled={!draft}>
-					Сохранить
-				</button>
-				<button type="button" onClick={preview} disabled={!draft && !editingTemplateId}>
-					Preview
-				</button>
-				<span className="ed-vline" />
+				<Menu label={t("Add layer")} items={layerMenu(addLayer)}>
+					<Icon name="plus" size={14} />
+					{t("Layer")}
+					<Icon name="chevronDown" size={12} />
+				</Menu>
 				<button
 					type="button"
 					className={`ed-tool${cropMode ? " is-active" : ""}`}
@@ -2602,75 +2751,65 @@ export function EditorApp() {
 					data-crop-toggle
 					title={
 						canCrop
-							? "Обрезка: рамка поверх активной анимации — тяните за края и углы; всё, что вне рамки, скрывается"
-							: "Сначала выберите анимацию на out'е"
+							? t("A frame over the selected animation: everything outside it is hidden")
+							: t("Select an animation on the out first")
 					}
 				>
-					⛶ Обрезка
+					<Icon name="crop" size={14} />
+					{t("Crop")}
 				</button>
 				{cropMode && activeItem ? (
 					<>
-						<span className="ed-muted ed-small" data-crop-hint>
-							рамка — видимая часть; тяните края и углы
+						<span className="ed-hint" data-crop-hint>
+							{t("The frame is the visible part. Drag its edges and corners.")}
 						</span>
 						{activeItem.crop ? (
 							<button
 								type="button"
-								className="ed-mini"
+								className="ghost small"
 								onClick={() => setCrop(undefined)}
 								data-crop-reset
 							>
-								Сбросить обрезку
+								{t("Reset")}
 							</button>
 						) : null}
-						<button type="button" className="ed-mini" onClick={() => setCropMode(false)}>
-							Готово
+						<button type="button" className="small" onClick={() => setCropMode(false)}>
+							{t("Done")}
 						</button>
 					</>
 				) : null}
 				<span className="ed-spacer" />
-				{flash ? <span className="ed-flash">{flash}</span> : null}
-			</div>
-
-			<div className="ed-toolbar ed-toolbar--sub">
-				<span className="ed-muted ed-small">Out:</span>
-				<select
-					className="ed-out-select"
-					value={outId}
-					onChange={(event) => chooseOut(event.target.value)}
-				>
-					{outs.map((candidate) => (
-						<option key={candidate.id} value={candidate.id}>
-							{candidate.name}
-						</option>
-					))}
-				</select>
-				<button type="button" onClick={showOnOut} disabled={!draft && !editingTemplateId}>
-					Показать
-				</button>
-				<button type="button" onClick={toggleOnOut} disabled={!draft && !editingTemplateId}>
-					Toggle
-				</button>
-				<button type="button" className="danger" onClick={hideOnOut} disabled={!out}>
-					Скрыть
-				</button>
-				<span className="ed-vline" />
+				{dirty ? <span className="ed-chip is-dirty">{t("Unsaved")}</span> : null}
 				<button
 					type="button"
-					disabled={!out}
-					title={out ? "Скопировать URL для OBS" : "Нет out'а"}
-					onClick={() => {
-						if (!out) return;
-						void copyText(absoluteOutUrl(out.id)).then(() => notify("URL скопирован"));
-					}}
+					onClick={preview}
+					disabled={!canAct || onAir}
+					title={
+						onAir
+							? t("The animation is already on air — take it off first")
+							: t("Save the changes and play once on this out")
+					}
 				>
-					Копировать URL
+					<Icon name="play" size={14} />
+					{t("Play")}
 				</button>
-				{out ? (
-					<span className="ed-muted ed-small ed-ellipsis">{absoluteOutUrl(out.id)}</span>
-				) : (
-					<span className="ed-muted ed-small">создайте out, чтобы получить URL для OBS</span>
-				)}
+				<button
+					type="button"
+					className={`ed-air${onAir ? " is-live" : ""}`}
+					onClick={onAir ? hideOnOut : showOnOut}
+					disabled={!canAct}
+					title={
+						onAir
+							? t("Take the animation off air on this out")
+							: t("Save the changes and keep it on this out until you take it off")
+					}
+				>
+					{onAir ? t("Take off air") : t("Go on air")}
+				</button>
+				<button type="button" className="primary" onClick={persist} disabled={!draft || !dirty}>
+					{t("Save")}
+				</button>
+				<LangSwitch />
 			</div>
 
 			<div className="ed-main">
@@ -2683,19 +2822,11 @@ export function EditorApp() {
 							activeItemId={activeItemId}
 							playing={playingIds}
 							onActivate={handleSelectItem}
-							onToggleEnabled={(itemId, enabled) => patchItem(itemId, { enabled })}
 							onMove={moveItemInOut}
 							onTrigger={triggerItemOnOut}
 							onRemove={removeItemFromOut}
 						/>
-					) : (
-						<div className="ed-card">
-							<div className="ed-card__head">
-								<strong>На этом out&apos;е</strong>
-							</div>
-							<p className="ed-hint">Нет ни одного out&apos;а.</p>
-						</div>
-					)}
+					) : null}
 
 					{draft && draft.kind === "layers" ? (
 						<LayerList
@@ -2710,18 +2841,6 @@ export function EditorApp() {
 						/>
 					) : null}
 
-					{draft && draft.kind === "code" ? (
-						<div className="ed-card">
-							<div className="ed-card__head">
-								<strong>Код-анимация</strong>
-							</div>
-							<p className="ed-hint">
-								Слои недоступны: анимация собирается из HTML/CSS/JS. Редакторы и
-								предпросмотр — справа, на холсте — плейсхолдер.
-							</p>
-						</div>
-					) : null}
-
 					<TemplateLibrary
 						templates={templates}
 						placedIds={placedIds}
@@ -2731,44 +2850,86 @@ export function EditorApp() {
 						onSelect={selectLibrary}
 						onPlace={placeTemplate}
 						onCreate={createTemplate}
+						onExample={createFromExample}
 						onDuplicate={duplicate}
 						onDelete={removeTemplate}
 						onRename={renameTemplate}
 					/>
 				</div>
 
-				{out ? (
-					<EditorCanvas
-						out={out}
-						templates={templates}
-						draft={draft}
-						activeItemId={activeItemId}
-						selectedLayerId={selectedLayerId}
-						cropMode={cropMode}
-						previewPlaying={previewPlaying}
-						restartToken={restartToken}
-						data={data}
-						selection={selection}
-						onSelectItem={handleSelectItem}
-						onSelectLayer={setSelectedLayerId}
-						onLayerChange={updateLayer}
-						onItemChange={patchItem}
-					/>
-				) : (
-					<div className="ed-center">
-						<div className="ed-empty">
-							<h2>Нет out&apos;а</h2>
-							<p className="ed-hint">
-								Создайте out во вкладке «notGT — Titles &amp; Outs».
-							</p>
+				<div className="ed-stage">
+					{out ? (
+						<EditorCanvas
+							out={out}
+							templates={templates}
+							draft={draft}
+							activeItemId={activeItemId}
+							selectedLayerId={selectedLayerId}
+							cropMode={cropMode}
+							previewPlaying={previewPlaying}
+							restartToken={restartToken}
+							data={data}
+							selection={selection}
+							onSelectItem={handleSelectItem}
+							onSelectLayer={setSelectedLayerId}
+							onLayerChange={updateLayer}
+							onItemChange={patchItem}
+						/>
+					) : (
+						<div className="ed-center">
+							<div className="ed-empty">
+								<h2>{outsLoaded ? t("No outs yet") : t("Loading…")}</h2>
+								{outsLoaded ? (
+									<p>
+										{t("The editor's canvas is an out. Create the first one on the Titles & Outs tab.")}
+									</p>
+								) : null}
+							</div>
 						</div>
-					</div>
-				)}
+					)}
+
+					{draft && draft.kind === "code" ? (
+						<CodeDock
+							template={draft}
+							data={data}
+							onHooks={setCodeHooks}
+							onCode={(patch) =>
+								updateTemplate({
+									code: {
+										...(draft.code ?? { html: "", css: "", js: "" }),
+										...patch,
+									},
+								})
+							}
+						/>
+					) : null}
+
+					{flash ? (
+						<div className="ed-flash" role="status">
+							{flash}
+						</div>
+					) : null}
+				</div>
 
 				<div className="ed-side ed-side--right">
 					{draft ? (
 						<>
-							{draft.kind === "layers" ? (
+							<div className="ed-tabs ed-tabs--fill" role="tablist" aria-label={t("Inspector")}>
+								{tabs.map((item) => (
+									<button
+										key={item}
+										type="button"
+										role="tab"
+										aria-selected={tab === item}
+										className={`ed-tab${tab === item ? " is-on" : ""}`}
+										onClick={() => setInspectorTab(item)}
+									>
+										{t(INSPECTOR_TAB_LABEL[item])}
+									</button>
+								))}
+							</div>
+
+							{tab === "layer" ? (
 								selectedLayer ? (
 									<LayerInspector
 										layer={selectedLayer}
@@ -2783,74 +2944,54 @@ export function EditorApp() {
 										onUploaded={handleUploaded}
 									/>
 								) : (
-									<div className="ed-card">
-										<div className="ed-card__head">
-											<strong>Инспектор</strong>
-										</div>
+									<p className="ed-hint ed-pad">
+										{t("Select a layer on the canvas or in the list on the left — its properties appear here.")}
+									</p>
+								)
+							) : null}
+
+							{tab === "placement" ? (
+								activeItem && out ? (
+									<PlacementInspector
+										out={out}
+										item={activeItem}
+										template={draft}
+										onPatch={(patch) => patchItem(activeItem.id, patch)}
+										onPlayback={(patch) => patchItemPlayback(activeItem.id, patch)}
+										onRemove={() => removeItemFromOut(activeItem.id)}
+										onFitOut={() => fitItemToOut(activeItem)}
+										onCrop={() => {
+											if (!cropMode) toggleCropMode();
+										}}
+									/>
+								) : (
+									<div className="ed-pad col">
 										<p className="ed-hint">
-											Выберите слой на холсте или в списке слева. Ниже — размещение
-											анимации на out&apos;е и настройки шаблона.
+											{t("This animation is not on the selected out yet. Place it to set its position and playback.")}
 										</p>
+										<button
+											type="button"
+											className="ed-start"
+											onClick={() => placeTemplate(draft.id)}
+											disabled={!out}
+										>
+											<Icon name="plus" size={14} />
+											{t("Place on the out")}
+										</button>
 									</div>
 								)
-							) : (
-								<>
-									<CodePreviewCard template={draft} data={data} />
-									<CodeEditors
-										template={draft}
-										onCode={(patch) =>
-											updateTemplate({
-												code: {
-													...(draft.code ?? { html: "", css: "", js: "" }),
-													...patch,
-												},
-											})
-										}
-									/>
-								</>
-							)}
+							) : null}
 
-							{activeItem && out ? (
-								<PlacementInspector
-									out={out}
-									item={activeItem}
-									template={draft}
-									onPatch={(patch) => patchItem(activeItem.id, patch)}
-									onPlayback={(patch) => patchItemPlayback(activeItem.id, patch)}
-									onRemove={() => removeItemFromOut(activeItem.id)}
-									onFitOut={() => fitItemToOut(activeItem)}
-								/>
-							) : (
-								<div className="ed-card">
-									<div className="ed-card__head">
-										<strong>Размещение на out&apos;е</strong>
-									</div>
-									<p className="ed-hint">
-										Эта анимация ещё не размещена на выбранном out&apos;е.
-									</p>
-									<button
-										type="button"
-										onClick={() => placeTemplate(draft.id)}
-										disabled={!out}
-									>
-										Разместить на out&apos;е
-									</button>
-								</div>
-							)}
-
-							<TemplateSettings template={draft} onPatch={updateTemplate} />
+							{tab === "template" ? (
+								<TemplateSettings template={draft} hooks={codeHooks} onPatch={updateTemplate} />
+							) : null}
 						</>
 					) : (
-						<div className="ed-card">
-							<div className="ed-card__head">
-								<strong>Инспектор</strong>
-							</div>
-							<p className="ed-hint">
-								{outsLoaded && templatesLoaded
-									? "Выберите или создайте анимацию."
-									: "Загрузка…"}
-							</p>
-						</div>
+						<p className="ed-hint ed-pad">
+							{outsLoaded && templatesLoaded
+								? t("Select an animation on the left, or create one in the library.")
+								: t("Loading…")}
+						</p>
 					)}
 				</div>
 			</div>

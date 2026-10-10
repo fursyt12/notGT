@@ -1,20 +1,27 @@
+/**
+ * notGT — Titles & Outs dashboard panel (fullbleed): setup only.
+ *
+ * Left: the outs — name, size, the OBS address and which animations sit on
+ * each. Right: the animation library. Where a placement sits and how it plays
+ * is edited where it can be seen: on the canvas in the Editor, and next to the
+ * on-air switch in Control.
+ */
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 
 import { collectBindingPaths } from "../shared/binding";
-import type { Out, OutItem } from "../shared/types";
+import type { Out, OutItem, TitleTemplate } from "../shared/types";
+import { N_, getLang, t, tr, useLang, type Phrase } from "./i18n";
 import {
 	absoluteOutUrl,
+	addExample,
 	addItem,
 	clone,
-	copyText,
 	createOut,
 	deleteOut,
 	deleteTemplate,
 	duplicateTemplate,
-	getTemplate,
 	itemCanPlay,
-	hasVideoLayer,
 	moveItem,
 	newTemplate,
 	removeItem,
@@ -22,450 +29,387 @@ import {
 	saveTemplate,
 	triggerItem,
 	updateItem,
-	updateItemPlayback,
 	useOuts,
 	useRuntime,
 	useTemplates,
-	useVideoDuration,
-	videoHoldHint,
-	videoLayerSignature,
 } from "./shared";
+import {
+	CopyButton,
+	Icon,
+	IconButton,
+	LangSwitch,
+	Menu,
+	NameInput,
+	exampleMenuItem,
+	playbackSummary,
+	type MenuItem,
+} from "./ui";
 
-/** Number input that commits on blur / Enter. */
-function NumberInput({
+const KIND_LABEL: Record<TitleTemplate["kind"], Phrase> = {
+	layers: N_("layers"),
+	code: N_("code"),
+};
+
+/** Pixel size of an out; commits on blur / Enter. */
+function SizeInput({
 	value,
+	label,
 	onCommit,
-	step = 1,
-	min,
-	max,
-	title,
-	suffix,
-	disabled,
 }: {
-	value: number | undefined;
+	value: number;
+	label: string;
 	onCommit: (next: number) => void;
-	step?: number;
-	min?: number;
-	max?: number;
-	title?: string;
-	suffix?: string;
-	disabled?: boolean;
 }) {
+	const [draft, setDraft] = useState(String(value));
+	const [focused, setFocused] = useState(false);
+
+	useEffect(() => {
+		if (!focused) setDraft(String(value));
+	}, [value, focused]);
+
 	return (
-		<span className="row" style={{ gap: 2 }}>
-			<input
-				title={title}
-				type="number"
-				step={step}
-				min={min}
-				max={max}
-				disabled={disabled}
-				defaultValue={value ?? 0}
-				key={`${title}:${value}`}
-				onBlur={(event) => {
-					const parsed = Number(event.target.value);
-					if (Number.isFinite(parsed)) onCommit(parsed);
-				}}
-				onKeyDown={(event) => {
-					if (event.key === "Enter") (event.target as HTMLInputElement).blur();
-				}}
-				style={{ maxWidth: 90 }}
-			/>
-			{suffix && <span className="hint">{suffix}</span>}
-		</span>
+		<input
+			className="tt-size"
+			type="number"
+			min={1}
+			aria-label={label}
+			title={label}
+			value={draft}
+			onFocus={() => setFocused(true)}
+			onChange={(event) => setDraft(event.target.value)}
+			onBlur={() => {
+				setFocused(false);
+				const parsed = Math.round(Number(draft));
+				if (Number.isFinite(parsed) && parsed >= 1 && parsed !== value) onCommit(parsed);
+				else setDraft(String(value));
+			}}
+			onKeyDown={(event) => {
+				if (event.key === "Enter") event.currentTarget.blur();
+			}}
+		/>
 	);
 }
 
-function TemplatesCard() {
+// --------------------------------------------------------------------- outs
+
+function PlacementRow({
+	out,
+	item,
+	index,
+	count,
+	playing,
+}: {
+	out: Out;
+	item: OutItem;
+	index: number;
+	count: number;
+	playing: boolean;
+}) {
 	const templates = useTemplates();
-	const outs = useOuts();
-	const [targetOut, setTargetOut] = useState<Record<string, string>>({});
+	const template = templates.find((candidate) => candidate.id === item.templateId);
+	const name = template?.name ?? item.templateId;
 
-	return (
-		<div className="card">
-			<div className="card__head">
-				<h2>Анимации / шаблоны</h2>
-				<div className="row">
-					<button className="tiny primary" onClick={() => saveTemplate(newTemplate("layers"))}>
-						+ отрисовка
-					</button>
-					<button className="tiny" onClick={() => saveTemplate(newTemplate("code"))}>
-						+ код
-					</button>
-				</div>
-			</div>
-
-			{templates.length === 0 && (
-				<div className="hint">Нет анимаций. Создайте первую — она появится в редакторе.</div>
-			)}
-
-			<div className="list">
-				{templates.map((template) => {
-					const bindings = collectBindingPaths(template);
-					const outId = targetOut[template.id] ?? outs[0]?.id ?? "";
-					return (
-						<div className="col" key={template.id} style={{ gap: 4 }}>
-							<div className="item">
-								<span className="grow" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-									<input
-										defaultValue={template.name}
-										key={`name:${template.id}`}
-										onBlur={(event) => {
-											const name = event.target.value.trim();
-											if (name && name !== template.name) {
-												saveTemplate({ ...clone(template), name });
-											}
-										}}
-										onKeyDown={(event) => {
-											if (event.key === "Enter") (event.target as HTMLInputElement).blur();
-										}}
-									/>
-								</span>
-								<span className="badge">{template.kind === "code" ? "код" : "слои"}</span>
-								<span className="hint">{template.layers?.length ?? 0} сл.</span>
-								<button
-									className="tiny"
-									title="Дублировать"
-									onClick={() => duplicateTemplate(template.id)}
-								>
-									⧉
-								</button>
-								<button
-									className="tiny danger"
-									title="Удалить"
-									onClick={() => {
-										if (confirm(`Удалить «${template.name}»?`)) deleteTemplate(template.id);
-									}}
-								>
-									×
-								</button>
-							</div>
-							<div className="row" style={{ paddingLeft: 4 }}>
-								<span className="hint grow mono small" title={bindings.join(", ")}>
-									{bindings.length ? `{{${bindings.join("}}, {{")}}}` : "нет переменных"}
-								</span>
-								{outs.length > 0 && (
-									<>
-										<select
-											value={outId}
-											onChange={(event) =>
-												setTargetOut({ ...targetOut, [template.id]: event.target.value })
-											}
-											style={{ maxWidth: 140 }}
-										>
-											{outs.map((out) => (
-												<option key={out.id} value={out.id}>
-													{out.name}
-												</option>
-											))}
-										</select>
-										<button
-											className="tiny"
-											disabled={!outId}
-											onClick={() => outId && addItem(outId, template.id)}
-										>
-											разместить на out
-										</button>
-									</>
-								)}
-							</div>
-						</div>
-					);
-				})}
-			</div>
-		</div>
-	);
-}
-
-function ItemRow({ out, item }: { out: Out; item: OutItem }) {
-	const templates = useTemplates();
-	const runtime = useRuntime();
-	const template = getTemplate(item.templateId);
-	const playing = (runtime.playing?.[out.id] ?? []).includes(item.id);
-	const isLoop = item.playback.mode === "loop";
-	// A loop is held by the toggle, so the hold settings do not apply to it.
-	const videoMode = !isLoop && item.playback.holdMode === "video";
-	const hasVideo = hasVideoLayer(template);
-	const videoDuration = useVideoDuration(
-		item.templateId,
-		videoMode && hasVideo,
-		videoLayerSignature(template),
-	);
+	const menu: MenuItem[] = [
+		{
+			label: t("Play once"),
+			icon: "play",
+			disabled: !itemCanPlay(item, template),
+			onSelect: () => triggerItem(out.id, item.id),
+		},
+		{
+			label: t("Replace the animation"),
+			hint: t("Position and settings stay"),
+			icon: "swap",
+			children: templates
+				.filter((candidate) => candidate.id !== item.templateId)
+				.map((candidate) => ({
+					label: candidate.name,
+					onSelect: () => updateItem(out.id, item.id, { templateId: candidate.id }),
+				})),
+		},
+		{
+			label: item.enabled ? t("Turn API start off") : t("Turn API start on"),
+			hint: t("Start by animation name: Companion, REST"),
+			icon: item.enabled ? "eyeOff" : "eye",
+			onSelect: () => updateItem(out.id, item.id, { enabled: !item.enabled }),
+		},
+		{
+			label: t("Remove from out"),
+			icon: "trash",
+			danger: true,
+			separated: true,
+			onSelect: () => removeItem(out.id, item.id),
+		},
+	];
 
 	return (
 		<div
-			className="item"
+			className={`tt-row${item.enabled ? "" : " is-off"}`}
 			data-out={out.id}
 			data-item={item.id}
-			style={{ flexWrap: "wrap", alignItems: "flex-start" }}
 		>
-			<div className="col grow" style={{ gap: 4 }}>
-				<div className="row">
-					<input
-						type="checkbox"
-						checked={item.enabled}
-						title="Включено"
-						onChange={(event) => updateItem(out.id, item.id, { enabled: event.target.checked })}
-					/>
-					<strong className="grow">{template?.name ?? item.templateId}</strong>
-					{playing && <span className="badge badge--ok">играет</span>}
-				</div>
-
-				<div className="row">
-					<label className="field" style={{ maxWidth: 90 }}>
-						режим
-						<select
-							value={item.playback.mode}
-							onChange={(event) =>
-								updateItemPlayback(out.id, item.id, {
-									mode: event.target.value === "loop" ? "loop" : "once",
-								})
-							}
-						>
-							<option value="once">once</option>
-							<option value="loop">loop</option>
-						</select>
-					</label>
-
-					{isLoop ? (
-						<span className="hint" data-loop-hint>
-							висит, пока включён «показать» в панели Control; анимация циклится сама
-						</span>
-					) : (
-						<label className="field" style={{ maxWidth: 100 }}>
-							держать, мс
-							<NumberInput
-								title="hold"
-								value={item.playback.holdMs}
-								min={0}
-								step={250}
-								disabled={videoMode}
-								onCommit={(value) => updateItemPlayback(out.id, item.id, { holdMs: value })}
-							/>
-						</label>
-					)}
-
-				</div>
-
-				<div className="row small" style={{ gap: 6 }} data-hold-scope="item">
-					<label className="row small" style={{ gap: 4, cursor: "pointer" }}>
-						<input
-							type="checkbox"
-							data-hold-mode
-							checked={videoMode}
-							onChange={(event) =>
-								updateItemPlayback(out.id, item.id, {
-									holdMode: event.target.checked ? "video" : "fixed",
-								})
-							}
-						/>
-						длительность = видео
-					</label>
-					{videoMode ? (
-						<span className="hint" data-hold-hint>
-							{videoHoldHint(videoDuration, hasVideo)}
-						</span>
-					) : null}
-				</div>
-
-				<div className="row">
-					<label className="field" style={{ maxWidth: 80 }}>
-						x, %
-						<NumberInput
-							title="x"
-							step={0.5}
-							value={item.x}
-							onCommit={(value) => updateItem(out.id, item.id, { x: value })}
-						/>
-					</label>
-					<label className="field" style={{ maxWidth: 80 }}>
-						y, %
-						<NumberInput
-							title="y"
-							step={0.5}
-							value={item.y}
-							onCommit={(value) => updateItem(out.id, item.id, { y: value })}
-						/>
-					</label>
-					<label className="field" style={{ maxWidth: 80 }}>
-						масштаб
-						<NumberInput
-							title="scale"
-							step={0.05}
-							value={item.scale}
-							onCommit={(value) => updateItem(out.id, item.id, { scale: value })}
-						/>
-					</label>
-				</div>
-			</div>
-
-			<div className="col" style={{ gap: 4 }}>
-				<div className="row">
-					<button className="tiny" title="Выше" onClick={() => moveItem(out.id, item.id, -1)}>
-						↑
-					</button>
-					<button className="tiny" title="Ниже" onClick={() => moveItem(out.id, item.id, 1)}>
-						↓
-					</button>
-				</div>
-				<button
-					className="tiny"
-					data-can-play={itemCanPlay(item, template) ? "true" : "false"}
-					title={
-						itemCanPlay(item, template)
-							? "Проиграть один раз"
-							: item.held
-								? "Титр держится в эфире: снимается тумблером в панели Control"
-								: "Цикл включается и выключается в панели Control"
-					}
-					disabled={!itemCanPlay(item, template)}
-					onClick={() => triggerItem(out.id, item.id)}
-				>
-					проиграть
-				</button>
-				<select
-					className="tiny"
-					value=""
-					title="Заменить анимацию"
-					onChange={(event) => {
-						if (event.target.value) {
-							updateItem(out.id, item.id, { templateId: event.target.value });
-						}
-					}}
-				>
-					<option value="">заменить…</option>
-					{templates.map((candidate) => (
-						<option key={candidate.id} value={candidate.id}>
-							{candidate.name}
-						</option>
-					))}
-				</select>
-				<button className="tiny danger" onClick={() => removeItem(out.id, item.id)}>
-					удалить
-				</button>
-			</div>
+			<span
+				className={`tally${playing ? " is-live" : ""}`}
+				title={playing ? t("On air") : undefined}
+				aria-hidden="true"
+			/>
+			<span className="tt-row__name truncate" title={name}>
+				{name}
+			</span>
+			{!item.enabled ? <span className="tag">{t("API start is off")}</span> : null}
+			<span className="hint">{playbackSummary(item, template)}</span>
+			<span className="tt-row__move">
+				<IconButton
+					icon="up"
+					label={t("Move up")}
+					disabled={index === 0}
+					onClick={() => moveItem(out.id, item.id, -1)}
+				/>
+				<IconButton
+					icon="down"
+					label={t("Move down")}
+					disabled={index >= count - 1}
+					onClick={() => moveItem(out.id, item.id, 1)}
+				/>
+			</span>
+			<Menu items={menu} label={t("Actions: {name}", { name })} />
 		</div>
 	);
 }
 
 function OutCard({ out }: { out: Out }) {
 	const templates = useTemplates();
-	const [copied, setCopied] = useState(false);
-	const [pick, setPick] = useState("");
+	const runtime = useRuntime();
 	const url = absoluteOutUrl(out.id);
+	const playing = runtime.playing?.[out.id] ?? [];
+	const items = [...out.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+	const outMenu: MenuItem[] = [
+		{
+			label: t("Delete out"),
+			icon: "trash",
+			danger: true,
+			onSelect: () => {
+				if (window.confirm(
+						t("Delete the out “{name}”? Its address in OBS will stop working.", { name: out.name }),
+					)) {
+					deleteOut(out.id);
+				}
+			},
+		},
+	];
 
 	return (
-		<div className="card">
-			<div className="card__head">
-				<input
-					defaultValue={out.name}
-					key={`outname:${out.id}`}
-					onBlur={(event) => {
-						const name = event.target.value.trim();
-						if (name && name !== out.name) saveOut({ ...clone(out), name });
-					}}
+		<section className="panel tt-out" data-out={out.id}>
+			<header className="panel__head">
+				<NameInput
+					className="tt-out__name grow"
+					label={t("Out name")}
+					value={out.name}
+					onCommit={(name) => saveOut({ ...clone(out), name })}
 				/>
-				<button
-					className="tiny danger"
-					onClick={() => {
-						if (confirm(`Удалить out «${out.name}»?`)) deleteOut(out.id);
-					}}
-				>
-					×
-				</button>
+				<SizeInput
+					label={t("Width, px")}
+					value={out.width}
+					onCommit={(width) => saveOut({ ...clone(out), width })}
+				/>
+				<span className="muted">×</span>
+				<SizeInput
+					label={t("Height, px")}
+					value={out.height}
+					onCommit={(height) => saveOut({ ...clone(out), height })}
+				/>
+				<Menu items={outMenu} label={t("Actions: {name}", { name: out.name })} />
+			</header>
+
+			<div className="tt-url">
+				<input
+					readOnly
+					className="mono"
+					aria-label={t("Address for the Browser Source in OBS")}
+					title={t("Address for the Browser Source in OBS")}
+					value={url}
+					onFocus={(event) => event.target.select()}
+				/>
+				<CopyButton text={url} label={t("Copy")} className="small" />
 			</div>
 
-			<div className="row">
-				<span className="hint mono">id: {out.id}</span>
-				<label className="field" style={{ maxWidth: 90 }}>
-					ширина
-					<NumberInput
-						title="w"
-						value={out.width}
-						min={1}
-						onCommit={(value) => saveOut({ ...clone(out), width: value })}
+			{items.length === 0 ? (
+				<div className="empty tt-out__empty">
+					{t("Nothing here yet. Add an animation — it appears in Control and on the canvas in Editor.")}
+				</div>
+			) : (
+				items.map((item, index) => (
+					<PlacementRow
+						key={item.id}
+						out={out}
+						item={item}
+						index={index}
+						count={items.length}
+						playing={playing.includes(item.id)}
 					/>
-				</label>
-				<label className="field" style={{ maxWidth: 90 }}>
-					высота
-					<NumberInput
-						title="h"
-						value={out.height}
-						min={1}
-						onCommit={(value) => saveOut({ ...clone(out), height: value })}
-					/>
-				</label>
-			</div>
+				))
+			)}
 
-			<div className="out-link" style={{ marginTop: 6 }}>
-				<input readOnly value={url} onFocus={(event) => event.target.select()} />
-				<button
-					className="tiny"
-					onClick={() => {
-						void copyText(url).then(() => {
-							setCopied(true);
-							window.setTimeout(() => setCopied(false), 1500);
-						});
-					}}
+			<div className="tt-out__foot">
+				<Menu
+					className="ghost"
+					label={t("Add an animation to {name}", { name: out.name })}
+					items={templates.map((template) => ({
+						label: template.name,
+						hint: t(KIND_LABEL[template.kind]),
+						onSelect: () => addItem(out.id, template.id),
+					}))}
 				>
-					{copied ? "✓" : "копировать"}
-				</button>
+					<Icon name="plus" size={14} />
+					{t("Add animation")}
+				</Menu>
 			</div>
+		</section>
+	);
+}
 
-			<div className="divider" />
+// ------------------------------------------------------------------ library
 
-			<div className="list">
-				{out.items.map((item) => (
-					<ItemRow key={item.id} out={out} item={item} />
-				))}
-				{out.items.length === 0 && <div className="hint">Анимации ещё не размещены.</div>}
+function LibraryRow({ template, outs }: { template: TitleTemplate; outs: Out[] }) {
+	const bindings = collectBindingPaths(template);
+
+	const menu: MenuItem[] = [
+		{ label: t("Duplicate"), icon: "copy", onSelect: () => duplicateTemplate(template.id) },
+		{
+			label: t("Delete animation"),
+			icon: "trash",
+			danger: true,
+			separated: true,
+			onSelect: () => {
+				if (window.confirm(t("Delete “{name}”? It disappears from every out.", { name: template.name }))) {
+					deleteTemplate(template.id);
+				}
+			},
+		},
+	];
+
+	return (
+		<div className="tt-row tt-row--lib" data-template={template.id}>
+			<div className="tt-lib__main">
+				<NameInput
+					label={t("Animation name")}
+					value={template.name}
+					onCommit={(name) => saveTemplate({ ...clone(template), name })}
+				/>
+				{bindings.length > 0 ? (
+					<span
+						className="hint truncate"
+						title={t("Reads the variables: {list}", { list: bindings.join(", ") })}
+					>
+						{tr("reads {list}", { list: <span className="mono">{bindings.join(", ")}</span> })}
+					</span>
+				) : null}
 			</div>
-
-			<div className="row" style={{ marginTop: 6 }}>
-				<select value={pick} onChange={(event) => setPick(event.target.value)}>
-					<option value="">выберите анимацию…</option>
-					{templates.map((template) => (
-						<option key={template.id} value={template.id}>
-							{template.name}
-						</option>
-					))}
-				</select>
+			<span className="tag">{t(KIND_LABEL[template.kind])}</span>
+			{outs.length === 1 ? (
 				<button
-					disabled={!pick}
-					onClick={() => {
-						if (!pick) return;
-						addItem(out.id, pick);
-						setPick("");
-					}}
+					type="button"
+					className="ghost small"
+					title={t("Place on {name}", { name: outs[0]!.name })}
+					onClick={() => addItem(outs[0]!.id, template.id)}
 				>
-					Добавить на out
+					{t("Place")}
 				</button>
-			</div>
+			) : outs.length > 1 ? (
+				<Menu
+					className="ghost small"
+					label={t("Place on the out")}
+					items={outs.map((out) => ({
+						label: out.name,
+						onSelect: () => addItem(out.id, template.id),
+					}))}
+				>
+					{t("Place")}
+					<Icon name="chevronDown" size={12} />
+				</Menu>
+			) : null}
+			<Menu items={menu} label={t("Actions: {name}", { name: template.name })} />
 		</div>
 	);
 }
 
+function Library() {
+	const templates = useTemplates();
+	const outs = useOuts();
+
+	const create: MenuItem[] = [
+		{
+			label: t("From layers"),
+			hint: t("Text, shapes, images and video — built with the mouse in Editor"),
+			icon: "layers",
+			onSelect: () => saveTemplate({ ...newTemplate("layers"), name: t("New animation") }),
+		},
+		{
+			label: t("From code"),
+			hint: t("Your own HTML, CSS and JavaScript"),
+			icon: "code",
+			onSelect: () => saveTemplate({ ...newTemplate("code"), name: t("New code animation") }),
+		},
+		exampleMenuItem((example) => addExample(example, getLang())),
+	];
+
+	return (
+		<div className="tt-col">
+			<header className="tt-head">
+				<h2>{t("Animations")}</h2>
+				<span className="spacer" />
+				<Menu items={create} label={t("New animation")}>
+					<Icon name="plus" size={14} />
+					{t("New animation")}
+				</Menu>
+				<LangSwitch />
+			</header>
+			<section className="panel tt-lib">
+				{templates.length === 0 ? (
+					<div className="empty">
+						{t("No animations yet. Create your own or take a ready-made one: “New animation” → “From an example”.")}
+					</div>
+				) : (
+					templates.map((template) => (
+						<LibraryRow key={template.id} template={template} outs={outs} />
+					))
+				)}
+			</section>
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------- app
+
 function App() {
 	const outs = useOuts();
+	useLang();
+
 	return (
-		<>
-			<div className="row row--between" style={{ marginBottom: 8 }}>
-				<h1>notGT — Titles &amp; Outs</h1>
-				<button onClick={() => createOut()}>+ новый out</button>
+		<div className="tt">
+			<div className="tt-col">
+				<header className="tt-head">
+					<h2>Outs</h2>
+					<span className="hint truncate">{t("One out is one Browser Source in OBS")}</span>
+					<span className="spacer" />
+					<button type="button" onClick={() => createOut(t("New out"))}>
+						<Icon name="plus" size={14} />
+						{t("New out")}
+					</button>
+				</header>
+				{outs.length === 0 ? (
+					<section className="panel">
+						<div className="empty">
+							{t("No outs yet. Create the first one and paste its address into a Browser Source in OBS.")}
+						</div>
+					</section>
+				) : (
+					outs.map((out) => <OutCard key={out.id} out={out} />)
+				)}
 			</div>
-
-			<TemplatesCard />
-
-			<h2>Out'ы</h2>
-			{outs.length === 0 && (
-				<div className="hint">
-					Out — это один Browser Source в OBS. Создайте хотя бы один и скопируйте ссылку.
-				</div>
-			)}
-			{outs.map((out) => (
-				<OutCard key={out.id} out={out} />
-			))}
-		</>
+			<Library />
+		</div>
 	);
 }
 

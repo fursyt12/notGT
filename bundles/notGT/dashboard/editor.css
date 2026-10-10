@@ -1,13 +1,16 @@
 /*
- * notGT — editor panel styles.
+ * notGT — Editor panel styles.
  *
  * Self-contained and scoped with the `ed-` prefix so nothing here can clash
  * with ui.css. Colours come from the shared dark theme variables in ui.css.
+ *
+ * The toolbar and the status bar have a fixed height and never wrap: the
+ * canvas is measured from the space they leave, so a line that wraps while a
+ * placement is being dragged would move the stage under the pointer.
  */
 
 body.editor-body {
 	margin: 0;
-	padding: 0;
 	height: 100vh;
 	overflow: hidden;
 }
@@ -21,8 +24,6 @@ body.editor-body {
 	flex-direction: column;
 	height: 100vh;
 	min-height: 0;
-	background: var(--ng-bg);
-	color: var(--ng-fg);
 }
 
 /* ------------------------------------------------------------------ toolbar */
@@ -31,47 +32,33 @@ body.editor-body {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	flex-wrap: wrap;
-	padding: 7px 10px;
-	background: var(--ng-bg-2);
-	border-bottom: 1px solid var(--ng-line);
+	flex: 0 0 auto;
+	height: 48px;
+	padding: 0 12px;
+	border-bottom: 1px solid var(--ng-line-soft);
+	white-space: nowrap;
+	overflow: hidden;
 }
 
-.ed-toolbar--sub {
-	background: var(--ng-bg);
-	border-bottom: 1px solid var(--ng-line);
-	padding: 5px 10px;
-	font-size: 12px;
-}
-
-.ed-toolbar__title {
-	font-weight: 700;
-	letter-spacing: 0.02em;
-	margin-right: 4px;
-}
-
-.ed-toolbar button {
-	padding: 4px 9px;
-}
-
-/* A tool that stays on until it is switched off (see the crop tool). */
-.ed-toolbar button.ed-tool.is-active {
-	background: rgba(255, 209, 102, 0.16);
-	border-color: rgba(255, 209, 102, 0.75);
-	color: var(--ng-fg);
+.ed-toolbar__out {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--ng-muted);
 }
 
 .ed-out-select {
 	width: auto;
-	min-width: 160px;
-	max-width: 240px;
+	min-width: 150px;
+	max-width: 220px;
 }
 
 .ed-vline {
+	flex: 0 0 auto;
 	width: 1px;
-	align-self: stretch;
-	background: var(--ng-line);
-	margin: 2px 4px;
+	height: 20px;
+	margin: 0 4px;
+	background: var(--ng-line-soft);
 }
 
 .ed-spacer {
@@ -79,26 +66,33 @@ body.editor-body {
 	min-width: 8px;
 }
 
-.ed-chip {
-	font-size: 11px;
-	padding: 2px 8px;
-	border-radius: 999px;
-	border: 1px solid var(--ng-line);
-	color: var(--ng-muted);
-}
-
-.ed-chip.is-dirty {
-	border-color: var(--ng-warn);
+/* A tool that stays on until it is switched off (see the crop tool). */
+.ed-tool.is-active {
+	background: rgba(251, 191, 36, 0.18);
 	color: var(--ng-warn);
 }
 
-.ed-flash {
-	font-size: 11px;
-	color: var(--ng-ok);
-	background: rgba(74, 222, 128, 0.08);
-	border: 1px solid rgba(74, 222, 128, 0.35);
-	border-radius: 999px;
-	padding: 2px 10px;
+.ed-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--ng-warn);
+	font-size: 12px;
+}
+
+.ed-chip::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+}
+
+/* The animation being edited is on air right now. */
+.ed-air.is-live,
+.ed-air.is-live:hover:not(:disabled) {
+	background: var(--ng-live);
+	color: #fff;
 }
 
 /* ------------------------------------------------------------------- layout */
@@ -106,33 +100,53 @@ body.editor-body {
 .ed-main {
 	flex: 1;
 	display: grid;
-	grid-template-columns: 290px minmax(0, 1fr) 350px;
+	grid-template-columns: 280px minmax(0, 1fr) 324px;
 	min-height: 0;
 }
 
 .ed-side {
 	display: flex;
 	flex-direction: column;
-	gap: 10px;
 	min-height: 0;
 	overflow: auto;
-	padding: 10px;
-	background: var(--ng-bg);
-	border-right: 1px solid var(--ng-line);
+	border-right: 1px solid var(--ng-line-soft);
 }
 
 .ed-side--right {
 	border-right: 0;
-	border-left: 1px solid var(--ng-line);
+	border-left: 1px solid var(--ng-line-soft);
 }
 
-.ed-center {
+.ed-stage {
 	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
+}
+
+.ed-center {
+	position: relative;
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
 	background: #0b1118;
+}
+
+.ed-flash {
+	position: absolute;
+	top: 12px;
+	left: 50%;
+	z-index: 5;
+	transform: translateX(-50%);
+	padding: 6px 14px;
+	border-radius: 999px;
+	background: var(--ng-bg-4);
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+	font-size: 12px;
+	pointer-events: none;
 }
 
 /* ------------------------------------------------------------------- canvas */
@@ -199,218 +213,256 @@ body.editor-body {
 	display: flex;
 	align-items: center;
 	gap: 14px;
-	flex-wrap: wrap;
-	padding: 5px 10px;
-	border-top: 1px solid var(--ng-line);
-	background: var(--ng-bg-2);
-	font-size: 11px;
+	flex: 0 0 auto;
+	height: 28px;
+	padding: 0 12px;
+	border-top: 1px solid var(--ng-line-soft);
+	background: var(--ng-bg);
 	color: var(--ng-muted);
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
 }
 
 /* Magnet switch in the canvas status bar. */
 .ed-snap {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
+	gap: 6px;
 	cursor: pointer;
 	user-select: none;
-	color: var(--ng-muted);
-}
-
-.ed-snap input {
-	margin: 0;
-	cursor: pointer;
 }
 
 .ed-ok {
 	color: var(--ng-ok);
 }
 
-/* The crop of a placement, as a value in the inspector. */
-.ed-crop-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	justify-content: space-between;
+.ed-mini {
+	height: 22px;
+	padding: 0 8px;
+	font-size: 11px;
 }
 
-/* --------------------------------------------------------------- code panel */
+.ed-empty {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	max-width: 420px;
+	margin: auto;
+	padding: 32px 24px;
+	text-align: center;
+	color: var(--ng-muted);
+}
 
-.ed-code-preview {
-	flex: 1;
+.ed-empty h2 {
+	color: var(--ng-fg);
+}
+
+/* ---------------------------------------------------------------- code dock */
+
+.ed-dock {
+	display: flex;
+	flex: 0 0 auto;
+	flex-direction: column;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.ed-dock__bar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 40px;
+	padding: 0 8px;
+}
+
+.ed-dock__body {
+	display: flex;
+	gap: 12px;
+	height: clamp(200px, 36vh, 420px);
 	min-height: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	padding: 12px;
-	background-color: #0f1720;
-	background-image:
-		linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%),
-		linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%);
-	background-size: 32px 32px;
-	background-position: 0 0, 16px 16px;
-}
-
-.ed-preview-frame {
-	width: 100%;
-	height: 100%;
-	border: 1px solid var(--ng-line);
-	border-radius: var(--ng-radius);
-	background: transparent;
-}
-
-/* Compact live preview inside the right-hand inspector column. */
-.ed-code-preview--panel {
-	flex: none;
-	aspect-ratio: 16 / 9;
-	width: 100%;
-	padding: 0;
-	border-radius: var(--ng-radius);
+	padding: 0 12px 12px;
 }
 
 .ed-code {
-	font-family: ui-monospace, Menlo, Consolas, monospace;
+	font-family: var(--ng-mono);
 	font-size: 12px;
-	line-height: 1.45;
-	resize: vertical;
+	line-height: 1.5;
 	white-space: pre;
 	tab-size: 2;
 }
 
-.ed-note {
-	background: var(--ng-bg-2);
-	border: 1px solid var(--ng-line);
-	border-left: 3px solid var(--ng-accent);
-	border-radius: var(--ng-radius);
-	padding: 8px 10px;
-	font-size: 11px;
-	color: var(--ng-muted);
+.ed-dock__body > .ed-code,
+.ed-dock__body > .ed-help {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	resize: none;
 }
 
-.ed-note ul {
-	margin: 6px 0;
-	padding-left: 16px;
+.ed-dock__preview {
+	display: flex;
+	flex: 0 0 auto;
+	flex-direction: column;
+	gap: 6px;
+	width: clamp(240px, 32%, 440px);
+	min-height: 0;
 }
 
-.ed-note li {
-	margin: 2px 0;
-}
-
-.ed-note p {
-	margin: 6px 0 0;
-}
-
-.ed-note code {
-	color: var(--ng-fg);
-	background: var(--ng-bg);
-	padding: 1px 4px;
-	border-radius: 4px;
-}
-
-/* --------------------------------------------------------------- structure */
-
-.ed-card {
-	background: var(--ng-bg-2);
-	border: 1px solid var(--ng-line);
-	border-radius: var(--ng-radius);
-	padding: 8px;
-}
-
-.ed-card__head {
+.ed-dock__preview-foot {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
-	margin-bottom: 8px;
 }
 
-.ed-panel-body {
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
+.ed-dock__body[hidden] {
+	display: none;
 }
 
-.ed-section {
-	background: var(--ng-bg-2);
-	border: 1px solid var(--ng-line);
-	border-radius: var(--ng-radius);
+/* The animation at its own design size, scaled down to fit the box. */
+.ed-code-preview {
+	position: relative;
+	flex: 1;
+	min-height: 0;
 	overflow: hidden;
+	border-radius: var(--ng-radius-s);
+	background-color: #0f1720;
+	background-image:
+		linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%),
+		linear-gradient(45deg, rgba(255, 255, 255, 0.028) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.028) 75%);
+	background-size: 24px 24px;
+	background-position: 0 0, 12px 12px;
 }
 
-.ed-section__head {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	width: 100%;
-	padding: 7px 9px;
-	text-align: left;
-	background: var(--ng-bg-3);
+.ed-preview-frame {
+	position: absolute;
 	border: 0;
-	border-radius: 0;
-	font-size: 11px;
-	font-weight: 700;
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
-	color: var(--ng-muted);
+	background: transparent;
+	transform-origin: top left;
 }
 
-.ed-section__head:hover {
+.ed-help {
+	overflow: auto;
+	padding: 4px 4px 4px 2px;
+	color: var(--ng-muted);
+	font-size: 12px;
+}
+
+.ed-help dl {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 6px 14px;
+	margin: 0 0 10px;
+}
+
+.ed-help dt,
+.ed-help dd {
+	margin: 0;
+}
+
+.ed-help code {
 	color: var(--ng-fg);
 }
 
-.ed-caret {
-	font-size: 10px;
-	width: 10px;
+.ed-help p + p {
+	margin-top: 6px;
 }
 
-.ed-section__body {
+/* --------------------------------------------------------------------- tabs */
+
+.ed-tabs {
 	display: flex;
-	flex-direction: column;
-	gap: 8px;
-	padding: 9px;
+	gap: 2px;
 }
 
-/* ------------------------------------------------------------------- lists */
+.ed-tab {
+	height: 28px;
+	padding: 0 10px;
+	background: transparent;
+	color: var(--ng-muted);
+}
+
+.ed-tab:hover:not(:disabled) {
+	background: var(--ng-bg-2);
+	color: var(--ng-fg);
+}
+
+.ed-tab.is-on,
+.ed-tab.is-on:hover:not(:disabled) {
+	background: var(--ng-bg-3);
+	color: var(--ng-fg);
+}
+
+/* The inspector's tabs stay in view while its fields scroll. */
+.ed-tabs--fill {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	flex: 0 0 auto;
+	padding: 10px 8px;
+	border-bottom: 1px solid var(--ng-line-soft);
+	background: var(--ng-bg);
+}
+
+.ed-tabs--fill .ed-tab {
+	flex: 1;
+}
+
+/* ------------------------------------------------------------- side groups */
+
+.ed-group {
+	padding: 6px 8px 10px;
+	border-bottom: 1px solid var(--ng-line-soft);
+}
+
+.ed-group:last-child {
+	border-bottom: 0;
+}
+
+.ed-group__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 32px;
+	padding: 0 2px 0 8px;
+}
+
+.ed-group__head h3 {
+	color: var(--ng-muted);
+	font-size: 12px;
+}
+
+.ed-group__hint {
+	padding: 2px 8px 4px;
+}
 
 .ed-list {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
+	gap: 1px;
 }
 
 .ed-list-item {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	padding: 4px 6px;
-	background: var(--ng-bg);
-	border: 1px solid var(--ng-line);
-	border-radius: 6px;
+	gap: 8px;
+	min-height: 32px;
+	padding: 0 4px 0 8px;
+	border-radius: var(--ng-radius-s);
 	cursor: pointer;
 }
 
 .ed-list-item:hover {
-	border-color: var(--ng-muted);
+	background: var(--ng-bg-2);
 }
 
 .ed-list-item.is-selected {
-	border-color: var(--ng-accent);
 	background: var(--ng-bg-3);
 }
 
-.ed-list-item.is-hidden {
-	opacity: 0.6;
-}
-
-/* Row checkboxes / tiny action buttons must not stretch with the form styles. */
-.ed-list-item input[type="checkbox"] {
-	flex: 0 0 auto;
-	width: auto;
-	min-width: 0;
-}
-
-.ed-list-item .ed-icon-btn {
-	white-space: nowrap;
+.ed-list-item.is-hidden .ed-list-item__name,
+.ed-list-item.is-hidden .ed-kind {
+	opacity: 0.5;
 }
 
 .ed-list-item__name {
@@ -419,51 +471,45 @@ body.editor-body {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 12px;
 }
 
+/* Row actions wait for the pointer, the focus or the selection. */
 .ed-list-item__actions {
+	display: none;
+	align-items: center;
+	flex: 0 0 auto;
+}
+
+.ed-list-item:hover .ed-list-item__actions,
+.ed-list-item:focus-within .ed-list-item__actions,
+.ed-list-item.is-selected .ed-list-item__actions {
 	display: flex;
-	align-items: center;
-	gap: 2px;
-	flex: 0 0 auto;
 }
 
-.ed-layer-icon {
+/* …except a state that is on (hidden, locked): that one always shows. */
+.ed-list-item__state {
+	display: flex;
 	flex: 0 0 auto;
-	width: 18px;
-	height: 18px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	border-radius: 4px;
-	background: var(--ng-bg-3);
-	border: 1px solid var(--ng-line);
-	font-size: 10px;
-	color: var(--ng-muted);
-}
-
-.ed-badge {
-	flex: 0 0 auto;
-	font-size: 9px;
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
-	padding: 1px 5px;
-	border-radius: 999px;
-	border: 1px solid var(--ng-line);
-	color: var(--ng-muted);
-}
-
-.ed-badge--code {
-	border-color: var(--ng-warn);
 	color: var(--ng-warn);
 }
 
-/* "сейчас играет" badge in the per-out item list. */
-.ed-badge--live {
-	border-color: rgba(74, 222, 128, 0.55);
-	color: var(--ng-ok);
-	background: rgba(74, 222, 128, 0.08);
+.ed-list-item__state button {
+	color: inherit;
+}
+
+.ed-kind {
+	display: inline-flex;
+	flex: 0 0 auto;
+	color: var(--ng-faint);
+}
+
+.ed-list-item.is-selected .ed-kind {
+	color: var(--ng-accent);
+}
+
+button.ed-danger:hover:not(:disabled) {
+	background: rgba(255, 123, 114, 0.12);
+	color: var(--ng-danger);
 }
 
 .ed-inline-name {
@@ -475,12 +521,63 @@ body.editor-body {
 }
 
 .ed-inline-name--edit {
-	background: var(--ng-bg);
-	border: 1px solid var(--ng-accent);
-	color: var(--ng-fg);
-	border-radius: 4px;
-	padding: 1px 4px;
-	font: inherit;
+	height: 24px;
+	padding: 0 5px;
+	border-color: var(--ng-accent);
+}
+
+/* ---------------------------------------------------------------- inspector */
+
+.ed-panel-body {
+	display: flex;
+	flex-direction: column;
+}
+
+.ed-pad {
+	padding: 14px 16px;
+}
+
+.ed-section {
+	border-bottom: 1px solid var(--ng-line-soft);
+}
+
+.ed-section__head {
+	justify-content: flex-start;
+	width: 100%;
+	height: 36px;
+	padding: 0 12px;
+	border-radius: 0;
+	background: transparent;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.ed-section__head:hover:not(:disabled) {
+	background: var(--ng-bg-2);
+}
+
+.ed-section__head .ico {
+	color: var(--ng-muted);
+	transition: transform 0.12s ease;
+}
+
+.ed-section.is-open > .ed-section__head .ico {
+	transform: rotate(90deg);
+}
+
+.ed-section__body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 2px 16px 16px;
+}
+
+.ed-start {
+	align-self: flex-start;
+}
+
+.ed-panel-body > .ed-start {
+	margin: 12px;
 }
 
 /* -------------------------------------------------------------------- form */
@@ -488,34 +585,33 @@ body.editor-body {
 .ed-field {
 	display: flex;
 	flex-direction: column;
-	gap: 3px;
+	gap: 4px;
 	min-width: 0;
 }
 
 .ed-field__label {
-	font-size: 10px;
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
 	color: var(--ng-muted);
+	font-size: 12px;
 }
 
 .ed-grid2 {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
-	gap: 6px;
+	gap: 8px;
+}
+
+.ed-grid3 {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 8px;
 }
 
 .ed-check {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
-	font-size: 11px;
-	color: var(--ng-muted);
+	gap: 7px;
 	cursor: pointer;
-}
-
-.ed-check input {
-	width: auto;
+	user-select: none;
 }
 
 .ed-color {
@@ -526,73 +622,72 @@ body.editor-body {
 
 .ed-color input[type="text"] {
 	flex: 1;
-	min-width: 0;
-}
-
-.ed-color input[type="color"] {
-	flex: 0 0 auto;
 }
 
 .ed-mono {
-	font-family: ui-monospace, Menlo, Consolas, monospace;
-	font-size: 11px;
+	font-family: var(--ng-mono);
+	font-size: 12px;
 }
 
 .ed-hint {
-	color: var(--ng-muted);
-	font-size: 11px;
 	margin: 0;
+	color: var(--ng-muted);
+	font-size: 12px;
 }
 
-/* «длительность = видео» checkbox + probed-length hint, next to holdMs. */
-.ed-hold-row {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 6px;
-}
-
-.ed-hold-row .ed-hint {
-	flex: 1 1 auto;
-	min-width: 0;
-}
-
-.ed-hold-ms:disabled {
-	opacity: 0.55;
-	cursor: not-allowed;
+.ed-hint code {
+	color: var(--ng-fg);
 }
 
 .ed-small {
-	font-size: 10px;
+	font-size: 12px;
 }
 
 .ed-muted {
 	color: var(--ng-muted);
 }
 
-.ed-mt {
-	margin-top: 8px;
+.ed-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
 }
 
-.ed-mb {
-	margin-bottom: 8px;
+/* Read-only facts about what is being edited: a label and its value. */
+.ed-facts {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 4px 12px;
+	margin: 0;
+	font-size: 12px;
 }
 
-.ed-ellipsis {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	max-width: 320px;
+.ed-facts dt {
+	color: var(--ng-muted);
+}
+
+.ed-facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+/* The crop of a placement, as a value in the inspector. */
+.ed-crop-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
 }
 
 .ed-image-preview {
 	width: 100%;
 	max-height: 140px;
 	object-fit: contain;
-	background-color: #0f1720;
-	border: 1px dashed var(--ng-line);
-	border-radius: 6px;
 	padding: 4px;
+	border: 1px dashed var(--ng-line);
+	border-radius: var(--ng-radius-s);
+	background-color: #0f1720;
 }
 
 .ed-image-preview--empty {
@@ -600,40 +695,8 @@ body.editor-body {
 	align-items: center;
 	justify-content: center;
 	height: 64px;
-	font-size: 11px;
 	color: var(--ng-muted);
-	border-style: dashed;
-}
-
-/* ----------------------------------------------------------------- buttons */
-
-.ed-icon-btn {
-	padding: 1px 4px;
-	font-size: 10px;
-	line-height: 1.4;
-	background: transparent;
-	border-color: transparent;
-	color: var(--ng-muted);
-}
-
-.ed-icon-btn:hover {
-	border-color: var(--ng-line);
-	color: var(--ng-fg);
-}
-
-.ed-icon-btn.is-on {
-	color: var(--ng-warn);
-	border-color: var(--ng-line);
-}
-
-.ed-icon-btn.ed-icon-btn--danger:hover {
-	color: var(--ng-danger);
-	border-color: var(--ng-danger);
-}
-
-.ed-mini {
-	padding: 2px 6px;
-	font-size: 10px;
+	font-size: 12px;
 }
 
 /* ------------------------------------------------ video playback preview */
@@ -641,38 +704,8 @@ body.editor-body {
 .ed-preview {
 	display: flex;
 	align-items: center;
-	gap: 6px;
 	flex-wrap: wrap;
-}
-
-.ed-preview__btn {
-	white-space: nowrap;
-}
-
-.ed-preview__btn.is-on {
-	border-color: var(--ng-accent);
-	color: var(--ng-accent);
-	background: var(--ng-bg-3);
-}
-
-/* -------------------------------------------------------------- empty state */
-
-.ed-empty {
-	margin: auto;
-	max-width: 460px;
-	text-align: center;
-	padding: 32px 24px;
-	color: var(--ng-muted);
-}
-
-.ed-empty h2 {
-	color: var(--ng-fg);
-	margin-bottom: 6px;
-}
-
-.ed-row--center {
-	justify-content: center;
-	margin-top: 14px;
+	gap: 6px;
 }
 
 /* ------------------------------------------------------------- media drop */
@@ -683,13 +716,15 @@ body.editor-body {
 	align-items: center;
 	justify-content: center;
 	gap: 2px;
-	padding: 12px 10px;
+	padding: 14px 10px;
 	text-align: center;
-	background: var(--ng-bg);
 	border: 1px dashed var(--ng-line);
-	border-radius: var(--ng-radius);
+	border-radius: var(--ng-radius-s);
+	background: var(--ng-well);
 	cursor: pointer;
-	transition: border-color 120ms ease, background 120ms ease;
+	transition:
+		border-color 120ms ease,
+		background-color 120ms ease;
 }
 
 .ed-drop:hover {
@@ -707,24 +742,14 @@ body.editor-body {
 	opacity: 0.75;
 }
 
-.ed-drop:focus-visible {
-	outline: 2px solid var(--ng-accent);
-	outline-offset: 2px;
-}
-
 .ed-drop__input {
 	display: none;
 }
 
-.ed-drop__title {
-	font-size: 12px;
-	color: var(--ng-fg);
-}
-
 .ed-drop__hint,
 .ed-drop__msg {
-	font-size: 10px;
 	color: var(--ng-muted);
+	font-size: 12px;
 }
 
 .ed-drop__prog {
@@ -738,11 +763,10 @@ body.editor-body {
 	align-items: baseline;
 	justify-content: space-between;
 	gap: 8px;
-	font-size: 11px;
+	font-size: 12px;
 }
 
 .ed-drop__stage {
-	color: var(--ng-fg);
 	font-weight: 600;
 }
 
@@ -752,17 +776,16 @@ body.editor-body {
 }
 
 .ed-progress {
-	height: 8px;
-	background: var(--ng-bg);
-	border: 1px solid var(--ng-line);
-	border-radius: 999px;
+	height: 6px;
 	overflow: hidden;
+	border-radius: 999px;
+	background: var(--ng-well);
 }
 
 .ed-progress__fill {
 	height: 100%;
-	background: var(--ng-accent);
 	border-radius: 999px;
+	background: var(--ng-accent);
 	transition: width 120ms linear;
 }
 
@@ -773,25 +796,24 @@ body.editor-body {
 }
 
 .ed-drop__ok {
-	font-size: 11px;
 	color: var(--ng-ok);
+	font-size: 12px;
 	word-break: break-all;
 }
 
 .ed-drop__error {
-	font-size: 11px;
-	color: var(--ng-danger);
-	background: rgba(255, 92, 92, 0.08);
-	border: 1px solid var(--ng-danger);
-	border-radius: 6px;
 	padding: 6px 8px;
+	border-radius: var(--ng-radius-s);
+	background: rgba(255, 123, 114, 0.1);
+	color: var(--ng-danger);
+	font-size: 12px;
 	word-break: break-word;
 }
 
 .ed-media {
 	display: flex;
 	flex-direction: column;
-	gap: 5px;
+	gap: 4px;
 }
 
 .ed-media__head {
@@ -802,50 +824,44 @@ body.editor-body {
 }
 
 .ed-media__title {
-	font-size: 10px;
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
 	color: var(--ng-muted);
+	font-size: 12px;
 }
 
 .ed-media__list {
 	display: flex;
 	flex-direction: column;
-	gap: 3px;
+	gap: 1px;
 }
 
 .ed-media__item {
 	display: flex;
 	align-items: center;
-	gap: 3px;
-	background: var(--ng-bg);
-	border: 1px solid var(--ng-line);
-	border-radius: 6px;
-	padding: 1px 3px 1px 1px;
+	gap: 2px;
+	border-radius: var(--ng-radius-s);
+}
+
+.ed-media__item:hover {
+	background: var(--ng-bg-2);
 }
 
 .ed-media__item.is-selected {
-	border-color: var(--ng-accent);
 	background: var(--ng-bg-3);
 }
 
 .ed-media__pick {
 	flex: 1;
+	justify-content: flex-start;
 	min-width: 0;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 2px 4px;
+	height: 28px;
+	padding: 0 8px;
 	background: transparent;
-	border: 0;
-	border-radius: 4px;
-	color: var(--ng-fg);
+	font-weight: 400;
 	text-align: left;
 }
 
-.ed-media__pick:hover {
-	border-color: transparent;
-	color: var(--ng-accent);
+.ed-media__pick:hover:not(:disabled) {
+	background: transparent;
 }
 
 .ed-media__name {
@@ -854,39 +870,41 @@ body.editor-body {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 11px;
+	font-size: 12px;
 }
 
 .ed-media__size {
 	flex: 0 0 auto;
-	font-size: 10px;
 	color: var(--ng-muted);
+	font-size: 11px;
 	font-variant-numeric: tabular-nums;
+}
+
+/* Marks a stored media file that a video layer cannot play. */
+.ed-media__tag {
+	flex: 0 0 auto;
+	padding: 0 6px;
+	border-radius: 4px;
+	background: rgba(251, 191, 36, 0.14);
+	color: var(--ng-warn);
+	font-size: 11px;
+	white-space: nowrap;
 }
 
 /* --------------------------------------------------------------- responsive */
 
 @media (max-width: 1280px) {
 	.ed-main {
-		grid-template-columns: 240px minmax(0, 1fr) 300px;
+		grid-template-columns: 240px minmax(0, 1fr) 296px;
 	}
 }
 
 @media (max-width: 1000px) {
 	.ed-main {
-		grid-template-columns: 220px minmax(0, 1fr) 260px;
+		grid-template-columns: 208px minmax(0, 1fr) 264px;
 	}
-}
 
-/* Marks a stored media file that a video layer cannot play. */
-.ed-media__tag {
-	margin-left: 6px;
-	padding: 0 5px;
-	border: 1px solid var(--ng-line);
-	border-radius: 999px;
-	color: var(--ng-warn, #fbbf24);
-	font-size: 10px;
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
-	white-space: nowrap;
+	.ed-dock__preview {
+		display: none;
+	}
 }

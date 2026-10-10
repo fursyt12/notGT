@@ -10,21 +10,21 @@
 		"dashboardPanels": [
 			{
 				"name": "control",
-				"title": "notGT — Control",
+				"title": "Control",
 				"file": "control.html",
 				"fullbleed": true,
 				"headerColor": "#1d2b3a"
 			},
 			{
 				"name": "titles",
-				"title": "notGT — Titles & Outs",
+				"title": "Titles & Outs",
 				"file": "titles.html",
-				"width": 3,
+				"fullbleed": true,
 				"headerColor": "#243b53"
 			},
 			{
 				"name": "editor",
-				"title": "notGT — Editor",
+				"title": "Editor",
 				"file": "editor.html",
 				"fullbleed": true,
 				"headerColor": "#102a43"

@@ -1,345 +1,244 @@
-/* notGT — Control panel (fullbleed workspace tab).
+/* notGT — Control panel (fullbleed workspace tab): live operation only.
  *
- * Only `ctl-` prefixed classes live here; everything else comes from ui.css.
- * The panel gets the full viewport width, so the layout is multi-column and
- * the variable editor is a two-pane list + detail split.
+ * Only `ctl-`, `cue`, `var`, `vgroup` and `vlist` classes live here; everything
+ * else comes from ui.css.
  */
 
-.ctl-app {
+.ctl {
 	display: flex;
 	flex-direction: column;
-	gap: 10px;
-	min-width: 0;
+	min-height: 100vh;
 }
 
-/* ------------------------------------------------------------- status line */
+/* ------------------------------------------------------------- on-air bar */
 
-.ctl-status {
+.ctl-bar {
 	position: sticky;
 	top: 0;
-	z-index: 6;
+	z-index: 10;
 	display: flex;
 	align-items: center;
-	flex-wrap: wrap;
-	gap: 8px;
-	padding: 6px 10px;
-	background: var(--ng-bg-2);
-	border: 1px solid var(--ng-line);
-	border-radius: var(--ng-radius);
+	gap: 12px;
+	height: 56px;
+	padding: 0 20px;
+	background: var(--ng-bg);
+	border-bottom: 2px solid var(--ng-line-soft);
+	transition: border-color 0.15s ease;
 }
 
-.ctl-status__brand {
-	font-size: 11px;
+.ctl-bar.is-live {
+	border-bottom-color: var(--ng-live);
+}
+
+.ctl-bar__text {
+	font-size: 15px;
 	font-weight: 600;
-	letter-spacing: 0.08em;
 	color: var(--ng-muted);
 }
 
-/* ---------------------------------------------------------------- layout */
-
-.ctl-layout {
-	display: grid;
-	grid-template-columns: minmax(360px, 26rem) minmax(0, 1fr);
-	gap: 10px;
-	align-items: start;
-	min-width: 0;
+.ctl-bar.is-live .ctl-bar__text {
+	color: var(--ng-fg);
 }
 
-@media (max-width: 1100px) {
-	.ctl-layout {
+/* ------------------------------------------------------------------ layout */
+
+.ctl-body {
+	display: grid;
+	grid-template-columns: minmax(380px, 1fr) minmax(420px, 1.2fr);
+	align-items: start;
+	gap: 20px;
+	width: 100%;
+	max-width: 1480px;
+	margin: 0 auto;
+	padding: 20px;
+}
+
+@media (max-width: 900px) {
+	.ctl-body {
 		grid-template-columns: minmax(0, 1fr);
 	}
 }
 
-.ctl-col {
+.ctl-air {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	min-width: 0;
+}
+
+.ctl-out {
+	overflow: hidden;
+}
+
+/* -------------------------------------------------------------------- cues */
+
+.cue {
+	position: relative;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+/* The row's own tally: a red edge for as long as the title is on air. */
+.cue::before {
+	content: "";
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: 3px;
+	background: transparent;
+	transition: background-color 0.15s ease;
+}
+
+.cue.is-live::before {
+	background: var(--ng-live);
+}
+
+.cue__main {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 60px;
+	padding: 8px 16px;
+}
+
+.cue__title {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	flex: 1;
+	min-width: 0;
+}
+
+.cue__name {
+	max-width: 100%;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.cue__meta {
+	height: 20px;
+	gap: 3px;
+	padding: 0 5px;
+	margin-left: -5px;
+	background: transparent;
+	color: var(--ng-muted);
+	font-size: 12px;
+	font-weight: 400;
+}
+
+.cue__meta:hover:not(:disabled) {
+	background: var(--ng-bg-3);
+	color: var(--ng-fg);
+}
+
+.cue__settings {
+	padding: 2px 16px 14px 36px;
+}
+
+/* -------------------------------------------------------------- quick show */
+
+.ctl-quick {
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
-	min-width: 0;
+	padding: 2px 16px 16px;
 }
 
-/* --------------------------------------------------------- data card panes */
-
-.ctl-data-card {
-	min-width: 0;
+.ctl-quick__out {
+	width: 150px;
 }
+
+/* -------------------------------------------------------------------- data */
 
 .ctl-data {
+	min-width: 0;
+}
+
+.ctl-tool {
+	display: flex;
+	gap: 8px;
+	padding: 0 16px 14px;
+}
+
+.ctl-tool--col {
+	flex-direction: column;
+}
+
+.ctl-tool__path {
+	max-width: 14rem;
+}
+
+.vgroup {
+	padding: 10px 8px 10px 16px;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.vgroup__name {
+	margin-bottom: 4px;
+	color: var(--ng-muted);
+	font-weight: 500;
+}
+
+.var {
 	display: grid;
-	grid-template-columns: minmax(240px, 20rem) minmax(0, 1fr);
+	grid-template-columns: minmax(80px, 10rem) minmax(0, 1fr) 28px;
+	align-items: center;
+	gap: 8px;
+	padding: 3px 0;
+}
+
+/* --------------------------------------------------------- list variables */
+
+.vlist {
+	padding: 3px 0;
+}
+
+.vlist__head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 34px;
+}
+
+.vlist__row {
+	display: grid;
+	grid-template-columns: 15px minmax(0, 1fr) 28px;
+	align-items: center;
 	gap: 10px;
-	min-width: 0;
+	padding: 3px 0 3px 8px;
+	margin-left: -8px;
+	border-radius: var(--ng-radius-s);
 }
 
-@media (max-width: 780px) {
-	.ctl-data {
-		grid-template-columns: minmax(0, 1fr);
-	}
+/* The chosen row is the one that goes to air. */
+.vlist__row.is-current {
+	background: rgba(74, 168, 255, 0.12);
 }
 
-.ctl-data__pane {
-	min-width: 0;
-}
-
-.ctl-data__list-pane {
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-	padding-right: 10px;
-	border-right: 1px solid var(--ng-line);
-}
-
-@media (max-width: 780px) {
-	.ctl-data__list-pane {
-		padding-right: 0;
-		border-right: 0;
-		border-bottom: 1px solid var(--ng-line);
-		padding-bottom: 10px;
-	}
-}
-
-.ctl-data__list {
-	max-height: min(52vh, 520px);
-	overflow: auto;
-}
-
-.ctl-var-row {
-	flex-wrap: nowrap;
-	align-items: stretch;
-}
-
-.ctl-var {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	flex: 1;
-	min-width: 0;
-	padding: 5px 8px;
-	background: var(--ng-bg-3);
-	border: 1px solid var(--ng-line);
-	border-radius: 6px;
-	text-align: left;
-	cursor: pointer;
-}
-
-.ctl-var:hover {
-	border-color: var(--ng-accent);
-}
-
-.ctl-var--selected,
-.ctl-var--selected:hover {
-	border-color: var(--ng-accent);
-	background: #24384d;
-	box-shadow: 0 0 0 1px var(--ng-accent) inset;
-}
-
-.ctl-var__meta {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-}
-
-.ctl-var__path {
-	color: var(--ng-fg);
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.ctl-var__summary {
-	font-size: 11px;
+.vlist__row--head {
+	padding-top: 0;
+	padding-bottom: 0;
 	color: var(--ng-muted);
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
-/* ------------------------------------------------------------ value editor */
+.vlist__row--head .mono {
+	padding-left: 10px;
+}
 
-.ctl-editor {
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
+.vlist__cells {
+	display: grid;
+	gap: 6px;
 	min-width: 0;
 }
 
-.ctl-editor__head {
+.vlist__stack {
 	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 8px;
-}
-
-.ctl-editor__path {
-	font-size: 13px;
-	font-weight: 600;
-	overflow-wrap: anywhere;
-}
-
-.ctl-elements {
-	max-height: min(60vh, 640px);
-	overflow: auto;
-	padding-right: 2px;
-}
-
-.ctl-element {
 	flex-direction: column;
-	align-items: stretch;
-	gap: 6px;
-}
-
-.ctl-element--current {
-	border-color: var(--ng-ok);
-	background: #22392d;
-	box-shadow: 0 0 0 1px var(--ng-ok) inset;
-}
-
-.ctl-element__head {
-	flex-wrap: nowrap;
-}
-
-.ctl-current {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	font-size: 11px;
-	color: var(--ng-muted);
-	cursor: pointer;
-	white-space: nowrap;
-}
-
-.ctl-element--current .ctl-current {
-	color: var(--ng-ok);
-	font-weight: 600;
-}
-
-.ctl-leaves {
 	gap: 4px;
+	min-width: 0;
 }
 
-.ctl-leaf {
-	display: flex;
+.vlist__pair {
+	display: grid;
+	grid-template-columns: 7rem minmax(0, 1fr);
 	align-items: center;
-	gap: 6px;
-}
-
-.ctl-leaf__key {
-	flex: 0 0 6.5rem;
-	font-size: 11px;
-	color: var(--ng-muted);
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.ctl-leaf__input {
-	flex: 1;
-}
-
-.ctl-empty {
-	display: flex;
-	flex-direction: column;
 	gap: 8px;
-	padding: 7px;
-	border: 1px dashed var(--ng-line);
-	border-radius: 6px;
-}
-
-/* ----------------------------------------------------------------- toggle */
-
-.ctl-switch {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	cursor: pointer;
-	user-select: none;
-}
-
-.ctl-switch__input {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	opacity: 0;
-	pointer-events: none;
-}
-
-.ctl-switch__track {
-	position: relative;
-	display: inline-block;
-	width: 34px;
-	height: 18px;
-	border-radius: 999px;
-	background: var(--ng-bg);
-	border: 1px solid var(--ng-line);
-	transition: background 0.12s ease, border-color 0.12s ease;
-}
-
-.ctl-switch__thumb {
-	position: absolute;
-	top: 2px;
-	left: 2px;
-	width: 12px;
-	height: 12px;
-	border-radius: 50%;
-	background: var(--ng-muted);
-	transition: left 0.12s ease, background 0.12s ease;
-}
-
-.ctl-switch__label {
-	font-size: 11px;
-	color: var(--ng-muted);
-}
-
-.ctl-switch--on .ctl-switch__track {
-	background: var(--ng-accent-2);
-	border-color: var(--ng-accent);
-}
-
-.ctl-switch--on .ctl-switch__thumb {
-	left: 18px;
-	background: #fff;
-}
-
-.ctl-switch--on .ctl-switch__label {
-	color: var(--ng-ok);
-	font-weight: 600;
-}
-
-.ctl-switch:hover .ctl-switch__track {
-	border-color: var(--ng-accent);
-}
-
-/* ------------------------------------------------- per-item playback editor */
-
-.ctl-item {
-	flex-direction: column;
-	align-items: stretch;
-	gap: 6px;
-}
-
-.ctl-item__head {
-	flex-wrap: wrap;
-}
-
-.ctl-item__playback {
-	align-items: flex-end;
-	gap: 8px;
-}
-
-.ctl-num:disabled {
-	opacity: 0.55;
-	cursor: not-allowed;
-}
-
-/* «длительность = видео» checkbox + probed-length hint, next to holdMs. */
-.ctl-hold {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	max-width: 100%;
-	cursor: pointer;
-}
-
-.ctl-hold input[type="checkbox"] {
-	flex: 0 0 auto;
 }
