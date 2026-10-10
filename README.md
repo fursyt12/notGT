@@ -1,5 +1,7 @@
 # NodeCG
 
+**English** · [Русский](README_RU.md)
+
 [![NodeCG](https://raw.githubusercontent.com/nodecg/nodecg/main/media/splash.png)](https://nodecg.dev/)
 
 [![Discord](https://img.shields.io/discord/754749209722486814)](https://discord.gg/nsXXDFGBEt)
@@ -27,14 +29,17 @@ HTML/CSS/JS, and a REST API for the dashboard, Bitfocus Companion and other inte
 
 The operator manual — mental model, dashboard panels, the full REST API reference, OBS and
 Companion setup, persistence and troubleshooting — lives in
-**[`bundles/notGT/README.md`](bundles/notGT/README.md)**.
+**[`bundles/notGT/README.md`](bundles/notGT/README.md)** (English) and
+**[`bundles/notGT/README_RU.md`](bundles/notGT/README_RU.md)** (Russian). The dashboard
+itself is in English and Russian too, switched with the `EN` / `RU` button in any panel.
 
 To author a new title with an LLM, the bundle ships prompt files that already encode the
 runtime contract: **[`GENERATE_TITLES.md`](GENERATE_TITLES.md)** (English) and
 **[`GENERATE_TITLES_RU.md`](GENERATE_TITLES_RU.md)** (Russian). Fill in the inputs at the
 bottom and paste the prompt into a chat; you get `html` / `css` / `js` for a `kind: "code"`
-template. The bundle also carries worked examples (`example-countdown`, `example-clock`,
-`example-external-data`) next to `Code sample (ticker)`.
+template. The library starts with eleven ready-made examples in one visual style, built
+from layers and from code alike (a score bug, lower thirds, a live poll, a ticker, a
+countdown and more), and the dashboard's gallery can add a fresh copy of any of them.
 
 Build and run it locally (the bundle is **not** an npm workspace of this monorepo, so it has its
 own `node_modules` and is installed and built separately):

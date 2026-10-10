@@ -62,6 +62,7 @@ import {
 	useHtmlImage,
 	useHtmlVideo,
 } from "./ui";
+import { outUrl } from "../../shared/defaults";
 import { t } from "../i18n";
 import { useCodeDocument } from "./code-preview";
 import {
@@ -72,6 +73,7 @@ import {
 	placementSnapLines,
 	snapBox,
 	snapCoordinate,
+	snapScale,
 } from "./snapping";
 
 type KonvaEvent<T extends Event> = Konva.KonvaEventObject<T>;
@@ -89,6 +91,16 @@ export interface EditorCanvasProps {
 	selectedLayerId: string | null;
 	/** The crop tool is active: the placement is edited, not played with. */
 	cropMode: boolean;
+	/** Placements that are on air on this out right now. */
+	liveIds: string[];
+	/**
+	 * The active animation has unsaved edits. What is on air is the saved
+	 * version, so the canvas shows the draft instead and fades the on-air
+	 * picture until it is saved.
+	 */
+	unsaved: boolean;
+	/** The edited animation is not placed here but is being shown by hand. */
+	liveDraft: boolean;
 	/** Live playback preview: only the selected video layer is played. */
 	previewPlaying: boolean;
 	/** Incremented to seek the selected clip back to 0. */
@@ -157,6 +169,15 @@ interface SnapApi {
 
 const SnapContext = createContext<SnapApi | null>(null);
 
+/** The box a Konva Transformer proposes, in the canvas's own pixels. */
+interface ResizeBox {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	rotation: number;
+}
+
 /** A point in stage px (the out's design box scaled by `fit`). */
 interface Point {
 	x: number;
@@ -216,6 +237,9 @@ export function EditorCanvas({
 	activeItemId,
 	selectedLayerId,
 	cropMode,
+	liveIds,
+	unsaved,
+	liveDraft,
 	previewPlaying,
 	restartToken,
 	data,
@@ -606,6 +630,63 @@ export function EditorCanvas({
 			? cropFor(activeGeom, preview)
 			: null;
 
+	/**
+	 * Resizing a layer snaps the edges that are being dragged — and only those,
+	 * so the opposite edge stays where it was put — to the template's edges and
+	 * centre and to the sibling layers, the same lines a moved layer sticks to.
+	 *
+	 * The Transformer works in the canvas's own pixels, camera included; the
+	 * lines are in the template's box, so each edge is converted there and back.
+	 * A rotated layer is left alone, as it is when it is moved.
+	 */
+	const snapLayerResize = (oldBox: ResizeBox, newBox: ResizeBox): ResizeBox => {
+		if (newBox.width < 6 || newBox.height < 6) return oldBox;
+		if (!snapApi.enabled || !activeGeom || Math.abs(newBox.rotation) > 0.001) return newBox;
+
+		const zoom = Math.max(0.01, cameraScale);
+		const guidesX: number[] = [];
+		const guidesY: number[] = [];
+		const edge = (
+			value: number,
+			camera: number,
+			boxStart: number,
+			lines: SnapLine[],
+			guides: number[],
+		): number => {
+			const local = (value - camera) / zoom - boxStart;
+			const snapped = snapCoordinate(local, lines, snapApi.threshold);
+			guides.push(...snapped.guide);
+			return (snapped.value + boxStart) * zoom + camera;
+		};
+		const moved = (a: number, b: number) => Math.abs(a - b) > 0.01;
+
+		let left = newBox.x;
+		let right = newBox.x + newBox.width;
+		let top = newBox.y;
+		let bottom = newBox.y + newBox.height;
+		if (moved(left, oldBox.x)) left = edge(left, cameraX, activeGeom.boxX, snapApi.layerX, guidesX);
+		if (moved(right, oldBox.x + oldBox.width)) {
+			right = edge(right, cameraX, activeGeom.boxX, snapApi.layerX, guidesX);
+		}
+		if (moved(top, oldBox.y)) top = edge(top, cameraY, activeGeom.boxY, snapApi.layerY, guidesY);
+		if (moved(bottom, oldBox.y + oldBox.height)) {
+			bottom = edge(bottom, cameraY, activeGeom.boxY, snapApi.layerY, guidesY);
+		}
+		snapApi.showLayer(guidesX, guidesY);
+		if (right - left < 6 || bottom - top < 6) return newBox;
+		return { ...newBox, x: left, y: top, width: right - left, height: bottom - top };
+	};
+
+	// On air = drawn by the out page under the canvas. The one exception is the
+	// active animation while it is being edited (unsaved changes, or a layer
+	// selected): what is on air is its saved version, so the draft is drawn as
+	// usual and the on-air picture is faded behind it.
+	const onAir = (geom: Geometry) => liveIds.includes(geom.item.id);
+	const editingLive =
+		activeGeom !== null && onAir(activeGeom) && (unsaved || selectedLayerId !== null);
+	const isLive = (geom: Geometry) =>
+		onAir(geom) && !(editingLive && geom.item.id === activeItemId);
+
 	return (
 		<SnapContext.Provider value={snapApi}>
 			<DragContext.Provider value={dragApi}>
@@ -626,7 +707,7 @@ export function EditorCanvas({
 							}}
 						>
 							{geoms
-								.filter((geom) => geom.template.kind === "code")
+								.filter((geom) => geom.template.kind === "code" && !isLive(geom))
 								.map((geom) => (
 									<CodeOverlayFrame
 										key={geom.item.id}
@@ -642,9 +723,45 @@ export function EditorCanvas({
 										data={data}
 									/>
 								))}
-							{draftBox && draftBox.template.kind === "code" ? (
+							{draftBox && draftBox.template.kind === "code" && !liveDraft ? (
 								<CodeOverlayFrame box={draftBox} dim={1} data={data} />
 							) : null}
+
+							{/* What is on air is not imitated: it is the out page itself,
+							    the one OBS loads, laid over the stage at the out's own
+							    size. Entrances, holds and exits therefore play here
+							    exactly as they go out. It stays mounted so that it is
+							    already connected when something is played. */}
+							<iframe
+								className="ed-live"
+								title={t("On air")}
+								src={outUrl(out.id)}
+								tabIndex={-1}
+								style={{
+									width: out.width,
+									height: out.height,
+									transform: `scale(${fit})`,
+									opacity: editingLive ? 0.3 : 1,
+								}}
+							/>
+							{geoms.filter(onAir).map((geom) => {
+								const box = withPreview(geom);
+								const window_ = cropFor(geom, preview);
+								return (
+									<div
+										key={geom.item.id}
+										className="ed-onair"
+										style={{
+											left: box.boxX + window_.x * box.k,
+											top: box.boxY + window_.y * box.k,
+											width: Math.max(1, window_.width * box.k),
+											height: Math.max(1, window_.height * box.k),
+										}}
+									>
+										<span className="ed-onair__tag">{t("On air")}</span>
+									</div>
+								);
+							})}
 						</div>
 
 						<Stage
@@ -750,6 +867,7 @@ export function EditorCanvas({
 										stageW={stageW}
 										stageH={stageH}
 										active={geom.item.id === activeItemId}
+										live={isLive(geom)}
 										cropMode={cropMode}
 										selectedLayerId={selectedLayerId}
 										previewPlaying={previewPlaying}
@@ -797,16 +915,14 @@ export function EditorCanvas({
 									borderStroke="#4aa8ff"
 									borderDash={[4, 3]}
 									rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
-									boundBoxFunc={(oldBox, newBox) =>
-										newBox.width < 6 || newBox.height < 6 ? oldBox : newBox
-									}
+									boundBoxFunc={snapLayerResize}
 								/>
 							</KonvaLayer>
 
 							{/* The template being edited, when it is not placed on this
 							    out: read-only, only so that the code open in the panel
 							    next to the canvas is also visible on the canvas. */}
-							{draftBox ? (
+							{draftBox && !liveDraft ? (
 								<KonvaLayer listening={false}>
 									<Group x={draftBox.boxX} y={draftBox.boxY}>
 										{draftBox.template.kind === "code"
@@ -1008,6 +1124,7 @@ function AnimatedItem({
 	stageW,
 	stageH,
 	active,
+	live,
 	cropMode,
 	selectedLayerId,
 	previewPlaying,
@@ -1024,6 +1141,8 @@ function AnimatedItem({
 	stageW: number;
 	stageH: number;
 	active: boolean;
+	/** On air: the out page under the canvas draws it, so only the frame is kept. */
+	live: boolean;
 	cropMode: boolean;
 	selectedLayerId: string | null;
 	previewPlaying: boolean;
@@ -1093,7 +1212,7 @@ function AnimatedItem({
 				/>
 			) : null}
 
-			{template.kind === "code" ? (
+			{live ? null : template.kind === "code" ? (
 				<CodePlaceholder boxW={view.boxW} boxH={view.boxH} />
 			) : (
 				sortByZ(template.layers ?? []).map((layer) => (
@@ -1221,6 +1340,7 @@ function PlacementHandles({
 	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
 }) {
 	const drag = useContext(DragContext);
+	const snap = useContext(SnapContext);
 	const { item, template } = geom;
 	const crop = cropFor(geom, drag?.preview ?? null);
 	const view = drag ? drag.view(geom) : geom;
@@ -1233,19 +1353,37 @@ function PlacementHandles({
 	 * the crop's offset inside the box too, so the placement has to move back by
 	 * exactly that much or the title would crawl away from the corner the
 	 * operator grabbed.
+	 *
+	 * The corner being dragged sticks to the same lines a moved placement does:
+	 * the window's right and bottom edges and its centre snap to the out's
+	 * edges, centre and safe area and to the other animations.
 	 */
 	const onSizeDown = (event: KonvaEvent<MouseEvent>) => {
 		if (!drag) return;
 		const start = drag.pointOf(event.evt);
 		if (!start) return;
 		const anchorX = win.x;
+		const anchorY = win.y;
 		const designW = crop.width > 0 ? crop.width : template.width;
+		const designH = crop.height > 0 ? crop.height : template.height;
 		const baseK = geom.k;
 		let scale = geom.scale;
 		drag.begin(
 			event,
 			(point) => {
-				scale = clamp((point.x - anchorX) / (designW * fit), 0.02, 20);
+				const raw = clamp((point.x - anchorX) / (designW * fit), 0.02, 20);
+				const snapped = snap?.enabled
+					? snapScale(
+							raw,
+							{ x: anchorX, y: anchorY },
+							{ width: designW * fit, height: designH * fit },
+							snap.placementX,
+							snap.placementY,
+							snap.threshold,
+						)
+					: { scale: raw, guidesX: [], guidesY: [] };
+				scale = clamp(snapped.scale, 0.02, 20);
+				snap?.showPlacement(snapped.guidesX, snapped.guidesY);
 				const k = scale * fit;
 				drag.setPreview({
 					itemId: item.id,
@@ -1256,6 +1394,7 @@ function PlacementHandles({
 			},
 			() => {
 				drag.setPreview(null);
+				snap?.clear();
 				const k = scale * fit;
 				onItemChange(item.id, {
 					scale: round(scale, 4),
@@ -1288,11 +1427,17 @@ function PlacementHandles({
 				/>
 			)}
 			<Group x={win.x} y={win.y}>
-				{/* The visible window itself: the drag surface for a move. */}
+				{/* The visible window itself. For a code animation the whole of it
+				    is the drag surface for a move. An animation built from layers
+				    only offers its border here (and the move handle below): this
+				    frame is drawn on top of the layers, and a filled one would
+				    swallow every click meant for a layer. Its empty areas are
+				    still draggable through the surface behind the layers. */}
 				<Rect
 					width={win.width}
 					height={win.height}
 					fill="rgba(0,0,0,0.001)"
+					fillEnabled={template.kind !== "layers"}
 					stroke="rgba(74,168,255,0.9)"
 					strokeWidth={1}
 					dash={[5, 4]}
@@ -1818,6 +1963,7 @@ function LayerNode({
 	};
 
 	const handleTransformEnd = (event: KonvaEvent<Event>) => {
+		snap?.clear();
 		const node = event.target;
 		const scaleX = node.scaleX();
 		const scaleY = node.scaleY();

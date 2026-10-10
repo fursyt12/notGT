@@ -95,8 +95,8 @@ onData(() => {
   el.textContent = vars('ticker.text') || 'Введите текст бегущей строки';
 });
 
-// A code animation animates its own entrance and exit — see "Переходы" in the
-// README. onShow fires once per show (and on a re-trigger), onHide when the
+// A code animation animates its own entrance and exit — see "Transitions" in
+// the README. onShow fires once per show (and on a re-trigger), onHide when the
 // placement leaves, and hideDone() lets the system drop the iframe right then.
 onShow(() => {
   root.querySelector('.ticker').animate(

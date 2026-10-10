@@ -35,9 +35,10 @@ export const REPLICANTS = {
  * installation needs a one-time migration in `createStore`:
  *   1 — initial layout;
  *   2 — built-in example animations shipped as bundled code templates;
- *   3 — the whole examples gallery is part of the default library.
+ *   3 — the whole examples gallery is part of the default library;
+ *   4 — the older built-in code examples were redrawn.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export interface MetaState {
 	initialized: boolean;

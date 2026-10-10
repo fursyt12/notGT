@@ -209,6 +209,36 @@ body.editor-body {
 	pointer-events: none;
 }
 
+/* The out page itself, under the canvas: what is on air, exactly as it goes out. */
+.ed-live {
+	position: absolute;
+	left: 0;
+	top: 0;
+	border: 0;
+	background: transparent;
+	transform-origin: top left;
+	transition: opacity 0.15s ease;
+}
+
+/* Marks a placement that is on air; the picture inside comes from .ed-live. */
+.ed-onair {
+	position: absolute;
+	outline: 2px solid var(--ng-live);
+	outline-offset: 1px;
+}
+
+.ed-onair__tag {
+	position: absolute;
+	left: -3px;
+	bottom: calc(100% + 3px);
+	padding: 1px 7px;
+	background: var(--ng-live);
+	color: #fff;
+	font-size: 11px;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
 .ed-canvas-status {
 	display: flex;
 	align-items: center;

@@ -1,6 +1,6 @@
 {
-	"short_name": "NodeCG",
-	"name": "NodeCG Dashboard",
+	"short_name": "notGT",
+	"name": "notGT",
 	"icons": [
 		{
 			"src": "/dashboard/img/launcher-icon-1x.png",
@@ -19,7 +19,7 @@
 		}
 	],
 	"start_url": "/dashboard?homescreen=true",
-	"background_color": "#ffffff",
-	"theme_color": "#ffffff",
+	"background_color": "#1b2430",
+	"theme_color": "#1b2430",
 	"display": "standalone"
 }

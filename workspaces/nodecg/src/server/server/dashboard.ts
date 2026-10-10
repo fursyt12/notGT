@@ -161,8 +161,9 @@ function parseWorkspaces(bundles: NodeCG.Bundle[]): Workspace[] {
 		});
 	});
 
-	workspaces.sort((a, b) => a.label.localeCompare(b.label));
-
+	// notGT fork: keep the bundle's declared panel order instead of sorting
+	// workspaces alphabetically. The dashboard is a product shell now, and the
+	// tabs (Control / Titles & Outs / Editor) must read in manifest order.
 	if (defaultWorkspaceHasPanels || !otherWorkspacesHavePanels) {
 		workspaces.unshift({
 			name: "default",

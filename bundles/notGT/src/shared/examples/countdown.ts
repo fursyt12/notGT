@@ -76,8 +76,8 @@ export const countdownExample: ExampleCode = {
 :root {
 	--accent: #ff3b30;
 	--ink: #ffffff;
-	--muted: #8fd3ff;
-	--plate: rgba(8, 20, 28, 0.9);
+	--muted: #aab6c4;
+	--plate: linear-gradient(180deg, rgba(24, 33, 45, 0.97), rgba(10, 14, 20, 0.97));
 }
 
 html,
@@ -97,14 +97,13 @@ body {
 	display: flex;
 	align-items: center;
 	gap: 34px;
-	padding: 26px 42px 26px 30px;
-	border-radius: 20px;
+	padding: 24px 60px 24px 40px;
 	background: var(--plate);
-	box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
 	font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
 	color: var(--ink);
 	/* Вход анимации: карточка выезжает снизу и проявляется. */
 	animation: cd-in 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+	clip-path: polygon(0 0, calc(100% - 34px) 0, 100% 34px, 100% 100%, 0 100%);
 }
 
 @keyframes cd-in {
@@ -123,10 +122,9 @@ body {
 	content: "";
 	position: absolute;
 	left: 0;
-	top: 18px;
-	bottom: 18px;
-	width: 6px;
-	border-radius: 0 6px 6px 0;
+	top: 0;
+	bottom: 0;
+	width: 10px;
 	background: var(--accent);
 	transform-origin: top;
 	animation: cd-bar 620ms 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -149,18 +147,19 @@ body {
 }
 
 .cd__title {
-	font-size: 34px;
-	font-weight: 700;
+	font-size: 32px;
+	font-weight: 800;
 	line-height: 1.1;
+	letter-spacing: -0.01em;
 }
 
 .cd__state {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
-	font-size: 20px;
+	font-size: 17px;
 	font-weight: 600;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.12em;
 	text-transform: uppercase;
 	color: var(--muted);
 }
@@ -208,7 +207,7 @@ body {
 	position: absolute;
 	inset: 12px;
 	border-radius: 50%;
-	background: #08141c;
+	background: #121a24;
 }
 
 .ring__value {
@@ -223,7 +222,7 @@ body {
 	font-size: 30px;
 	font-weight: 800;
 	font-variant-numeric: tabular-nums;
-	color: var(--muted);
+	color: var(--ink);
 }
 
 .ring__value small {
@@ -251,7 +250,7 @@ body {
 }
 
 .num {
-	font-size: 96px;
+	font-size: 100px;
 	font-weight: 800;
 	line-height: 1;
 	font-variant-numeric: tabular-nums;
@@ -259,9 +258,9 @@ body {
 }
 
 .cap {
-	font-size: 20px;
+	font-size: 17px;
 	font-weight: 600;
-	letter-spacing: 0.14em;
+	letter-spacing: 0.16em;
 	text-transform: uppercase;
 	color: var(--muted);
 }

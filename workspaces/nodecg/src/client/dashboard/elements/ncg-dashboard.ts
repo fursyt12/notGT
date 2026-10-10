@@ -41,6 +41,14 @@ class NcgDashboard extends Polymer.PolymerElement {
 				-webkit-tap-highlight-color: rgba(0, 0, 0, 0);
 				@apply --layout-fullbleed;
 				overflow: hidden;
+
+				/* notGT fork palette — mirrors bundles/notGT/dashboard/ui.css */
+				--notgt-bg: #1b2430;
+				--notgt-bg-2: #222e3c;
+				--notgt-line: #3a4a5c;
+				--notgt-fg: #e6edf3;
+				--notgt-muted: #93a4b5;
+				--notgt-accent: #4aa8ff;
 			}
 
 			app-drawer-layout,
@@ -49,9 +57,9 @@ class NcgDashboard extends Polymer.PolymerElement {
 			}
 
 			app-header {
-				background-color: #2F3A4F;
+				background-color: var(--notgt-bg);
 				--app-header-shadow: {
-					box-shadow: inset 0 5px 6px -3px rgba(0, 0, 0, 0.2);
+					box-shadow: inset 0 -1px 0 var(--notgt-line);
 					height: 10px;
 					bottom: -10px;
 				};
@@ -59,7 +67,7 @@ class NcgDashboard extends Polymer.PolymerElement {
 
 			app-drawer {
 				--app-drawer-content-container: {
-					background-color: #2F3A4F;
+					background-color: var(--notgt-bg);
 				};
 			}
 
@@ -73,41 +81,45 @@ class NcgDashboard extends Polymer.PolymerElement {
 				@apply --layout-center;
 				@apply --layout-horizontal;
 				height: 100%;
-				--paper-tabs-selection-bar-color: var(--nodecg-brand-blue);
+				--paper-tabs-selection-bar-color: var(--notgt-accent);
 				--paper-tabs-selection-bar: {
-					border-bottom-width: 5px;
+					border-bottom-width: 3px;
 				};
 			}
 
 			paper-tab {
 				@apply --layout-flex-none;
-				font-size: 12px;
-				text-transform: uppercase;
+				font-size: 14px;
+				letter-spacing: 0.01em;
 				user-select: none;
-				--paper-tab-ink: var(--nodecg-brand-blue);
+				--paper-tab-ink: var(--notgt-accent);
 				--paper-tab-content: {
 					font-weight: 500!important; /* don't bold when focused */
-					color: var(--nodecg-brand-blue);
+					color: var(--notgt-fg);
 					@apply --layout-vertical;
 					@apply --layout-center-center;
 				};
 				--paper-tab-content-unselected: {
-					color: white;
+					color: var(--notgt-muted);
 				};
 			}
 
 			.workspaceTab {
-				font-size: 16px;
+				font-size: 14px;
 			}
 
 			paper-icon-button {
-				--paper-icon-button-ink-color: var(--nodecg-brand-blue);
-				color: white;
+				--paper-icon-button-ink-color: var(--notgt-accent);
+				color: var(--notgt-fg);
 			}
 
 			#mainLogo {
-				height: 48px;
-				width: 48px;
+				color: var(--notgt-fg);
+				font-size: 20px;
+				font-weight: 800;
+				letter-spacing: -0.02em;
+				padding: 0 8px 0 20px;
+				user-select: none;
 			}
 
 			#drawerToolbar {
@@ -116,9 +128,10 @@ class NcgDashboard extends Polymer.PolymerElement {
 			}
 
 			#drawerLogo {
-				height: 28px;
+				color: var(--notgt-fg);
+				font-size: 16px;
+				font-weight: 800;
 				padding-left: 16px;
-				width: 83px;
 			}
 
 			.button-label {
@@ -139,15 +152,15 @@ class NcgDashboard extends Polymer.PolymerElement {
 			}
 
 			.list a {
-				color: white;
+				color: var(--notgt-fg);
 				display: block;
+				font-size: 14px;
 				line-height: 40px;
 				text-decoration: none;
-				text-transform: uppercase;
 			}
 
 			.list a.iron-selected {
-				background-color: #525F78;
+				background-color: var(--notgt-bg-2);
 			}
 
 			.list a.iron-selected paper-icon-item {
@@ -245,7 +258,7 @@ class NcgDashboard extends Polymer.PolymerElement {
 				<template is="dom-if" if="[[smallScreen]]">
 					<app-toolbar id="drawerToolbar">
 						<paper-icon-button icon="close" aria-label="Close" drawer-toggle=""></paper-icon-button>
-						<img id="drawerLogo" src="/dashboard/img/horiz-logo-2x.png" alt="NodeCG">
+						<span id="drawerLogo">notGT</span>
 					</app-toolbar>
 
 					<iron-selector class="list" selected="[[routeData.page]]" attr-for-selected="data-route">
@@ -276,7 +289,7 @@ class NcgDashboard extends Polymer.PolymerElement {
 					<app-toolbar id="mainToolbar">
 						<paper-icon-button icon="menu" drawer-toggle="" alt="Toogle navigation menu" hidden="[[!smallScreen]]"></paper-icon-button>
 
-						<img id="mainLogo" src="/dashboard/img/square-logo.png" alt="NodeCG">
+						<span id="mainLogo">notGT</span>
 
 						<template is="dom-if" if="[[!smallScreen]]">
 							<paper-tabs class="spacer" scrollable="" selected="[[routeData.page]]" attr-for-selected="route">
@@ -353,7 +366,7 @@ class NcgDashboard extends Polymer.PolymerElement {
 		</div>
 
 		<paper-toast id="mainToast"></paper-toast>
-		<paper-toast id="reconnectToast" text="Attempting to reconnect to NodeCG server..." duration="0">
+		<paper-toast id="reconnectToast" text="Reconnecting to notGT server…" duration="0">
 			<paper-spinner active="[[disconnected]]"></paper-spinner>
 		</paper-toast>
 `;
@@ -389,39 +402,14 @@ class NcgDashboard extends Polymer.PolymerElement {
 				type: Array,
 				computed: "_computeDialogs(bundles)",
 			},
+			// notGT fork: the shell has no navigation of its own. The top bar is
+			// the notGT panel tabs only, and the core pages (Graphics / Mixer /
+			// Assets / Settings) stay in the DOM as a maintenance escape hatch:
+			// they are reachable by hash (`#graphics`, `#mixer`, …) but are not
+			// advertised anywhere in the operator UI.
 			pages: {
 				type: Array,
-				value() {
-					const pages = [
-						{
-							name: "Graphics",
-							route: "graphics",
-							icon: "visibility",
-						},
-						{
-							name: "Mixer",
-							route: "mixer",
-							icon: "av:volume-up",
-						},
-						{
-							name: "Assets",
-							route: "assets",
-							icon: "file-upload",
-						},
-					];
-
-					// For the time being, the "Settings" button is only relevant
-					// when login security is enabled.
-					if (window.ncgConfig.login?.enabled) {
-						pages.push({
-							name: "Settings",
-							route: "settings",
-							icon: "settings",
-						});
-					}
-
-					return pages;
-				},
+				value: () => [],
 			},
 		};
 	}
@@ -463,7 +451,7 @@ class NcgDashboard extends Polymer.PolymerElement {
 		});
 
 		window.socket.on("disconnect", () => {
-			this.$.mainToast.show("Lost connection to NodeCG server!");
+			this.$.mainToast.show("Lost connection to notGT server!");
 			notified = false;
 			this.disconnected = true;
 		});
@@ -476,7 +464,7 @@ class NcgDashboard extends Polymer.PolymerElement {
 			if (attempts >= 3 && !notified) {
 				notified = true;
 				notify("Disconnected", {
-					body: "The dashboard has lost connection with NodeCG.",
+					body: "The notGT dashboard has lost connection to the server.",
 					icon: FAIL_URI,
 					tag: "disconnect",
 				});
@@ -484,7 +472,7 @@ class NcgDashboard extends Polymer.PolymerElement {
 		});
 
 		window.socket.io.on("reconnect", (attempts) => {
-			this.$.mainToast.show("Reconnected to NodeCG server!");
+			this.$.mainToast.show("Reconnected to notGT server!");
 			this.$.reconnectToast.hide();
 			this.disconnected = false;
 
@@ -498,10 +486,10 @@ class NcgDashboard extends Polymer.PolymerElement {
 		});
 
 		window.socket.io.on("reconnect_failed", () => {
-			this.$.mainToast.show("Failed to reconnect to NodeCG server!");
+			this.$.mainToast.show("Failed to reconnect to notGT server!");
 
 			notify("Reconnection Failed", {
-				body: "Could not reconnect to NodeCG after the maximum number of attempts.",
+				body: "Could not reconnect to notGT after the maximum number of attempts.",
 				icon: FAIL_URI,
 				tag: "reconnect_failed",
 			});

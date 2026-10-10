@@ -1,407 +1,427 @@
-# notGT — бандл `notGT`
+# notGT — the `notGT` bundle
 
-**notGT** — это система веб-титров и broadcast-анимации, работающая как NodeCG-бандл.
-Она даёт несколько независимых «выходов» (outs), каждый из которых открывается в OBS как
-Browser Source по своему URL, набор анимаций — собранных из примитивов (текст, картинка,
-gif, фигура) или написанных руками на HTML/CSS/JS, — и REST API, через который всё это
-дёргают дашборд, Bitfocus Companion и любые внешние интеграции.
+**English** · [Русский](README_RU.md)
 
-Серверная часть (extension) — единственный источник правды: она хранит состояние в
-Replicant'ах, сама владеет таймерами воспроизведения и отдаёт наружу `GET /api/state`.
-Графические страницы только рисуют то, что им приходит, поэтому состояние в API всегда
-совпадает с тем, что на экране.
+**notGT** is a web titling and broadcast-animation system that runs as a NodeCG bundle.
+It gives you several independent outputs (outs), each opened in OBS as a Browser Source
+by its own URL; a set of animations, either assembled from primitives (text, image, gif,
+shape) or written by hand in HTML/CSS/JS; and a REST API through which the dashboard,
+Bitfocus Companion and any external integration drive all of it.
+
+The server side (the extension) is the single source of truth: it keeps the state in
+Replicants, owns the playback timers and exposes `GET /api/state`. The graphics pages only
+draw what they are sent, so the state in the API always matches what is on screen.
 
 ---
 
-## Содержание
+## Contents
 
-- [Ментальная модель](#ментальная-модель)
-- [Быстрый старт](#быстрый-старт)
-- [Дашборд: панели](#дашборд-панели)
-- [Конфигурация бандла](#конфигурация-бандла)
+- [Mental model](#mental-model)
+- [Quick start](#quick-start)
+- [Dashboard: panels](#dashboard-panels)
+- [Bundle configuration](#bundle-configuration)
 - [REST API](#rest-api)
 - [Bitfocus Companion](#bitfocus-companion)
 - [OBS Studio](#obs-studio)
-- [Персистентность](#персистентность)
-- [Написание code-анимации](#написание-code-анимации)
-  - [Переходы: появление и скрытие](#переходы-появление-и-скрытие)
-  - [Готовые примеры](#готовые-примеры)
-  - [Данные из интернета](#данные-из-интернета)
-  - [Генерация титров с помощью ИИ](#генерация-титров-с-помощью-ии)
-- [Траблшутинг](#траблшутинг)
+- [Persistence](#persistence)
+- [Writing a code animation](#writing-a-code-animation)
+  - [Transitions: entrance and exit](#transitions-entrance-and-exit)
+  - [Ready-made examples](#ready-made-examples)
+  - [Data from the internet](#data-from-the-internet)
+  - [Generating titles with AI](#generating-titles-with-ai)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-## Ментальная модель
+## Mental model
 
-Четыре сущности и одно правило.
+Four entities and one rule.
 
-### Outs — выходы
+### Outs
 
-**Out** — это один render target = один OBS Browser Source = один URL:
+An **out** is one render target = one OBS Browser Source = one URL:
 
 ```
 http://<host>/bundles/notGT/graphics/out.html?out=<outId>
 ```
 
-У out'а есть `id`, `name`, дизайнерский размер `width`/`height` (по умолчанию 1920×1080) и
-список размещений. Out'ы полностью независимы: несколько Browser Source'ов с разными
-`?out=` работают одновременно, и каждый рисует только то, что адресовано ему. Out с
-идентификатором `main` создаётся при первом запуске (см. ключ `defaultOutId`).
+An out has an `id`, a `name`, a design size `width`/`height` (1920×1080 by default) and a
+list of placements. Outs are fully independent: several Browser Sources with different
+`?out=` values work at the same time, and each draws only what is addressed to it. The out
+with the id `main` is created on first run (see the `defaultOutId` key).
 
-### Анимации / шаблоны (templates)
+### Animations / templates
 
-**Шаблон** (`template`) — это одна анимация целиком. Два вида (`kind`):
+A **template** is one whole animation. There are two kinds (`kind`):
 
-- **`layers`** — рисуется из примитивов: `text`, `image`, `gif`, `shape` (`rect`/`ellipse`).
-  Каждый слой позиционируется в процентах от дизайнерского бокса шаблона (`x`, `y`,
-  `width`, `height`), имеет стиль (шрифт, размер, цвет, обводка, тень, прозрачность,
-  поворот), `z` для порядка наложения и либо `binding` (путь к переменной), либо `text`
-  с подстановками `{{...}}`. Для `image`/`gif` слой `src` — это абсолютный URL,
-  `/assets/<bundle>/<file>` или путь относительно бандла.
-- **`code`** — авторский HTML/CSS/JS (`code.html`, `code.css`, `code.js`), который
-  исполняется в sandboxed iframe. Контракт описан в разделе
-  [«Написание code-анимации»](#написание-code-анимации).
+- **`layers`** — drawn from primitives: `text`, `image`, `gif`, `shape` (`rect`/`ellipse`).
+  Each layer is positioned in percent of the template's design box (`x`, `y`, `width`,
+  `height`), has a style (font, size, colour, stroke, shadow, opacity, rotation), a `z`
+  for stacking order, and either a `binding` (a path to a variable) or `text` with
+  `{{...}}` substitutions. For an `image`/`gif` layer, `src` is an absolute URL,
+  `/assets/<bundle>/<file>` or a path relative to the bundle.
+- **`code`** — your own HTML/CSS/JS (`code.html`, `code.css`, `code.js`), executed in a
+  sandboxed iframe. The contract is described in
+  [“Writing a code animation”](#writing-a-code-animation).
 
-У шаблона есть вход и выход (`inTransition` / `outTransition`: `none`, `fade`,
-`slide-left/right/up/down`, `scale`, `wipe-left/right` плюс `durationMs`) и своя
-конфигурация воспроизведения `playback` (используется, когда у размещения нет своей).
-У `kind: "layers"` переходы применяются к обёртке анимации, а у `kind: "code"` их
-**нет вовсе**: появление и уход анимирует сам код (`onShow` / `onHide`), и систему
-обёртка не касается — см. [«Переходы»](#переходы-появление-и-скрытие).
+A template has an entrance and an exit (`inTransition` / `outTransition`: `none`, `fade`,
+`slide-left/right/up/down`, `scale`, `wipe-left/right`, plus `durationMs`) and its own
+playback configuration, `playback` (used when a placement has none of its own). For
+`kind: "layers"` the transitions are applied to the animation's wrapper; `kind: "code"`
+has **none at all**: the code itself animates the entrance and the exit (`onShow` /
+`onHide`) and the system does not touch the wrapper — see
+[“Transitions”](#transitions-entrance-and-exit).
 
-### Размещения (placements / items)
+### Placements (items)
 
-**Placement** — это шаблон, поставленный на конкретный out. У него свои координаты
-`x`/`y` (в процентах от сцены out'а), `scale`, `enabled`, `held`, `order` и **своя**
-`playback`, которая переопределяет шаблонную:
+A **placement** is a template put on a particular out. It has its own coordinates `x`/`y`
+(in percent of the out's stage), `scale`, `enabled`, `held`, `order` and its **own**
+`playback`, which overrides the template's:
 
-- `mode: "once"` — играет только по явному триггеру (`trigger`, `show` или команда из
-  Companion): появление → висит `holdMs` → уход. Это режим разового титра;
-- `mode: "loop"` — «висит, пока включён»: включает и снимает тумблер **«В эфире»** (тот
-  же `held`), своей длительности у цикла нет, а анимация циклится сама внутри себя.
-  `holdMs`, `intervalMs` и `autoStart` к циклу не применяются;
-- `holdMode: "video"` — длительность показа (у `once`) берётся **из самого видео-слоя**
-  шаблона, а
-  не из `holdMs`: титр висит ровно столько, сколько играет клип, и цикл не перезапускается
-  раньше, чем клип доиграл. Длительность измеряется на сервере через `ffprobe`
-  (`GET /api/media/probe?templateId=<id>`), кэшируется по файлу и mtime; если измерить
-  нельзя (нет видео-слоя, `{{...}}` в `src`, внешний URL, нет ffprobe) — используется
-  `holdMs` как фолбэк. По умолчанию `fixed`.
+- `mode: "once"` — plays only on an explicit trigger (`trigger`, `show` or a command from
+  Companion): entrance → stays for `holdMs` → exit. This is the one-shot title;
+- `mode: "loop"` — “on air while it is switched on”: the **“On air”** switch (the same
+  `held`) turns it on and off, it has no length of its own, and whatever repeats is done
+  by the animation inside itself. `holdMs`, `intervalMs` and `autoStart` do not apply;
+- `holdMode: "video"` — the on-air time (for `once`) is taken **from the template's own
+  video layer** rather than from `holdMs`: the title stays exactly as long as the clip
+  plays. The length is measured on the server with `ffprobe`
+  (`GET /api/media/probe?templateId=<id>`) and cached by file and mtime; if it cannot be
+  measured (no video layer, `{{...}}` in `src`, an external URL, no ffprobe), `holdMs` is
+  used as the fallback. The default is `fixed`.
 
-Отдельно от `playback` есть `held` — «показать и держать». Пока он включён (переключатель
-**«В эфире»** в панели Control), размещение висит в эфире и не снимается ни по `holdMs`,
-ни по расписанию `once`/`loop`; выключили — скрылось. `held` перекрывает `enabled`.
+Separately from `playback` there is `held` — “show it and keep it”. While it is on (the
+**“On air”** switch in the Control panel), the placement stays on air and is not taken
+off by `holdMs` or by the `once`/`loop` schedule; switch it off and it is hidden. `held`
+wins over `enabled`.
 
-Ещё одно поле размещения — `crop`: окно `{x, y, width, height}` **в пикселях шаблона**,
-которое решает, что из анимации видно. Всё вне окна обрезается (на out'е это
-`overflow: hidden` вокруг сдвинутого внутрь содержимого), а сама анимация остаётся на
-месте и в своём масштабе: обрезка убирает лишнее, а не уменьшает титр. Без `crop` виден
-весь бокс шаблона. Ставится мышью в редакторе (кнопка **«Обрезка»**) или через API.
+One more field of a placement is `crop`: a window `{x, y, width, height}` **in template
+pixels** that decides which part of the animation is visible. Everything outside the
+window is cut off (on the out it is `overflow: hidden` around content shifted inwards),
+while the animation itself stays where it is and at its own scale: a crop removes what is
+not needed, it does not shrink the title. Without `crop` the whole template box is
+visible. It is set with the mouse in the editor (the **“Crop”** button) or through the API.
 
-Один и тот же шаблон можно поставить на несколько out'ов или несколько раз на один out —
-это разные размещения с разными `id`.
+The same template can be placed on several outs, or several times on one out — these are
+different placements with different `id`s.
 
-### Переменные (variables / data)
+### Variables (data)
 
-Глобальное хранилище значений (Replicant `titleData`), адресуемое путями:
-`speaker.name`, `panel.items[0].title`. В шаблонах путь подставляется как
-`{{speaker.name}}`, с фолбэком — `{{speaker.name ?? Guest}}`. Путь — английский
-идентификатор, значение — что угодно (строка, число, bool, вложенный объект).
+A global store of values (the `titleData` Replicant), addressed by paths:
+`speaker.name`, `panel.items[0].title`. In a template a path is substituted as
+`{{speaker.name}}`, with a fallback as `{{speaker.name ?? Guest}}`. A path is an English
+identifier; a value is anything (string, number, bool, nested object).
 
-**Переменная-список.** Значением может быть массив; тогда переменная ведёт себя как
-коллекция «выбери одно»:
+**List variables.** A value can be an array; the variable then behaves as a “pick one”
+collection:
 
 ```json
-{ "guests": [ { "name": "Анна", "role": "Эксперт" },
-              { "name": "Пётр", "role": "Гость" } ] }
+{ "guests": [ { "name": "Anna", "role": "Expert" },
+              { "name": "Peter", "role": "Guest" } ] }
 ```
 
-Какой элемент считается текущим, хранит Replicant `selection` (`{ "guests": 1 }`).
-Биндинг, который проходит сквозь массив, резолвится по выбранному элементу:
-`{{guests.name}}` → `Пётр`, `{{guests.role}}` → `Гость`. Путь может заканчиваться на
-самом массиве — `{{guests}}` вернёт выбранный объект. Явный индекс всегда главнее:
-`{{guests[0].name}}` → `Анна`. Если ничего не выбрано, берётся элемент `0`.
+Which element is the current one is kept in the `selection` Replicant (`{ "guests": 1 }`).
+A binding that passes through an array resolves against the chosen element:
+`{{guests.name}}` → `Peter`, `{{guests.role}}` → `Guest`. A path may end on the array
+itself — `{{guests}}` returns the chosen object. An explicit index always wins:
+`{{guests[0].name}}` → `Anna`. If nothing is chosen, element `0` is used.
 
-В панели **Control** список показан таблицей: строка на элемент, отметка слева выбирает
-строку, которая идёт в эфир. Строку можно добавить (**`+ Строка`**), изменить на месте,
-а через меню `⋯` — переставить, дублировать или удалить. Смена выбранной строки сразу
-меняет картинку в эфире — без перезагрузки Browser Source (проверено тестом, ~10 мс).
+In the **Control** panel a list is shown as a table: a row per element, and the mark on
+the left picks the row that goes on air. A row can be added (**`+ Row`**), edited in
+place, and moved, duplicated or deleted through the `⋯` menu. Changing the chosen row
+changes the picture on air at once — without reloading the Browser Source (verified by a
+test, ~10 ms).
 
-Переменную-скаляр можно превратить в список: меню `⋯` у переменной → «Сделать списком».
+A scalar variable can be turned into a list: the variable's `⋯` menu → “Turn into a list”.
 
-У активного показа есть ещё **per-show override**: `data` в теле `POST /api/titles/:id/show`
-накладывается поверх глобального хранилища, не меняя его. Это удобно, когда имена приходят
-извне и в глобальных переменных им места нет.
+The active show also has a **per-show override**: `data` in the body of
+`POST /api/titles/:id/show` is laid over the global store without changing it. This is
+handy when names come from outside and have no place in the global variables.
 
-### Служебное состояние
+### Service state
 
-- Replicant `activeTitle` — «программа»: что сейчас показано, на каком out'е, с каким
-  label и override'ами. Это то, что переживает перезапуск.
-- Replicant `runtime` — производное: `playing` (`{outId: [itemId, ...]}`), `triggers` и
-  `revision`. Пересчитывается на сервере и не сохраняется.
-- Replicant `selection` — выбранный элемент для каждой переменной-списка
-  (`{"guests": 1}`). Сохраняется; попадает в `GET /api/state`.
+- The `activeTitle` Replicant — the “program”: what is shown now, on which out, with which
+  label and overrides. This is what survives a restart.
+- The `runtime` Replicant — derived: `playing` (`{outId: [itemId, ...]}`), `triggers` and
+  `revision`. Recomputed on the server and not persisted.
+- The `selection` Replicant — the chosen element of every list variable
+  (`{"guests": 1}`). Persisted; included in `GET /api/state`.
 
 ---
 
-## Быстрый старт
+## Quick start
 
 ```bash
-# 1. (опционально) включить токен API
+# 1. (optional) enable the API token
 cp bundles/notGT/cfg/notGT.example.json \
    bundles/notGT/cfg/notGT.json
 $EDITOR bundles/notGT/cfg/notGT.json
 
-# 2. запустить NodeCG из корня репозитория
+# 2. start NodeCG from the repository root
 node index.js
 ```
 
-Дальше:
+Then:
 
-- дашборд — `http://localhost:9090/dashboard/`
-- графику подключить в OBS:
+- the dashboard — `http://localhost:9090/dashboard/`
+- add the graphics to OBS:
   `http://localhost:9090/bundles/notGT/graphics/out.html?out=main`
 
-Сборка бандла (если правили `src/`):
+Building the bundle (if you changed `src/`):
 
 ```bash
 cd bundles/notGT && npm install && npm run build && cd ../..
 ```
 
-Про Docker-деплой см. `docker-compose.yml` и `.env.example` в корне репозитория.
+For the Docker deployment see `docker-compose.yml` and `.env.example` in the repository root.
 
 ---
 
-## Дашборд: панели
+## Dashboard: panels
 
-Общий дашборд — `http://<host>/dashboard/`. Файлы панелей бандла отдаются по
+The dashboard is at `http://<host>/dashboard/`. The bundle's panel files are served from
 `/bundles/notGT/dashboard/<file>`.
 
-Вкладки сверху — три панели бандла, каждая на весь экран (`fullbleed`). У каждой своя
-работа, и настройки между ними не дублируются:
+The tabs at the top are the bundle's three panels, each taking the whole screen
+(`fullbleed`). Each has its own job, and settings are not repeated between them:
 
-| Панель            | Для чего                                                     |
+| Panel             | What it is for                                               |
 | ----------------- | ------------------------------------------------------------ |
-| **Control**       | эфир: показать, скрыть, поменять данные                       |
-| **Titles & Outs** | состав: out'ы, библиотека анимаций, что на каком out'е стоит  |
-| **Editor**        | вид: холст out'а, слои, код, положение и обрезка              |
+| **Control**       | on air: show, hide, change the data                           |
+| **Titles & Outs** | setup: outs, the animation library, what sits on which out    |
+| **Editor**        | look: the out's canvas, layers, code, position and crop       |
 
-Во всех панелях красный цвет означает одно: **это сейчас в эфире**. Удаление и другие
-редкие действия убраны в меню `⋯` в конце строки.
+In every panel red means one thing: **this is on air right now**. Deleting and other rare
+actions live in the `⋯` menu at the end of a row.
 
-**Язык** дашборда — английский или русский — переключается кнопкой `EN` / `RU` в правом
-верхнем углу любой панели; выбор общий для всех трёх и запоминается в браузере. По
-умолчанию берётся язык браузера, а `?lang=ru` или `?lang=en` в адресе панели задаёт его
-для одной страницы. Перевод лежит в `src/dashboard/locales/ru.json` (английская фраза →
-русская). Чтобы добавить язык, скопируйте этот файл, переведите значения и допишите язык
-в `LANGS` и `DICTS` в `src/dashboard/i18n.tsx`; фраза без перевода — ошибка типов, так что
-полноту проверяет `npm run typecheck`. Ниже подписи приведены по-русски.
+The dashboard's **language** — English or Russian — is switched with the `EN` / `RU`
+button in the top-right corner of any panel; the choice is shared by all three and
+remembered in the browser. By default the browser's language is used, and `?lang=ru` or
+`?lang=en` in a panel's address sets it for that one page. The translation lives in
+`src/dashboard/locales/ru.json` (English phrase → Russian). To add a language, copy that
+file, translate the values and add the language to `LANGS` and `DICTS` in
+`src/dashboard/i18n.tsx`; a phrase without a translation is a type error, so
+`npm run typecheck` checks completeness. The labels below are the English ones.
 
 ### Control (`control.html`)
 
-Операторская панель «здесь и сейчас». Она не меняет вёрстку — только эфир и данные.
+The operator's “here and now” panel. It does not change any layout — only what is on air
+and the data.
 
-- **Строка эфира** сверху говорит, что сейчас показано на всех out'ах, и держит кнопку
-  **«Убрать всё из эфира»**: она сразу очищает все out'ы — выключает переключатели
-  «В эфире», останавливает идущие проигрыши и скрывает анимацию, показанную вручную.
-- **Out'ы** — по блоку на выход, по строке на размещение. В строке два действия:
-  - **`Проиграть`** — разовый проигрыш: появление → `holdMs` → уход. Кнопка есть только
-    у разовых размещений (`once`), пока они не удерживаются;
-  - переключатель **«В эфире»** — «показать и держать» (признак `held`): включили —
-    размещение висит в эфире сколько нужно и не убирается по `holdMs`, выключили —
-    скрылось. Он не зависит от `once`/`loop` и перекрывает `enabled`. У цикла это
-    единственный орган управления.
+- The **on-air bar** at the top says what is showing on all outs and holds the
+  **“Take everything off air”** button: it clears every out at once — turns off the
+  “On air” switches, stops what is playing and hides the animation shown by hand.
+- **Outs** — a block per out, a row per placement. A row has two actions:
+  - **`Play`** — a one-shot: entrance → `holdMs` → exit. The button only exists for timed
+    placements (`once`) while they are not being held;
+  - the **“On air”** switch — “show it and keep it” (the `held` flag): on, and the
+    placement stays on air for as long as needed and is not removed by `holdMs`; off, and
+    it is hidden. It does not depend on `once`/`loop` and wins over `enabled`. For a
+    placement that stays up it is the only control.
 
-  Подпись под именем (`5 с`, `до выключения`) раскрывает настройку «сколько держится в
-  эфире»: **«На время»** (`mode: "once"`) — кнопка `Проиграть` показывает размещение на
-  «Держать» секунд; **«До выключения»** (`mode: "loop"`) — кнопки нет, только
-  переключатель. «По длине видео» (`holdMode: "video"`) предлагается, только если в
-  анимации есть видео-слой. Ничего не зацикливается само: `loop` в данных — историческое
-  имя режима «до выключения».
-  **«Ссылка для OBS»** в заголовке блока копирует адрес Browser Source.
-- **«Показать анимацию без размещения»** (свёрнуто) — ручная «программа», та же, что у
-  REST API и Companion: выбрать анимацию и out, `Показать` / `Проиграть один раз` /
-  `Скрыть`. Галочка «Свои данные для показа» открывает поле для per-show override'ов в
-  JSON — они действуют на один показ и не меняют переменные.
-- **Данные** — переменные, сгруппированные по первому сегменту пути (`speaker` → `name`,
-  `role`). Значение правится прямо в строке и уходит в эфир по мере набора.
-  Переменная-список показана таблицей: отметка слева выбирает строку, которая идёт в
-  `{{...}}`. **`+ Переменная`** добавляет значение по пути, **`JSON`** — массовый ввод
-  («Добавить к текущим» = merge, «Заменить все» = replace).
+  The caption under the name (`5 s`, `until switched off`) opens the “how long it stays on
+  air” setting: **“Timed”** (`mode: "once"`) — the `Play` button shows the placement for
+  “Hold” seconds; **“Until switched off”** (`mode: "loop"`) — no button, only the switch.
+  “As long as the video” (`holdMode: "video"`) is offered only when the animation has a
+  video layer. Nothing loops by itself: `loop` in the data is the historical name of the
+  “until switched off” mode.
+  **“Link for OBS”** in the block's header copies the Browser Source address.
+- **“Show an animation without placing it”** (folded) — the manual “program”, the same one
+  the REST API and Companion drive: pick an animation and an out, then `Show` /
+  `Play once` / `Hide`. The “Custom data for this show” checkbox opens a field for
+  per-show overrides in JSON — they apply to one show and do not change the variables.
+- **Data** — the variables, grouped by the first segment of their path (`speaker` →
+  `name`, `role`). A value is edited right in its row and goes on air as you type. A list
+  variable is shown as a table: the mark on the left picks the row that goes into
+  `{{...}}`. **`+ Variable`** adds a value by path, **`JSON`** is bulk input (“Add to
+  current” = merge, “Replace all” = replace).
 
 ### Titles & Outs (`titles.html`)
 
-Состав шоу: какие есть out'ы, какие анимации и что на каком out'е стоит.
+The make-up of the show: which outs exist, which animations, and what sits on which out.
 
-- **Outs** (слева) — у каждого имя и размер сцены (правятся на месте), адрес для Browser
-  Source с кнопкой «Копировать» и список размещений. У размещения — порядок (стрелки
-  появляются при наведении) и меню `⋯`: проиграть один раз, **заменить анимацию**
-  (положение и настройки остаются), выключить запуск по API (`enabled`), убрать с out'а.
-  **`+ Добавить анимацию`** ставит анимацию из библиотеки на этот out.
-- **Анимации** (справа) — библиотека: имя (правится на месте), вид (`слои` / `код`),
-  переменные, которые анимация читает, кнопка **«Разместить»** и меню `⋯` (дублировать,
-  удалить). **`+ Новая анимация`** создаёт анимацию из слоёв или из кода либо добавляет
-  готовую — пункт **«Из примера»** открывает [галерею](#готовые-примеры).
+- **Outs** (left) — each has a name and a stage size (edited in place), the address for
+  the Browser Source with a “Copy” button, and its list of placements. A placement has its
+  order (the arrows appear on hover) and a `⋯` menu: play once, **replace the animation**
+  (position and settings stay), turn API start off (`enabled`), remove from the out.
+  **`+ Add animation`** puts an animation from the library on this out.
+- **Animations** (right) — the library: name (edited in place), kind (`layers` / `code`),
+  the variables the animation reads, the **“Place”** button and a `⋯` menu (duplicate,
+  delete). **`+ New animation`** creates an animation from layers or from code, or adds a
+  ready-made one — **“From an example”** opens the [gallery](#ready-made-examples).
 
-Положение, масштаб и обрезка размещения задаются на холсте в Editor, а режим и
-длительность — там же или в Control: в этой панели их нет намеренно.
+A placement's position, scale and crop are set on the canvas in Editor, and its mode and
+duration there or in Control: they are left out of this panel on purpose.
 
 ### Editor (`editor.html`)
 
-Редактор **выбранного out'а**. Холст — это сцена out'а (`out.width × out.height`): на
-нём видно всё, что размещено на этом выходе, ровно так, как это отрисует OBS.
+The editor of the **selected out**. The canvas is the out's stage
+(`out.width × out.height`): it shows everything placed on this out exactly as OBS will
+draw it.
 
-**Панель сверху**
+**The toolbar**
 
-- **`Out`** переключает редактируемый выход; значок ссылки рядом копирует его адрес для
+- **`Out`** switches the out being edited; the link icon next to it copies its address for
   OBS.
-- **`+ Слой`** — текст, фигура, картинка, GIF или видео в активную анимацию. Если ни одна
-  не выбрана (или выбрана код-анимация), создаётся новая анимация по размеру out'а,
-  размещается на нём и становится активной.
-- **`Обрезка`** включает инструмент обрезки активного размещения (см. ниже).
-- **`Проиграть`** и **`В эфир`** действуют на выбранное размещение: это тот же разовый
-  проигрыш и тот же переключатель «В эфире», что в Control (кнопка сменяется на
-  **`Убрать из эфира`**). Несохранённые правки перед этим сохраняются. Для анимации,
-  которой на этом out'е нет, работает показ вручную.
-- **`Сохранить`** записывает правки слоёв и шаблона; пока есть несохранённое, рядом
-  горит «Не сохранено». Размещения применяются сразу, без сохранения: перетаскивание
-  терять нельзя.
+- **`+ Layer`** — text, a shape, an image, a GIF or a video into the active animation. If
+  none is selected (or a code animation is), a new animation the size of the out is
+  created, placed on it and made active.
+- **`Crop`** turns on the crop tool for the active placement (see below).
+- **`Play`** and **`Go on air`** act on the selected placement: the same one-shot and the
+  same “On air” switch Control has (the button turns into **`Take off air`**). Unsaved
+  edits are saved first. For an animation that is not on this out, the manual show is
+  used.
+- **`Save`** writes the edits to layers and the template; while something is unsaved,
+  “Unsaved” is shown next to it. Placements apply at once, without saving: a drag must
+  never be lost.
 
-**Слева** — три списка: **«На out»** (размещения: порядок, проиграть, убрать; красная
-точка — в эфире), **«Слои»** активной анимации (порядок, скрыть, заблокировать, удалить;
-двойной клик — переименовать) и **«Библиотека»** всех анимаций (разместить, дублировать,
-удалить; «+» — новая). Действия строки появляются при наведении и у выбранной строки.
+**On the left** are three lists: **“On the out”** (placements: order, play, remove; a red
+dot means on air), **“Layers”** of the active animation (order, hide, lock, delete;
+double-click to rename) and the **“Library”** of all animations (place, duplicate, delete;
+“+” for a new one). A row's actions appear on hover and on the selected row.
 
-**Холст**
+**The canvas**
 
-- **Размещение** правится мышью: рамка активной анимации тянется (меняет `x`/`y` в % от
-  сцены), угловая ручка — масштаб (`scale`). Анимация едет за курсором **сразу**, вместе с
-  живым превью кода: положение и масштаб записываются один раз, когда кнопка мыши
-  отпущена, а до этого холст показывает будущий результат и подписывает его в строке
-  состояния снизу. Невыбранные анимации показываются приглушённо и по клику становятся
-  активными.
-- **Обрезка**: рамка с восемью ручками (углы и середины сторон) задаёт **видимую часть**
-  анимации. Всё, что вне рамки, скрывается — и на холсте, и в эфире; сама анимация при
-  этом не сдвигается и не масштабируется, поэтому обрезка убирает лишнее, а не меняет
-  размер. Рамку можно тащить целиком, ручки — по краям; магниты притягивают её к краям и
-  центру бокса шаблона, а также к линиям out'а (края, безопасная зона 5 %, центр) и к
-  видимым окнам других анимаций. `Esc` или «Готово» выключает инструмент. Обрезка хранится
-  в размещении (`crop` в `outs` соответствующего out'а) и видна по `GET /api/outs`.
-- **Магниты** считают размещение по его **видимой части**: обрезанная анимация липнет к
-  линиям краем и центром своего окна, а не спрятанного бокса шаблона, и то же окно
-  предлагается другим анимациям как цель.
-- **Слои** внутри анимации перетаскиваются и масштабируются на холсте.
+- **What is on air is visible on the canvas.** Everything on air on this out is drawn
+  under the canvas by the out page itself — the same one OBS has open — so entrances,
+  holds and exits play here exactly as they go out: press `Play` or turn the switch on
+  (here, in Control or through the API) and the animation plays on the canvas. A placement
+  that is on air has a red frame with an “On air” tag. While the active animation has
+  unsaved edits or a selected layer, the canvas shows the draft and the on-air picture
+  under it is faded: what is on air is the saved version.
+- A **placement** is edited with the mouse: drag the active animation's frame (changes
+  `x`/`y` in % of the stage), drag the corner handle to scale it (`scale`). The animation
+  follows the cursor **immediately**, live code preview included: position and scale are
+  written once, when the mouse button is released, and until then the canvas shows the
+  result to come and spells it out in the status bar below. Animations that are not
+  selected are dimmed and become active on a click.
+- **Crop**: a frame with eight handles (corners and edge midpoints) sets the **visible
+  part** of the animation. Everything outside the frame is hidden — on the canvas and on
+  air; the animation itself neither moves nor scales, so a crop removes what is not needed
+  rather than resizing. The frame can be dragged as a whole, the handles along its edges;
+  the magnets pull it to the edges and centre of the template box, to the out's lines
+  (edges, the 5 % safe area, the centre) and to the visible windows of other animations.
+  `Esc` or “Done” turns the tool off. The crop is stored in the placement (`crop` in the
+  `outs` of that out) and visible through `GET /api/outs`.
+- The **magnets** measure a placement by its **visible part**: a cropped animation sticks
+  to lines with the edge and centre of its window, not of the hidden template box, and
+  that same window is offered to other animations as a target. The magnets also work
+  while resizing: a placement's corner handle sticks with the window's right and bottom
+  edges and its centre to the same lines, and a layer sticks with the edges being dragged
+  to the edges and centre of the template box and to its sibling layers.
+- **Layers** inside an animation are selected with a click, dragged and resized on the
+  canvas; the empty part of the box, its frame and the handle in its top-left corner move
+  the whole placement.
 
-**Справа — инспектор** с вкладками по тому, что правится:
+**On the right is the inspector**, with a tab for each thing being edited:
 
-- **«Слой»** — свойства выбранного слоя: положение и размер, текст и переменная, шрифт,
-  обводка и тень, источник картинки или видео. Вкладка открывается сама, когда выбран
-  слой.
-- **«Размещение»** — анимация на этом out'е: `x`/`y`/масштаб и «По ширине out»
-  (`scale = out.width / template.width`), размер окна обрезки и «Убрать», проигрывание
-  («На время» / «До выключения», «Держать», «По длине видео»), «Запускается по API и
-  Companion» (`enabled`).
-- **«Анимация»** — сам шаблон: имя, размер бокса, вид, переходы появления и ухода и
-  проигрывание по умолчанию. У код-анимации вместо переходов показано, что анимирует сам
-  код, и длительность его ухода: она читается из `onHide(fn, ms)` и сама попадает в
-  `code.exitMs`.
+- **“Layer”** — the selected layer's properties: position and size, text and variable,
+  font, stroke and shadow, the source of an image or a video. The tab opens by itself when
+  a layer is selected.
+- **“Placement”** — the animation on this out: `x`/`y`/scale and “Fit out width”
+  (`scale = out.width / template.width`), the size of the crop window and “Clear”,
+  playback (“Timed” / “Until switched off”, “Hold”, “As long as the video”), “Starts from
+  the API and Companion” (`enabled`).
+- **“Animation”** — the template itself: name, box size, kind, entrance and exit
+  transitions and default playback. For a code animation, instead of transitions it shows
+  what the code animates itself and how long its exit takes: that is read from
+  `onHide(fn, ms)` and written to `code.exitMs` for you.
 
-**Код-анимация** (`kind: "code"`) правится в **доке под холстом**: вкладки HTML / CSS /
-JavaScript, «Справка» по рантайму и предпросмотр анимации отдельно от остальных, с кнопкой
-«Заново» (проиграть появление ещё раз). Живое превью рисуется и прямо на холсте, на месте
-размещения (или в центре, если шаблон ещё не размещён на этом out'е). Док сворачивается
-стрелкой справа.
+A **code animation** (`kind: "code"`) is edited in the **dock under the canvas**: tabs for
+HTML / CSS / JavaScript, a “Reference” for the runtime, and a preview of the animation on
+its own with a “Replay” button (plays the entrance again). The live preview is also drawn
+right on the canvas, where the placement is (or in the centre, if the template is not on
+this out yet). The arrow on the right folds the dock away.
 
 ---
 
-## Конфигурация бандла
+## Bundle configuration
 
-NodeCG читает конфиг бандла из `bundles/notGT/cfg/notGT.json`; схема —
-`bundles/notGT/configschema.json`. **Активного `notGT.json` в репозитории нет** —
-сначала скопируйте пример:
+NodeCG reads the bundle's config from `bundles/notGT/cfg/notGT.json`; the schema is
+`bundles/notGT/configschema.json`. **There is no active `notGT.json` in the repository** —
+copy the example first:
 
 ```bash
 cp bundles/notGT/cfg/notGT.example.json \
    bundles/notGT/cfg/notGT.json
 ```
 
-| Ключ                       | Тип     | По умолчанию | Назначение                                                                                     |
+| Key                        | Type    | Default      | Purpose                                                                                        |
 | -------------------------- | ------- | ------------ | ---------------------------------------------------------------------------------------------- |
-| `apiToken`                 | string  | `""`         | Общий секрет для `/api`. Пустая строка = API открыт.                                            |
-| `allowUnauthenticatedApi`  | boolean | `false`      | Явно разрешить открытый API и заглушить предупреждение. Игнорируется, если `apiToken` задан.     |
-| `hideApiState`             | boolean | `false`      | Убрать `templates`/`outs` из ответа `GET /api/state` (для частого polling'а из Companion).       |
-| `defaultOutId`             | string  | `"main"`     | `id` out'а, который создаётся при первом запуске.                                                |
-| `language`                 | string  | `""`         | Язык библиотеки примеров и образцов данных при первом запуске: `en` или `ru`. Пусто = локаль процесса сервера, иначе английский. |
+| `apiToken`                 | string  | `""`         | Shared secret for `/api`. An empty string means the API is open.                                |
+| `allowUnauthenticatedApi`  | boolean | `false`      | Explicitly allow an open API and silence the warning. Ignored when `apiToken` is set.           |
+| `hideApiState`             | boolean | `false`      | Drop `templates`/`outs` from the `GET /api/state` response (for frequent polling from Companion). |
+| `defaultOutId`             | string  | `"main"`     | The `id` of the out created on first run.                                                       |
+| `language`                 | string  | `""`         | Language of the example library and sample data on first run: `en` or `ru`. Empty = the server process's locale, else English. |
 
-Конфиг читается один раз при старте бандла — **после правки перезапустите NodeCG**
-(в Docker: `docker compose restart notgt`).
+The config is read once, when the bundle starts — **restart NodeCG after editing it**
+(in Docker: `docker compose restart notgt`).
 
 ---
 
 ## REST API
 
-Бандл монтирует один и тот же роутер по двум путям:
+The bundle mounts the same router at two paths:
 
-- `http://<host>/api` — короткий, удобный для Companion;
-- `http://<host>/bundles/notGT/api` — версия с префиксом бандла (полезна за
-  reverse-proxy, который режет путь).
+- `http://<host>/api` — short, convenient for Companion;
+- `http://<host>/bundles/notGT/api` — the version with the bundle prefix (useful behind a
+  reverse proxy that strips the path).
 
-Дальше в примерах используется короткий `/api`; заменяйте префикс, если нужен второй.
+The examples below use the short `/api`; swap the prefix if you need the other one.
 
-### Аутентификация
+### Authentication
 
-- Если `apiToken` **задан**, каждый запрос к `/api/*` должен принести токен одним из
-  способов:
+- If `apiToken` **is set**, every request to `/api/*` must carry the token in one of these
+  ways:
   - `Authorization: Bearer <token>`
   - `X-API-Token: <token>`
   - `?token=<token>`
-- `GET /api/health` **всегда открыт** — чтобы uptime-пробы не нуждались в секрете.
-- Если `apiToken` **пустой**, API открыт; при старте в лог пишется warning. Флаг
-  `allowUnauthenticatedApi: true` этот warning глушит. Безопасная трактовка: пустой токен
-  допустим только если сервер недоступен из недоверенных сетей или закрыт Basic Auth на
-  уровне Traefik.
-- Ответ без/с неверным токеном — `401 {"error":"unauthorized", ...}`.
-- CORS открыт (`Access-Control-Allow-Origin: *`), поэтому опрашивать API можно прямо из
-  браузера.
+- `GET /api/health` is **always open** — so uptime probes need no secret.
+- If `apiToken` is **empty**, the API is open; a warning is logged on start. The
+  `allowUnauthenticatedApi: true` flag silences that warning. The safe reading: an empty
+  token is acceptable only when the server is unreachable from untrusted networks or sits
+  behind Basic Auth at the Traefik level.
+- A request with no token or a wrong one gets `401 {"error":"unauthorized", ...}`.
+- CORS is open (`Access-Control-Allow-Origin: *`), so the API can be polled straight from
+  a browser.
 
-Во всех примерах ниже `$NOTGT_TOKEN` — значение `apiToken`, а `-H "Authorization: Bearer …"`
-можно заменить на `-H "X-API-Token: …"` или `?token=…`.
+In all the examples below `$NOTGT_TOKEN` is the value of `apiToken`, and
+`-H "Authorization: Bearer …"` can be replaced with `-H "X-API-Token: …"` or `?token=…`.
 
-### Эндпоинты
+### Endpoints
 
-| Метод                | Путь                                        | Назначение                                                                                     |
+| Method               | Path                                        | Purpose                                                                                        |
 | -------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `GET`                | `/api/health`                               | Проверка живости. Всегда открыт.                                                                |
-| `GET`                | `/api/state`                                | Агрегированное состояние программы (см. ниже).                                                  |
-| `GET`                | `/api/data`                                 | Весь набор переменных.                                                                          |
-| `GET`                | `/api/data?path=speaker.name`               | Одно значение по пути.                                                                          |
-| `POST`               | `/api/data`                                 | Запись переменных. `?mode=merge` (по умолчанию) или `?mode=replace`.                             |
-| `GET`                | `/api/data?path=guests&raw=1`               | Как выше, но вернуть узел как он хранится (массив), без резолва по выбранному элементу.          |
-| `DELETE`             | `/api/data/:path`                           | Удалить значение по пути.                                                                       |
-| `GET`                | `/api/media/probe?templateId=<id>`          | Длительность видео-слоя шаблона (`{durationMs}` или `null`) — для `holdMode: "video"`.            |
-| `GET`                | `/api/selection`                            | Выбранный элемент для переменных-списков: `{"guests": 1}`.                                       |
-| `POST`               | `/api/selection`                            | Выбрать элемент: `{"path": "guests", "index": 1}` (или сразу карта `{"guests": 1}`).             |
-| `DELETE`             | `/api/selection/:path`                      | Сбросить выбор (вернётся элемент `0`).                                                           |
-| `GET`                | `/api/templates`                            | Список анимаций.                                                                                |
-| `POST`               | `/api/templates`                            | Создать анимацию.                                                                               |
-| `GET` `PUT` `PATCH`  | `/api/templates/:id`                        | Прочитать / обновить анимацию (`PATCH` — частичное обновление).                                 |
-| `DELETE`             | `/api/templates/:id`                        | Удалить анимацию.                                                                               |
-| `POST`               | `/api/titles/:templateId/show`              | Показать анимацию.                                                                              |
-| `POST`               | `/api/titles/:templateId/toggle`            | Показать/скрыть (toggle).                                                                       |
-| `POST`               | `/api/titles/:templateId/trigger`           | Однократный проигрыш (one-shot).                                                                |
-| `POST`               | `/api/titles/hide`                          | Скрыть титр.                                                                                    |
-| `POST`               | `/api/titles/reset`                         | Полностью сбросить «программу»: активный титр, override'ы и видимость; воспроизведение на out'ах останавливается. |
-| `GET`                | `/api/outs`                                 | Список out'ов.                                                                                  |
-| `POST`               | `/api/outs`                                 | Создать out.                                                                                    |
-| `GET` `PUT` `PATCH`  | `/api/outs/:id`                             | Прочитать / обновить out.                                                                       |
-| `DELETE`             | `/api/outs/:id`                             | Удалить out.                                                                                    |
-| `GET`                | `/api/outs/:id/url`                         | URL для OBS Browser Source.                                                                     |
-| `POST`               | `/api/outs/:outId/stop`                     | Остановить воспроизведение на out'е.                                                            |
-| `POST`               | `/api/outs/:outId/items`                    | Добавить размещение на out (`{templateId, ...}`).                                               |
-| `PUT` `PATCH`        | `/api/outs/:outId/items/:itemId`            | Обновить размещение.                                                                            |
-| `DELETE`             | `/api/outs/:outId/items/:itemId`            | Удалить размещение.                                                                             |
-| `POST`               | `/api/outs/:outId/items/:itemId/trigger`    | One-shot конкретного размещения (необязательный `{holdMs}`).                                    |
+| `GET`                | `/api/health`                               | Liveness check. Always open.                                                                    |
+| `GET`                | `/api/state`                                | Aggregated state of the program (see below).                                                    |
+| `GET`                | `/api/data`                                 | The whole set of variables.                                                                     |
+| `GET`                | `/api/data?path=speaker.name`               | One value by path.                                                                              |
+| `POST`               | `/api/data`                                 | Write variables. `?mode=merge` (default) or `?mode=replace`.                                    |
+| `GET`                | `/api/data?path=guests&raw=1`               | As above, but return the node as stored (the array), without resolving the chosen element.      |
+| `DELETE`             | `/api/data/:path`                           | Delete the value at a path.                                                                     |
+| `GET`                | `/api/media/probe?templateId=<id>`          | Length of a template's video layer (`{durationMs}` or `null`) — for `holdMode: "video"`.        |
+| `GET`                | `/api/selection`                            | The chosen element of list variables: `{"guests": 1}`.                                          |
+| `POST`               | `/api/selection`                            | Choose an element: `{"path": "guests", "index": 1}` (or a whole map, `{"guests": 1}`).          |
+| `DELETE`             | `/api/selection/:path`                      | Reset the choice (element `0` is used again).                                                   |
+| `GET`                | `/api/templates`                            | List the animations.                                                                            |
+| `POST`               | `/api/templates`                            | Create an animation.                                                                            |
+| `GET` `PUT` `PATCH`  | `/api/templates/:id`                        | Read / update an animation (`PATCH` is a partial update).                                       |
+| `DELETE`             | `/api/templates/:id`                        | Delete an animation.                                                                            |
+| `POST`               | `/api/titles/:templateId/show`              | Show an animation.                                                                              |
+| `POST`               | `/api/titles/:templateId/toggle`            | Show / hide (toggle).                                                                           |
+| `POST`               | `/api/titles/:templateId/trigger`           | Play once (one-shot).                                                                           |
+| `POST`               | `/api/titles/hide`                          | Hide the title.                                                                                 |
+| `POST`               | `/api/titles/reset`                         | Reset the “program” completely: the active title, overrides and visibility; playback on the outs stops. |
+| `GET`                | `/api/outs`                                 | List the outs.                                                                                  |
+| `POST`               | `/api/outs`                                 | Create an out.                                                                                  |
+| `GET` `PUT` `PATCH`  | `/api/outs/:id`                             | Read / update an out.                                                                           |
+| `DELETE`             | `/api/outs/:id`                             | Delete an out.                                                                                  |
+| `GET`                | `/api/outs/:id/url`                         | The URL for an OBS Browser Source.                                                              |
+| `POST`               | `/api/outs/:outId/stop`                     | Stop playback on an out.                                                                        |
+| `POST`               | `/api/outs/:outId/items`                    | Add a placement to an out (`{templateId, ...}`).                                                |
+| `PUT` `PATCH`        | `/api/outs/:outId/items/:itemId`            | Update a placement.                                                                             |
+| `DELETE`             | `/api/outs/:outId/items/:itemId`            | Delete a placement.                                                                             |
+| `POST`               | `/api/outs/:outId/items/:itemId/trigger`    | One-shot of a specific placement (optional `{holdMs}`).                                         |
 
 ### `GET /api/state`
 
@@ -425,29 +445,29 @@ cp bundles/notGT/cfg/notGT.example.json \
 }
 ```
 
-- `activeTemplateId`, `activeVisible`, `activeOutId` — «плоские» дубликаты полей `active`,
-  чтобы в Companion можно было указать JSON path напрямую.
-- `playing` — какие размещения реально играют сейчас, по out'ам.
-- `revision` — монотонный счётчик: меняется при любом изменении, удобен для дешёвого
-  определения «что-то поменялось».
-- `outs` и `templates` **отсутствуют**, если `hideApiState: true`.
+- `activeTemplateId`, `activeVisible`, `activeOutId` — “flat” copies of the fields of
+  `active`, so that a JSON path can be given directly in Companion.
+- `playing` — which placements are actually playing now, per out.
+- `revision` — a monotonic counter: it changes on any change, a cheap way to tell that
+  “something changed”.
+- `outs` and `templates` are **absent** when `hideApiState: true`.
 
-### Примеры
+### Examples
 
-Проверка живости (токен не нужен):
+Liveness check (no token needed):
 
 ```bash
 curl -sS http://<host>/api/health
 ```
 
-Состояние программы:
+State of the program:
 
 ```bash
 curl -sS http://<host>/api/state \
   -H "Authorization: Bearer $NOTGT_TOKEN"
 ```
 
-Переменные: целиком, по пути и запись.
+Variables: all of them, by path, and writing.
 
 ```bash
 curl -sS http://<host>/api/data -H "Authorization: Bearer $NOTGT_TOKEN"
@@ -455,13 +475,13 @@ curl -sS http://<host>/api/data -H "Authorization: Bearer $NOTGT_TOKEN"
 curl -sS 'http://<host>/api/data?path=speaker.name' \
   -H "Authorization: Bearer $NOTGT_TOKEN"
 
-# merge (по умолчанию): точечно обновляет переданные ключи
+# merge (default): updates only the keys that were sent
 curl -sS -X POST 'http://<host>/api/data?mode=merge' \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"speaker":{"name":"Alice","role":"Host"}}'
 
-# replace: заменяет весь набор переменных переданным объектом
+# replace: replaces the whole set of variables with the object sent
 curl -sS -X POST 'http://<host>/api/data?mode=replace' \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -471,64 +491,63 @@ curl -sS -X DELETE 'http://<host>/api/data/speaker.name' \
   -H "Authorization: Bearer $NOTGT_TOKEN"
 ```
 
-> Тело `POST /api/data` — это либо сам объект данных, либо обёртка `{"data": {…}}`;
-> работает и так, и так.
+> The body of `POST /api/data` is either the data object itself or a `{"data": {…}}`
+> wrapper; both work.
 
-Показать титр (вариант для Companion и для внешних систем):
+Showing a title (a form for Companion and for external systems):
 
 ```bash
-# тело целиком считается override'ом переменных…
+# the whole body is taken as the variable override…
 curl -sS -X POST http://<host>/api/titles/lower_third/show \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"speaker":{"name":"Alice"}}'
 
-# …либо override лежит в `data`, а out/label — рядом
+# …or the override sits in `data`, with out/label next to it
 curl -sS -X POST http://<host>/api/titles/lower_third/show \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"out":"main","label":"Alice","data":{"speaker":{"name":"Alice"}}}'
 
-# то же самое через query-параметры
+# the same through query parameters
 curl -sS -X POST 'http://<host>/api/titles/lower_third/show?out=main&label=Alice' \
   -H "Authorization: Bearer $NOTGT_TOKEN"
 ```
 
-Toggle, one-shot trigger и скрытие:
+Toggle, one-shot trigger and hide:
 
 ```bash
 curl -sS -X POST http://<host>/api/titles/lower_third/toggle \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' -d '{"out":"main"}'
 
-# trigger: играет один раз. Если анимация уже размещена на out'е — играет размещение,
-# иначе она показывается на holdMs и скрывается сама.
+# trigger: plays once. If the animation is placed on the out, the placement plays;
+# otherwise it is shown for holdMs and hides by itself.
 curl -sS -X POST http://<host>/api/titles/lower_third/trigger \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' -d '{"out":"main","holdMs":5000}'
 
-# hide: остановить воспроизведение на конкретном out'е…
+# hide: stop playback on a particular out…
 curl -sS -X POST http://<host>/api/titles/hide \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' -d '{"out":"main"}'
 
-# …или на всех сразу
+# …or on all of them at once
 curl -sS -X POST http://<host>/api/titles/hide \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' -d '{}'
 
-# templateId сужает скрытие до конкретного титра, out — до конкретного выхода
+# templateId narrows the hide to one title, out to one out
 curl -sS -X POST http://<host>/api/titles/hide \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' -d '{"out":"main","templateId":"lower_third"}'
 ```
 
-> `POST /api/titles/hide` принимает `{out?, templateId?}`. Скрытие активного титра
-> срабатывает, только если он подходит под переданные фильтры. Если `templateId` не
-> передан, дополнительно останавливается воспроизведение на указанном out'е (или на всех,
-> если `out` не передан).
+> `POST /api/titles/hide` accepts `{out?, templateId?}`. The active title is hidden only
+> if it matches the filters sent. If `templateId` is not sent, playback is also stopped on
+> the given out (or on all of them, if `out` is not sent).
 
-Анимации (templates):
+Animations (templates):
 
 ```bash
 curl -sS -X POST http://<host>/api/templates \
@@ -566,10 +585,10 @@ curl -sS -X DELETE http://<host>/api/templates/lower_third \
   -H "Authorization: Bearer $NOTGT_TOKEN"
 ```
 
-Для `POST /api/templates` обязателен `name` (иначе `400`); `id` можно не указывать —
-он будет выведен из `name`. Для `POST /api/outs` повторяющийся `id` даёт `409`.
+`POST /api/templates` requires `name` (else `400`); `id` may be omitted — it is derived
+from `name`. For `POST /api/outs` a duplicate `id` gives `409`.
 
-Outs и размещения:
+Outs and placements:
 
 ```bash
 curl -sS http://<host>/api/outs -H "Authorization: Bearer $NOTGT_TOKEN"
@@ -579,10 +598,10 @@ curl -sS -X POST http://<host>/api/outs \
   -H 'Content-Type: application/json' \
   -d '{"id":"interview","name":"Interview","width":1920,"height":1080}'
 
-# URL для OBS
+# the URL for OBS
 curl -sS http://<host>/api/outs/interview/url -H "Authorization: Bearer $NOTGT_TOKEN"
 
-# поставить анимацию на out
+# put an animation on an out
 curl -sS -X POST http://<host>/api/outs/interview/items \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -592,30 +611,30 @@ curl -sS -X POST http://<host>/api/outs/interview/items \
         "playback": { "mode": "once", "holdMs": 8000 }
       }'
 
-# поставить цикл в эфир и оставить его там (снимается held: false)
+# put a title that stays up on air and leave it there (taken off with held: false)
 curl -sS -X POST http://<host>/api/outs/interview/items \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"templateId":"ticker","x":0,"y":0,"playback":{"mode":"loop"},"held":true}'
 
-# обрезать размещение: показывать только окно 960x540 из (480,270) в пикселях
-# шаблона. Пиксели шаблона, не out'а; анимация не двигается и не масштабируется.
+# crop a placement: show only the 960x540 window from (480,270), in template
+# pixels. Template pixels, not the out's; the animation neither moves nor scales.
 curl -sS -X PATCH http://<host>/api/outs/interview/items/<itemId> \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"crop":{"x":480,"y":270,"width":960,"height":540}}'
 
-# снять обрезку — снова виден весь бокс
+# remove the crop — the whole box is visible again
 curl -sS -X PATCH http://<host>/api/outs/interview/items/<itemId> \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' -d '{"crop":null}'
 
-# one-shot конкретного размещения
+# one-shot of a specific placement
 curl -sS -X POST http://<host>/api/outs/interview/items/item_ab12cd34ef56/trigger \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' -d '{"holdMs":6000}'
 
-# остановить всё на out'е
+# stop everything on an out
 curl -sS -X POST http://<host>/api/outs/interview/stop \
   -H "Authorization: Bearer $NOTGT_TOKEN"
 ```
@@ -624,313 +643,316 @@ curl -sS -X POST http://<host>/api/outs/interview/stop \
 
 ## Bitfocus Companion
 
-Полноценного модуля для Companion в поставке нет — используется штатный HTTP-модуль.
-Это покрывает 95 % задач: показать титр, скрыть, подсветить кнопку по состоянию.
+There is no dedicated Companion module in the package — the stock HTTP module is used.
+It covers 95 % of the job: show a title, hide it, light a button by state.
 
-### Подключение
+### Connecting
 
-Создайте в Companion connection типа HTTP-запросов (например, **Generic HTTP Requests**),
-укажите базовый адрес:
+In Companion create a connection of the HTTP-request kind (for example **Generic HTTP
+Requests**) and set the base address:
 
 ```
 http://<host>
 ```
 
-и добавьте заголовок с токеном (если `apiToken` задан):
+and add a header with the token (if `apiToken` is set):
 
 ```
 X-API-Token: <token>
 ```
 
-или
+or
 
 ```
 Authorization: Bearer <token>
 ```
 
-Проверка связи: `GET /api/health` должен отвечать `{"ok":true,...}` — этот путь открыт
-всегда, токен ему не нужен.
+To check the link: `GET /api/health` must answer `{"ok":true,...}` — this path is always
+open and needs no token.
 
-### Действия (actions)
+### Actions
 
-**Показать титр:**
+**Show a title:**
 
 - Method: `POST`
 - URL / path: `/api/titles/<templateId>/show`
-- Body (JSON, опционально): `{"out":"main"}` или `{"out":"main","label":"Alice"}`
+- Body (JSON, optional): `{"out":"main"}` or `{"out":"main","label":"Alice"}`
 - Content-Type: `application/json`
 
-Например, для шаблона `lower_third`:
+For example, for the `lower_third` template:
 
 ```
 POST /api/titles/lower_third/show   {"out":"main"}
 ```
 
-**Скрыть титр:**
+**Hide the title:**
 
 ```
 POST /api/titles/hide   {}
 ```
 
-или на конкретном out'е:
+or on a particular out:
 
 ```
 POST /api/titles/hide   {"out":"main"}
 ```
 
-Дополнительно теми же средствами доступны `toggle` и `trigger`:
+`toggle` and `trigger` are available the same way:
 
 ```
 POST /api/titles/<templateId>/toggle    {"out":"main"}
 POST /api/titles/<templateId>/trigger   {"out":"main","holdMs":5000}
 ```
 
-`trigger` — однократный проигрыш; если анимация размещена на out'е, играет размещение,
-иначе она показывается на `holdMs` и скрывается сама.
+`trigger` plays once; if the animation is placed on the out, the placement plays,
+otherwise it is shown for `holdMs` and hides by itself.
 
-Эквивалент в curl (удобно проверить до настройки Companion):
+The curl equivalent (handy to check before setting Companion up):
 
 ```bash
 curl -sS -X POST http://<host>/api/titles/lower_third/show \
   -H "X-API-Token: $NOTGT_TOKEN" -H 'Content-Type: application/json' -d '{"out":"main"}'
 ```
 
-### HTTP Feedback (подсветка кнопки)
+### HTTP feedback (lighting a button)
 
-Companion умеет опрашивать URL и доставать значение по JSON path — на это вешается
-feedback «кнопка горит, когда…».
+Companion can poll a URL and pull a value out by JSON path — that is what a “the button
+is lit when…” feedback hangs on.
 
 - URL: `http://<host>/api/state`
 - Header: `X-API-Token: <token>`
-- Метод: `GET`
-- Poll interval: **500 ms** (рекомендуется)
-- JSON path — строка, которую вы вписываете в поле feedback'а:
+- Method: `GET`
+- Poll interval: **500 ms** (recommended)
+- JSON path — the string you type into the feedback's field:
 
-| JSON path              | Пример значения              | Что означает                                                       |
+| JSON path              | Example value                | What it means                                                      |
 | ---------------------- | ---------------------------- | ------------------------------------------------------------------ |
-| `activeVisible`        | `true` / `false`             | Показан ли сейчас какой-либо титр.                                  |
-| `activeTemplateId`     | `"lower_third"` / `null`     | `id` текущего шаблона (или `null`, если ничего не показано).        |
-| `activeOutId`          | `"main"` / `null`            | На каком out'е показ (`null` = на всех).                            |
-| `revision`             | `42`                         | Счётчик изменений — удобно для «мигнуть при любом изменении».        |
-| `playing.main[0]`      | `"item_ab12cd34ef56"`        | Первое играющее размещение на out'е `main` (ключа может не быть).   |
+| `activeVisible`        | `true` / `false`             | Whether any title is shown right now.                               |
+| `activeTemplateId`     | `"lower_third"` / `null`     | The `id` of the current template (or `null` if nothing is shown).   |
+| `activeOutId`          | `"main"` / `null`            | Which out it is shown on (`null` = all of them).                    |
+| `revision`             | `42`                         | The change counter — good for “blink on any change”.                |
+| `playing.main[0]`      | `"item_ab12cd34ef56"`        | The first placement playing on the out `main` (the key may be absent). |
 
-Типовые настройки кнопки:
+Typical button setups:
 
-- **Show / Hide** — две кнопки с действиями `show` и `hide`, обе подсвечиваются от
-  `activeVisible` (или от `activeTemplateId`, если кнопок много и каждая про свой шаблон).
-- **Trigger** — кнопка с одним действием `trigger`, подсветка от `playing.main[0]`
-  (пока размещение играет, значение непустое).
+- **Show / Hide** — two buttons with the `show` and `hide` actions, both lit from
+  `activeVisible` (or from `activeTemplateId`, if there are many buttons, each for its own
+  template).
+- **Trigger** — a button with a single `trigger` action, lit from `playing.main[0]`
+  (the value is non-empty while the placement plays).
 
-Замечания:
+Notes:
 
-- Каждый feedback — это отдельный HTTP-запрос на каждый poll. При 500 ms это нормально,
-  но если кнопок много, включите `hideApiState: true` в конфиге бандла: из ответа уйдут
-  массивы `outs` и `templates`, а все пути из таблицы выше продолжат работать.
-- `outId` — это slug (`[a-z0-9-]`), поэтому `playing.main[0]` корректен; точки в `outId`
-  не встречаются by design.
-- 500 ms — компромисс между отзывчивостью кнопки и нагрузкой. Для «дисплейных» кнопок,
-  которым не нужна мгновенная реакция, можно поставить 1000–2000 ms; меньше 250 ms смысла
-  не имеет, состояние всё равно пересчитывается на сервере.
+- Every feedback is a separate HTTP request on every poll. At 500 ms that is fine, but
+  with many buttons turn on `hideApiState: true` in the bundle config: the `outs` and
+  `templates` arrays leave the response, and every path in the table above keeps working.
+- `outId` is a slug (`[a-z0-9-]`), so `playing.main[0]` is valid; an `outId` never
+  contains a dot, by design.
+- 500 ms is a compromise between a responsive button and load. For “display” buttons that
+  do not need an instant reaction 1000–2000 ms will do; below 250 ms there is no point,
+  the state is recomputed on the server anyway.
 
-### Перспектива: собственный модуль
+### Looking ahead: a dedicated module
 
-Если позже понадобится push вместо polling'а, правильный путь — отдельный модуль
-Companion на `@companion-module/base`, который подключается к NodeCG по **Socket.IO** и
-подписывается на Replicant'ы напрямую. Это даёт:
+If push instead of polling is needed later, the right way is a separate Companion module
+on `@companion-module/base` that connects to NodeCG over **Socket.IO** and subscribes to
+the Replicants directly. That gives:
 
-- обновления состояния без polling'а (сервер сам присылает изменения);
-- динамические выпадающие списки шаблонов и out'ов в actions (вместо ручного ввода id);
-- готовые variables/feedbacks с нормальными именами.
+- state updates without polling (the server sends the changes itself);
+- dynamic dropdowns of templates and outs in actions (instead of typing ids by hand);
+- ready-made variables/feedbacks with proper names.
 
-Сейчас это не реализовано; HTTP-схема выше — рекомендуемый способ.
+This is not implemented yet; the HTTP scheme above is the recommended way.
 
 ---
 
 ## OBS Studio
 
-1. **Источники → Добавить → Browser**.
+1. **Sources → Add → Browser**.
 2. **URL**:
 
    ```
    http://<host>/bundles/notGT/graphics/out.html?out=main
    ```
 
-3. **Width / Height** — размер сцены этого out'а (по умолчанию `1920` × `1080`).
-   Держите их равными `width`/`height` из панели «Titles & Outs», иначе поплывёт масштаб.
-4. **Shutdown source when not visible** — **выключено**. Иначе браузер-сорс выгружается,
-   теряет соединение и на повторном появлении сцены показывает устаревшее состояние.
-5. **Background** — ничего настраивать не нужно: страница прозрачная (`html, body` имеют
-   прозрачный фон), OBS берёт её как есть.
-6. Обновите источник **один раз** после создания — дальше он живёт сам.
+3. **Width / Height** — the stage size of this out (`1920` × `1080` by default). Keep them
+   equal to the `width`/`height` in the “Titles & Outs” panel, or the scale will drift.
+4. **Shutdown source when not visible** — **off**. Otherwise the browser source is
+   unloaded, loses its connection and shows a stale state when the scene comes back.
+5. **Background** — nothing to set: the page is transparent (`html, body` have a
+   transparent background) and OBS takes it as it is.
+6. Refresh the source **once** after creating it — from then on it looks after itself.
 
-### Диагностический оверлей
+### Diagnostic overlay
 
-Добавьте в URL флаг `debug`:
+Add the `debug` flag to the URL:
 
 ```
 http://<host>/bundles/notGT/graphics/out.html?out=main&debug=1
 ```
 
-Оверлей в углу страницы показывает: `out`, `revision`, список играющих размещений и
-список активных слотов. Он обновляется раз в секунду даже в простое, поэтому в эфире его
-лучше не держать — включайте только для отладки.
+The overlay in the corner of the page shows `out`, `revision`, the list of playing
+placements and the list of active slots. It updates once a second even when idle, so it
+is better not kept on air — turn it on for debugging only.
 
-### Несколько выходов
+### Several outs
 
-Несколько Browser Source'ов с разными `?out=` работают одновременно и независимо:
+Several Browser Sources with different `?out=` values work at the same time and
+independently:
 
 ```
 http://<host>/bundles/notGT/graphics/out.html?out=main
 http://<host>/bundles/notGT/graphics/out.html?out=interview
 ```
 
-### Чего делать не нужно
+### What not to do
 
-**Не перезагружайте Browser Source при изменении данных.** Переменные, список playing и
-правки шаблонов приходят на страницу сами (через Replicant'ы и Socket.IO). Reload только
-рвёт соединение и заново проигрывает входную анимацию; при `{{...}}` в code-шаблоне он ещё
-и пересобирает iframe. Если кажется, что «не обновляется» — сначала посмотрите на оверлей
-`&debug=1` и на `GET /api/state`.
-
----
-
-## Персистентность
-
-NodeCG хранит Replicant'ы в `db/` (в Docker — в томе `notgt-db`). Что это значит на
-практике.
-
-### Переживает перезапуск
-
-- **Анимации (templates)** — это Replicant, включая слои, переходы и playback.
-- **Outs** — включая все размещения с их координатами, scale и playback.
-- **Переменные (titleData)** — все значения, введённые в панели Control или через API.
-- **Последнее состояние программы (activeTitle)** — что было показано, на каком out'е,
-  с каким label и override'ами.
-- **Служебные метаданные (meta)** — например, факт первичной инициализации.
-- **Загруженные ассеты** (категория `media`) — лежат в `assets/` (в Docker — том
-  `notgt-assets`).
-
-### Не переживает перезапуск
-
-- **Производное состояние воспроизведения** (`runtime`: `playing`, `revision`) —
-  пересчитывается на сервере заново.
-- **Запущенные таймеры** — `setTimeout` живут только в процессе, поэтому одиночный
-  триггер «в полёте» теряется. А вот `held` (в том числе у циклов) — это состояние
-  размещения, оно сохраняется: включённые тумблером анимации планировщик поднимет
-  автоматически при старте.
-
-В Docker-развёртывании `db`, `assets` и `logs` — это volumes, объявленные в
-`docker-compose.yml`; они переживают `docker compose down` и пересборку образа. Если
-удалить volume — конфигурация шоу пропадёт.
+**Do not reload the Browser Source when the data changes.** Variables, the playing list
+and template edits reach the page by themselves (through Replicants and Socket.IO). A
+reload only breaks the connection and replays the entrance; with `{{...}}` in a code
+template it also rebuilds the iframe. If it seems “not to update”, look at the `&debug=1`
+overlay and at `GET /api/state` first.
 
 ---
 
-## Написание code-анимации
+## Persistence
 
-Шаблон `kind: "code"` состоит из трёх строк: `code.html`, `code.css`, `code.js`. Он
-исполняется в sandboxed iframe (`sandbox="allow-scripts allow-same-origin"`), который
-живёт внутри слота анимации.
+NodeCG keeps the Replicants in `db/` (in Docker, in the `notgt-db` volume). What that
+means in practice.
 
-### Контракт рантайма
+### Survives a restart
 
-Внутри iframe доступны:
+- **Animations (templates)** — a Replicant, including layers, transitions and playback.
+- **Outs** — including every placement with its coordinates, scale and playback.
+- **Variables (titleData)** — every value entered in the Control panel or through the API.
+- **The last state of the program (activeTitle)** — what was shown, on which out, with
+  which label and overrides.
+- **Service metadata (meta)** — for example, the fact of first-run initialization.
+- **Uploaded assets** (the `media` category) — kept in `assets/` (in Docker, the
+  `notgt-assets` volume).
 
-| Сущность                   | Что это                                                                                       |
+### Does not survive a restart
+
+- **Derived playback state** (`runtime`: `playing`, `revision`) — recomputed on the server
+  from scratch.
+- **Running timers** — a `setTimeout` lives only in the process, so a single trigger “in
+  flight” is lost. `held`, however, is state of the placement and is persisted: the
+  scheduler brings the animations that were switched on back up automatically on start.
+
+In a Docker deployment `db`, `assets` and `logs` are volumes declared in
+`docker-compose.yml`; they survive `docker compose down` and an image rebuild. Delete a
+volume and the show's configuration is gone.
+
+---
+
+## Writing a code animation
+
+A `kind: "code"` template consists of three strings: `code.html`, `code.css`, `code.js`.
+It runs in a sandboxed iframe (`sandbox="allow-scripts allow-same-origin"`) that lives
+inside the animation's slot.
+
+### The runtime contract
+
+Inside the iframe you have:
+
+| Entity                     | What it is                                                                                    |
 | -------------------------- | --------------------------------------------------------------------------------------------- |
-| `root`                     | Контейнер анимации — это `document.body`.                                                      |
-| `data`                     | Весь набор переменных (объект) на момент создания iframe; обновляется при изменениях.          |
-| `vars(path, fallback?)`    | Прочитать одно значение по пути. Возвращает строку; `fallback` — если значение пустое.         |
-| `onData(fn)`               | Подписка: `fn` вызывается сразу с текущими данными и затем на каждое изменение.                |
-| `onShow(fn)`               | Анимацию показали: проиграйте появление. См. [«Переходы»](#переходы-появление-и-скрытие).      |
-| `onHide(fn, ms?)`          | Анимацию скрывают: проиграйте обратную анимацию; `ms` — сколько система готова её ждать.       |
-| `hideDone()`               | Сказать «обратная анимация кончилась», не дожидаясь `ms`.                                      |
-| `[data-bind="path"]`       | Текстовые узлы с этим атрибутом обновляются автоматически при каждом изменении данных.         |
-| `{{path}}` в HTML и CSS    | Подстановка значения **один раз при загрузке** (не живая).                                     |
+| `root`                     | The animation's container — it is `document.body`.                                             |
+| `data`                     | The whole set of variables (an object) as of the iframe's creation; updated on changes.        |
+| `vars(path, fallback?)`    | Read one value by path. Returns a string; `fallback` is used when the value is empty.          |
+| `onData(fn)`               | A subscription: `fn` is called at once with the current data, then on every change.            |
+| `onShow(fn)`               | The animation was shown: play the entrance. See [“Transitions”](#transitions-entrance-and-exit). |
+| `onHide(fn, ms?)`          | The animation is being hidden: play the exit; `ms` is how long the system will wait for it.    |
+| `hideDone()`               | Say “the exit is over” without waiting out `ms`.                                               |
+| `[data-bind="path"]`       | Text nodes with this attribute update automatically on every data change.                      |
+| `{{path}}` in HTML and CSS | The value is substituted **once, on load** (not live).                                         |
 
-Правила:
+The rules:
 
-- `{{path}}` и `{{path ?? fallback}}` работают **только в HTML и CSS**. В `code.js`
-  подстановки нет — для живых значений используйте `vars()` / `onData()` / `[data-bind]`.
-- `[data-bind="path"]` фолбэка не умеет: пустая переменная затирает текст, написанный в
-  HTML. Нужен запасной текст — ставьте его из JS: `el.textContent = vars("path", "запасной")`.
-- `root` — это `document.body`. В файловой анимации шим вставляется в `<head>`, когда
-  `<body>` ещё нет, поэтому `root` отдаётся геттером и становится валидным по мере
-  разбора документа; читайте его внутри своего `<script>` в конце `<body>`.
-- Пути точечные, с индексами массивов: `speaker.name`, `panel.items[0].title`.
-- Iframe **пересобирается заново** при изменении самого шаблона (правки кода, слоёв,
-  размеров), а не при изменении данных: при правке кода `{{...}}` пересчитается, входная
-  анимация проиграется снова. Изменения данных приходят через `postMessage` и `onData`,
-  без перезагрузки.
-- `vars()` всегда возвращает строку. Объекты сериализуются в JSON, `null`/`undefined`
-  дают пустую строку.
+- `{{path}}` and `{{path ?? fallback}}` work **only in HTML and CSS**. There is no
+  substitution in `code.js` — for live values use `vars()` / `onData()` / `[data-bind]`.
+- `[data-bind="path"]` has no fallback: an empty variable wipes the text written in the
+  HTML. If you need a fallback text, set it from JS:
+  `el.textContent = vars("path", "fallback")`.
+- `root` is `document.body`. In a file animation the shim is inserted into `<head>`, when
+  there is no `<body>` yet, so `root` is a getter and becomes valid as the document is
+  parsed; read it inside your own `<script>` at the end of `<body>`.
+- Paths are dotted, with array indices: `speaker.name`, `panel.items[0].title`.
+- The iframe is **rebuilt from scratch** when the template itself changes (edits to code,
+  layers, sizes), not when the data changes: after a code edit `{{...}}` is recomputed and
+  the entrance plays again. Data changes arrive through `postMessage` and `onData`,
+  without a reload.
+- `vars()` always returns a string. Objects are serialized to JSON, `null`/`undefined`
+  give an empty string.
 
-### Переходы: появление и скрытие
+### Transitions: entrance and exit
 
-По умолчанию вход и выход делает система: слот анимации оборачивается в обёртку,
-которой применяется `inTransition` / `outTransition` шаблона, а iframe просто
-появляется и исчезает вместе с ней. Для код-анимации это часто не то, что нужно: своя
-анимация по буквам и своя обратная анимация живут внутри iframe.
+For an animation built from layers the system does the entrance and the exit: the slot
+is wrapped, and the template's `inTransition` / `outTransition` is applied to that
+wrapper. For a code animation that is rarely what you want: its own letter-by-letter
+animation and its own exit live inside the iframe.
 
-Чтобы переходы делал код, зарегистрируйте фазы:
+To have the code do the transitions, register the phases:
 
 ```js
 onShow(() => {
-	// Титр показали (тумблер «Показать», show или повторный trigger).
-	// Здесь — появление и всё, что должно жить, пока титр в эфире.
+	// The title was shown (the “On air” switch, show, or a repeated trigger).
+	// The entrance goes here, and everything that should live while the title is on air.
 });
 
 onHide(() => {
-	// Титр скрывают. Проиграйте обратную анимацию.
-}, 700); // 700 мс — сколько система подождёт её конца
+	// The title is being hidden. Play the exit.
+}, 700); // 700 ms — how long the system waits for it to end
 ```
 
-Правила:
+The rules:
 
-- **Код-анимацию система не анимирует вообще.** У `kind: "code"` нет ни
-  `inTransition`, ни `outTransition`: если код не зарегистрировал `onShow`, титр
-  появляется мгновенно, если не зарегистрировал `onHide` — мгновенно исчезает. Фазы
-  независимы: можно взять только выход и не трогать вход.
-- Второй аргумент `onHide(fn, ms)` — **максимум**, который система держит слот живым
-  после начала скрытия. Как только обратная анимация закончилась, вызовите
-  `hideDone()` — и слот уберут сразу, не дожидаясь `ms`. Если `ms` не указан, система
-  ждёт 600 мс; больше 10 секунд ждать нельзя.
-- **Iframe живёт только пока титр на экране**: он создаётся при показе и удаляется
-  после выхода. Поэтому `onShow` вызывается один раз на каждый показ, а не на каждое
-  изменение данных, — появление не проигрывается заново, когда оператор правит текст.
-- Регистрируйте фазы на верхнем уровне скрипта, а не внутри `setTimeout`/`await`: по
-  тому, какие хуки успели появиться, система решает, применять ли свой переход.
-- `onData(fn)` по-прежнему вызывается сразу и на каждое изменение. Разделяйте роли:
-  данные — в `onData`, появление — в `onShow`.
+- **The system does not animate a code animation at all.** `kind: "code"` has neither
+  `inTransition` nor `outTransition`: if the code did not register `onShow`, the title
+  appears instantly; if it did not register `onHide`, it disappears instantly. The phases
+  are independent: you can take just the exit and leave the entrance alone.
+- The second argument of `onHide(fn, ms)` is the **maximum** time the system keeps the
+  slot alive after the hide starts. As soon as the exit has finished, call `hideDone()`
+  and the slot is removed at once, without waiting out `ms`. If `ms` is not given, the
+  system waits 600 ms; it will not wait longer than 10 seconds.
+- **The iframe only lives while the title is on screen**: it is created on show and
+  removed after the exit. So `onShow` is called once per show, not on every data change —
+  the entrance does not replay when the operator edits the text.
+- Register the phases at the top level of the script, not inside `setTimeout`/`await`: the
+  system decides what the animation handles by which hooks have appeared by then.
+- `onData(fn)` is still called at once and on every change. Keep the roles apart: data in
+  `onData`, the entrance in `onShow`.
 
-**Тайминг.** Длительность ухода хранится в шаблоне как `code.exitMs`. Планировщик
-снимает размещение с эфира на столько раньше `holdMs`, чтобы уход успел закончиться ровно
-к концу удержания: появление + время в эфире + уход = `holdMs`. У этого числа один
-источник — второй аргумент `onHide(fn, ms)`. Editor читает его из живого предпросмотра
-(рантайм сам сообщает, какие фазы анимирует код), записывает в `code.exitMs` и показывает
-на вкладке «Анимация»; вводить его второй раз не нужно. Руками `exitMs` задают только
-тогда, когда шаблон создаётся через API в обход редактора.
+**Timing.** The length of the exit is stored in the template as `code.exitMs`. The
+scheduler takes the placement off air that much before `holdMs` runs out, so that the
+exit finishes exactly at the end of the hold: entrance + time on air + exit = `holdMs`.
+This number has one source — the second argument of `onHide(fn, ms)`. Editor reads it
+from the live preview (the runtime itself reports which phases the code animates), writes
+it to `code.exitMs` and shows it on the “Animation” tab; you never type it a second time.
+`exitMs` is only set by hand when a template is created through the API, bypassing the
+editor.
 
-У `once` планировщик снимает размещение с эфира на `exitMs` раньше `holdMs` — вход,
-показ и уход укладываются в настроенное время. У `loop` планировать нечего: уход
-запускается тогда, когда оператор выключил «В эфире», а `exitMs` работает как бюджет
-ожидания (столько система держит iframe, если код не позвал `hideDone()`).
+For `once` the scheduler takes the placement off air `exitMs` before `holdMs` — entrance,
+show and exit fit into the configured time. For `loop` there is nothing to schedule: the
+exit starts when the operator turns “On air” off, and `exitMs` works as the waiting
+budget (how long the system keeps the iframe if the code never called `hideDone()`).
 
-Полный пример: карточка спикера, где имя и должность вылетают по буквам, пока титр в
-эфире живут частицы, а при скрытии всё уезжает обратно.
+A full example: a speaker card where the name and the role fly in letter by letter,
+particles live while the title is on air, and everything rides back out on hide.
 
 ```js
 const $ = (id) => document.getElementById(id);
 
-// 1. Данные: раскладываем текст без анимации — анимация относится к показу.
+// 1. Data: lay the text out without animating — the animation belongs to the show.
 function apply() {
-	$("name").textContent = vars("speaker.name", "Имя");
-	$("role").textContent = vars("speaker.role", "Должность");
+	$("name").textContent = vars("speaker.name", "Name");
+	$("role").textContent = vars("speaker.role", "Role");
 }
 onData(apply);
 
-// 2. Появление: разбиваем строку на буквы и вылетаем каждой.
+// 2. Entrance: split the line into letters and fly each one in.
 function flyIn(el, delay, step) {
-	const text = el.dataset.text || el.textContent; // текст берём один раз
+	const text = el.dataset.text || el.textContent; // the text is taken once
 	el.dataset.text = text;
 	el.textContent = "";
 	[...text].forEach((ch, i) => {
@@ -957,10 +979,10 @@ let sparks = 0;
 onShow(() => {
 	flyIn($("name"), 0, 40);
 	flyIn($("role"), 300, 14);
-	sparks = setInterval(spawnSpark, 400); // ваша функция частиц; живёт, пока титр в эфире
+	sparks = setInterval(spawnSpark, 400); // your particle function; lives while the title is on air
 });
 
-// 3. Скрытие: обратная анимация и остановка фона. 400 мс — сколько ждать система.
+// 3. Hide: the exit, and stopping the background. 400 ms is how long the system waits.
 onHide(() => {
 	clearInterval(sparks);
 	root.querySelectorAll(".line .ch").forEach((el) =>
@@ -975,41 +997,42 @@ onHide(() => {
 }, 400);
 ```
 
-Обратите внимание на разделение: `onData(apply)` только обновляет значения, поэтому
-правка текста в панели Control не переигрывает появление; `onShow` — единственное место,
-где запускается вход (и фон), `onHide` — единственное, где всё останавливается.
+Note the separation: `onData(apply)` only updates the values, so editing the text in the
+Control panel does not replay the entrance; `onShow` is the only place the entrance (and
+the background) starts, `onHide` the only place everything stops.
 
-### Анимации из файлов (без веб-редактора)
+### Animations from files (without the web editor)
 
-Анимацию можно написать не в панели Editor, а файлом. Положите `.html` в
-`bundles/notGT/graphics/animations/` — при старте extension зарегистрирует каждый файл
-как шаблон `kind: "code"` с id `file-<имя-файла>` и `code.src`, указывающим на этот файл.
-Файловый пример — `graphics/animations/example-file-animation.html`; встроенные
-примеры-шаблоны, у которых код лежит внутри, см. в [«Готовых примерах»](#готовые-примеры).
+An animation can be written as a file instead of in the Editor panel. Put an `.html` into
+`bundles/notGT/graphics/animations/` — on start the extension registers every file as a
+`kind: "code"` template with the id `file-<file-name>` and a `code.src` pointing at that
+file. The file example is `graphics/animations/example-file-animation.html`; for the
+built-in example templates, whose code lives inside them, see
+[“Ready-made examples”](#ready-made-examples).
 
 ```bash
 cp my-animation.html bundles/notGT/graphics/animations/
-curl -X POST http://localhost:9090/api/animations/sync      # перечитать каталог
-curl http://localhost:9090/api/animations                   # что зарегистрировано
+curl -X POST http://localhost:9090/api/animations/sync      # re-read the directory
+curl http://localhost:9090/api/animations                   # what is registered
 ```
 
-Правила для файловых анимаций:
+Rules for file animations:
 
-- Рантайм (`vars`, `data`, `onData`, `root`, `[data-bind]`) подключается автоматически
-  **до** ваших `<script>`, поэтому `onData(...)` можно вызывать сразу.
-- `{{path}}` / `{{path ?? fallback}}` подставляются и в файле — везде, **кроме**
-  содержимого `<script>` (JS никогда не переписывается; для живых значений в JS
-  используйте `vars()` / `onData()`).
-- Относительные пути к картинкам и шрифтам работают: страница собирается с `<base>`,
-  указывающим на каталог файла.
-- Файл перечитывается при пересборке iframe, то есть при показе анимации или после
-  правки шаблона. Перезапуск NodeCG для правки файла не нужен — достаточно заново
-  показать анимацию (или обновить Browser Source в OBS).
-- Если открыть такую анимацию в панели Editor и ввести HTML в поле `code.html`, инлайн-код
-  начинает иметь приоритет над файлом (своего рода «fork»). Чтобы вернуться к файлу,
-  очистите `code.html`.
+- The runtime (`vars`, `data`, `onData`, `root`, `[data-bind]`) is injected automatically
+  **before** your `<script>`s, so `onData(...)` can be called straight away.
+- `{{path}}` / `{{path ?? fallback}}` are substituted in a file too — everywhere **except**
+  inside `<script>` (JS is never rewritten; for live values in JS use `vars()` /
+  `onData()`).
+- Relative paths to images and fonts work: the page is built with a `<base>` pointing at
+  the file's directory.
+- The file is re-read whenever the iframe is rebuilt, that is, when the animation is shown
+  or after the template is edited. No NodeCG restart is needed after editing the file —
+  showing the animation again (or refreshing the Browser Source in OBS) is enough.
+- If you open such an animation in the Editor panel and type HTML into `code.html`, the
+  inline code takes priority over the file (a “fork” of sorts). To go back to the file,
+  clear `code.html`.
 
-### Пример
+### Example
 
 `code.html`:
 
@@ -1049,367 +1072,378 @@ curl http://localhost:9090/api/animations                   # что зарег�
 const el = root.querySelector(".name");
 
 onData((d) => {
-  // живое значение вместо {{...}}
+  // a live value instead of {{...}}
   const role = vars("speaker.role", "Guest");
   root.querySelector(".role").textContent = role;
 });
 
-// начальная анимация — свойство самого iframe, но можно и так:
+// the opening animation is a property of the iframe itself, but this works too:
 el.animate([{ opacity: 0, transform: "translateY(20px)" }, { opacity: 1 }], {
   duration: 350,
   easing: "ease-out",
 });
 ```
 
-`[data-bind="speaker.name"]` в HTML обновляется рантаймом, поэтому в JS его трогать не
-нужно.
+`[data-bind="speaker.name"]` in the HTML is updated by the runtime, so the JS does not
+need to touch it.
 
-### Готовые примеры
+### Ready-made examples
 
-Примеры — это готовый пакет графики в одном стиле: тёмные плашки, один красный акцент,
-белый текст и скошенный срез на краю. **Все они лежат в библиотеке с первого запуска**, под
-постоянными id из таблицы ниже, так что их можно показывать сразу — из Control или по API
-(`POST /api/titles/example-poll/show`). На уже установленном инстансе недостающие примеры
-и образцы их переменных добавляются один раз, миграцией схемы; пример, удалённый
-оператором, сам не возвращается. Язык названий, подписей и образцов данных задаёт ключ
-`language` в [конфигурации бандла](#конфигурация-бандла).
+The examples are a ready-made graphics package in one style: dark plates, a single red
+accent, white type and a slanted cut on the edge. **All of them are in the library from
+the first run**, under the stable ids in the table below, so they can be shown right
+away — from Control or through the API (`POST /api/titles/example-poll/show`). On an
+existing installation the missing examples and sample values for their variables are
+added once, by a schema migration, and the built-in code examples that nobody edited are
+brought up to their current look; an example the operator deleted does not come back, and
+one they changed is left alone. The language of the names, captions and sample data is
+set by the `language` key in the [bundle configuration](#bundle-configuration).
 
-Тот же набор открывается как **галерея**: «Новая анимация» → «Из примера» в Editor или в
-Titles & Outs. Оттуда пример добавляется копией на языке дашборда — его можно разобрать,
-переделать, удалить и добавить снова; переменные добавляются только те, которых ещё нет.
-В Editor копия сразу ставится на выбранный out в подходящее место.
+The same set opens as a **gallery**: “New animation” → “From an example” in Editor or in
+Titles & Outs. From there an example is added as a copy in the dashboard's language — you
+can take it apart, rework it, delete it and add it again; only the variables that do not
+exist yet are added. In Editor the copy is placed on the selected out straight away, in a
+sensible spot.
 
-| Пример                   | id                      | Из чего | Что показывает                                                |
-| ------------------------ | ----------------------- | ------- | ------------------------------------------------------------- |
-| Плашка с именем          | `lower-third`           | слои    | имя и должность на плашке — основа для своей анимации          |
-| Счёт матча               | `example-scorebug`      | слои    | текст из переменных; счёт меняется в эфире из Control          |
-| Гость из списка          | `example-guest`         | слои    | переменная-список: выбранная в Control строка идёт в эфир      |
-| Тема выпуска             | `example-topic`         | слои    | полноэкранная заставка между блоками                           |
-| Логотип с плашкой эфира  | `example-logo-bug`      | слои    | слой-картинка (встроенный SVG) и текстовая плашка в углу       |
-| Кинетический титр        | `example-kinetic`       | код     | появление по буквам, свой уход, `onShow` / `onHide`            |
-| Опрос в эфире            | `example-poll`          | код     | столбцы и проценты едут к новым значениям при правке данных    |
-| Бегущая строка           | `code-sample`           | код     | покадровое движение, самая короткая полная код-анимация        |
-| Обратный отсчёт          | `example-countdown`     | код     | расчёт от `Date.now()`, три состояния, кольцо остатка          |
-| Часы по сетевому времени | `example-clock`         | код     | время из API с поправкой к локальным часам                     |
-| Погода из интернета      | `example-external-data` | код     | внешний JSON, скелетон загрузки, «данные устарели»             |
+| Example                  | id                      | Built from | What it shows                                              |
+| ------------------------ | ----------------------- | ---------- | ---------------------------------------------------------- |
+| Lower third              | `lower-third`           | layers     | name and role on a plate — the base for your own animation  |
+| Score bug                | `example-scorebug`      | layers     | text from variables; the score changes on air from Control  |
+| Guest from a list        | `example-guest`         | layers     | a list variable: the row chosen in Control goes on air      |
+| Topic card               | `example-topic`         | layers     | a full-frame title between segments                         |
+| Logo bug with a live tag | `example-logo-bug`      | layers     | an image layer (inline SVG) and a text tag in a corner      |
+| Kinetic lower third      | `example-kinetic`       | code       | letter-by-letter entrance, its own exit, `onShow` / `onHide` |
+| Live poll                | `example-poll`          | code       | bars and percentages travel to new values as the data is edited |
+| Ticker                   | `code-sample`           | code       | frame-by-frame motion, the shortest complete code animation |
+| Countdown                | `example-countdown`     | code       | counting from `Date.now()`, three states, a ring of time left |
+| Network clock            | `example-clock`         | code       | time from an API, corrected against the local clock         |
+| Weather from the internet | `example-external-data` | code      | external JSON, a loading skeleton, “stale data”             |
 
-Плашки примеров из слоёв — встроенные SVG-картинки (слой «Plate»): фигура-слой умеет
-только прямоугольник и эллипс, а SVG несёт скошенный край и градиент и не требует
-загрузки файла. Цвета команд в «Счёте матча» оставлены обычными фигурами, чтобы их можно
-было перекрасить в инспекторе.
+The plates of the layer examples are inline SVG images (the “Plate” layer): a shape layer
+can only be a rectangle or an ellipse, while an SVG carries the slanted edge and the
+gradient and needs no uploaded file. The team colours in “Score bug” are left as plain
+shapes so that they can be recoloured in the inspector.
 
-Код-анимация получает от списка только выбранную строку, поэтому у опроса варианты —
-четыре именованных слота (`poll.a` … `poll.d`), а не список.
+A code animation only receives the chosen row of a list, so the poll's options are four
+named slots (`poll.a` … `poll.d`) rather than a list.
 
-У трёх примеров с данными подробно разобран код — их HTML/CSS/JS, как и у остальных,
-лежат прямо в шаблоне, поэтому в панели **Editor** видно код и живой предпросмотр:
+Three of the data examples have their code explained in detail — their HTML/CSS/JS, like
+everyone else's, live right in the template, so the **Editor** panel shows the code and a
+live preview:
 
-| Шаблон                       | id                       | Чему учит                                                                                        |
+| Template                     | id                       | What it teaches                                                                                  |
 | ---------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------ |
-| Обратный отсчёт              | `example-countdown`      | обратный отсчёт: расчёт от `Date.now()`, три состояния, кольцо остатка на `conic-gradient`        |
-| Часы по сетевому времени     | `example-clock`          | время из API: поправка к локальным часам, стрелки крутит CSS, честная деградация в локальное время |
-| Погода из интернета          | `example-external-data`  | внешний JSON: разбор ответа, скелетон загрузки, «данные устарели» вместо пустого экрана    |
+| Countdown                    | `example-countdown`      | a countdown: counting from `Date.now()`, three states, a remaining-time ring on `conic-gradient`  |
+| Network clock                | `example-clock`          | time from an API: a correction against the local clock, hands turned by CSS, honest fallback to local time |
+| Weather from the internet    | `example-external-data`  | external JSON: parsing the response, a loading skeleton, “stale data” instead of an empty screen  |
 
-Показать пример:
+Showing an example:
 
 ```bash
 curl -X POST http://localhost:9090/api/titles/example-countdown/show
 curl -X POST http://localhost:9090/api/titles/hide
 ```
 
-Переменные примеров удобно передавать **per-show override'ом**: они наложатся поверх
-глобального хранилища и не помешают остальным титрам.
+The examples' variables are best passed as a **per-show override**: they are laid over
+the global store and do not get in the way of other titles.
 
 ```bash
 curl -X POST http://localhost:9090/api/titles/example-countdown/show \
   -H 'content-type: application/json' \
-  -d '{"data":{"countdown":{"title":"До эфира","target":"2027-01-01T00:00:00+03:00"}}}'
+  -d '{"data":{"countdown":{"title":"On air in","target":"2027-01-01T00:00:00+03:00"}}}'
 ```
 
-У каждого примера все переменные необязательные — без них он показывает осмысленное
-демо (обратный отсчёт от +10 минут, Москва, ясно и т.п.). Поэтому примеры можно
-проверять до того, как заведёте данные.
+Every variable of every example is optional — without them it shows a meaningful demo (a
+countdown from +10 minutes, Moscow, clear sky and so on). So the examples can be tried
+before you set any data up.
 
-Часы и погоду логичнее не прокручивать в цикле, а **держать** на экране: добавьте
-шаблон на out как размещение с `held: true` (в панели Control это тумблер «В эфире»).
+The clock and the weather are better **held** on screen than played for a set time: add
+the template to an out as a placement with `held: true` (in the Control panel that is the
+“On air” switch).
 
-Отдельно от примеров есть механизм **анимаций из файлов** (см. ниже) — его
-демонстрирует `graphics/animations/example-file-animation.html`.
+Separately from the examples there is the **animations from files** mechanism (see
+above) — `graphics/animations/example-file-animation.html` demonstrates it.
 
-#### `example-countdown` — обратный отсчёт
+#### `example-countdown` — countdown
 
-| Переменная          | По умолчанию  | Значение                                                          |
+| Variable            | Default       | Meaning                                                           |
 | ------------------- | ------------- | ----------------------------------------------------------------- |
-| `countdown.title`   | `До начала`   | подпись над цифрами                                               |
-| `countdown.target`  | now + 10 мин  | цель: ISO 8601 (`2027-01-01T00:00:00+03:00`) или Unix-время в мс   |
-| `countdown.from`    | момент показа | начало отсчёта для кольца (ISO 8601)                              |
-| `countdown.urgent`  | `10`          | за сколько секунд до нуля включать «панику»                       |
-| `countdown.accent`  | `#ff3b30`     | акцентный цвет                                                    |
+| `countdown.title`   | `Starts in`   | the caption above the digits                                      |
+| `countdown.target`  | now + 10 min  | the target: ISO 8601 (`2027-01-01T00:00:00+03:00`) or Unix time in ms |
+| `countdown.from`    | the moment it is shown | the start of the count, for the ring (ISO 8601)          |
+| `countdown.urgent`  | `10`          | how many seconds before zero the “panic” turns on                 |
+| `countdown.accent`  | `#ff3b30`     | accent colour                                                     |
 
-Что смотреть в коде: остаток всегда считается от `Date.now()`, поэтому отсчёт не
-уезжает и не накапливает дрейф; кольцо — это один `conic-gradient`, который плавно
-тянется CSS-переходом по `@property --p`, а JS лишь ставит число. Кольцо показывает,
-сколько времени **осталось** (в начале полное, к нулю пустеет). Смена цифры запускает
-CSS-анимацию «подброса» через класс.
+What to look at in the code: the remainder is always computed from `Date.now()`, so the
+count neither slips nor accumulates drift; the ring is a single `conic-gradient` eased by
+a CSS transition on `@property --p`, while the JS only sets a number. The ring shows how
+much time is **left** (full at the start, empty at zero). A changing digit triggers a CSS
+“toss” animation through a class.
 
-#### `example-clock` — часы по сетевому времени
+#### `example-clock` — network clock
 
-| Переменная          | По умолчанию      | Значение                                                     |
+| Variable            | Default           | Meaning                                                      |
 | ------------------- | ----------------- | ------------------------------------------------------------ |
-| `clock.title`       | город из зоны     | подпись (`Москва`)                                           |
-| `clock.timeZone`    | `Europe/Moscow`   | зона IANA                                                    |
-| `clock.api`         | встроенный список | свой URL источника; по умолчанию timeapi.io → worldtimeapi.org |
-| `clock.syncMinutes` | `15`              | период пересинхронизации                                     |
-| `clock.accent`      | `#ff3b30`         | акцентный цвет                                               |
+| `clock.title`       | the zone's city   | the caption (`Moscow`)                                       |
+| `clock.timeZone`    | `Europe/Moscow`   | IANA time zone                                               |
+| `clock.api`         | built-in list     | your own source URL; by default timeapi.io → worldtimeapi.org |
+| `clock.syncMinutes` | `15`              | resync period                                                |
+| `clock.accent`      | `#ff3b30`         | accent colour                                                |
 
-Что смотреть в коде: время берётся из сети, из ответа вычисляется **поправка** к
-локальным часам машины с OBS; дальше стрелки идут сами, потому что их крутит
-CSS-анимация с отрицательной задержкой (`animation-delay: calc(var(--sec) * -1s)`), а
-JS только один раз задаёт числа. Если ни один источник не ответил, часы переходят на
-локальное время и честно пишут об этом индикатором (жёлтый вместо зелёного) — картинка
-не пропадает.
+What to look at in the code: the time comes from the network, and a **correction** to the
+local clock of the OBS machine is computed from the response; from then on the hands move
+by themselves, because a CSS animation with a negative delay turns them
+(`animation-delay: calc(var(--sec) * -1s)`), and the JS sets the numbers only once. If no
+source answered, the clock falls back to local time and says so honestly with its
+indicator (yellow instead of green) — the picture does not disappear.
 
-#### `example-external-data` — данные из интернета (погода)
+#### `example-external-data` — data from the internet (weather)
 
-| Переменная               | По умолчанию      | Значение                                            |
+| Variable                 | Default           | Meaning                                             |
 | ------------------------ | ----------------- | --------------------------------------------------- |
-| `weather.city`           | `Москва`          | подпись                                             |
-| `weather.latitude`       | `55.7558`         | широта                                              |
-| `weather.longitude`      | `37.6173`         | долгота                                             |
-| `weather.units`          | `celsius`         | `celsius` или `fahrenheit`                          |
-| `weather.refreshMinutes` | `10`              | период обновления                                   |
-| `weather.api`            | open-meteo        | свой URL; поддерживает `{lat}`, `{lon}`, `{units}`  |
-| `weather.accent`         | `#38bdf8`         | акцентный цвет                                      |
+| `weather.city`           | `Moscow`          | the caption                                         |
+| `weather.latitude`       | `55.7558`         | latitude                                            |
+| `weather.longitude`      | `37.6173`         | longitude                                           |
+| `weather.units`          | `celsius`         | `celsius` or `fahrenheit`                           |
+| `weather.refreshMinutes` | `10`              | refresh period                                      |
+| `weather.api`            | open-meteo        | your own URL; supports `{lat}`, `{lon}`, `{units}`  |
+| `weather.accent`         | `#ff3b30`         | accent colour                                       |
 
-Что смотреть в коде: три состояния карточки — скелетон загрузки, данные и «связь
-потеряна». Последнее важнее всего: при ошибке сети на экране остаются последние
-известные значения, карточка гаснет и подписывается «нет связи», а не исчезает.
-Иконка погоды — инлайн-SVG, анимация (лучи, капли, покачивание) — на CSS.
+What to look at in the code: the card's three states — a loading skeleton, data, and
+“connection lost”. The last one matters most: on a network error the last known values
+stay on screen, the card dims and is labelled “offline” instead of disappearing. The
+weather icon is inline SVG; the animation (rays, drops, a gentle float) is CSS.
 
-### Данные из интернета
+### Data from the internet
 
-Анимация живёт в sandboxed iframe, но `fetch` из неё работает. Правила, чтобы это не
-ломало эфир:
+An animation lives in a sandboxed iframe, but `fetch` works from it. The rules that keep
+it from breaking what is on air:
 
-- **Источник должен отдавать CORS** (`Access-Control-Allow-Origin`), иначе браузер
-  заблокирует ответ. Все примеры используют открытые API без ключей: timeapi.io,
-  worldtimeapi.org, open-meteo.
-- **Ставьте таймаут** (`AbortController`) — иначе зависший запрос держит индикатор
-  загрузки сколько угодно.
-- **Никогда не гасите графику из-за сети.** Держите последнее удачное значение и
-  показывайте его как устаревшее. Пустой экран в эфире хуже, чем вчерашняя погода.
-- **Не опрашивайте чаще, чем нужно.** Погода — раз в 10 минут, время — раз в 15;
-  часы между синхронизациями должны тикать локально.
-- **Локальные ключи и токены** в код анимации не кладите: файл анимации виден всем, у
-  кого есть доступ к дашборду. Если API требует секрет — забирайте данные на сервере
-  (модуль расширения пишет в переменные), а анимация пусть читает их через `vars()`.
-- Если источник отдаёт структуру, не совпадающую с ожидаемой, бросайте ошибку и
-  уходите в фолбэк — так сломанный ответ не превратится в `NaN` на экране.
+- **The source must send CORS** (`Access-Control-Allow-Origin`), or the browser will block
+  the response. All the examples use open APIs without keys: timeapi.io, worldtimeapi.org,
+  open-meteo.
+- **Set a timeout** (`AbortController`) — otherwise a hung request keeps the loading
+  indicator up for as long as it likes.
+- **Never blank the graphics because of the network.** Keep the last good value and show
+  it as stale. An empty screen on air is worse than yesterday's weather.
+- **Do not poll more often than needed.** Weather every 10 minutes, time every 15; between
+  syncs the clock should tick locally.
+- **Do not put keys or tokens** into an animation's code: the animation file is visible to
+  everyone with access to the dashboard. If an API needs a secret, fetch the data on the
+  server (an extension module writes it into the variables) and let the animation read it
+  through `vars()`.
+- If a source returns a structure other than the expected one, throw an error and fall
+  back — that way a broken response does not turn into `NaN` on screen.
 
-### Генерация титров с помощью ИИ
+### Generating titles with AI
 
-В корне репозитория лежат два готовых промпта: [`GENERATE_TITLES.md`](../../GENERATE_TITLES.md)
-(English) и [`GENERATE_TITLES_RU.md`](../../GENERATE_TITLES_RU.md) (русский). Это не
-документация, а **промпт целиком**: скопируйте файл в чат с любой LLM, которая умеет
-отдавать код, заполните блок «INPUTS»/«ВВОДНЫЕ» в конце — и получите `html` / `css` /
-`js`, готовые для шаблона `kind: "code"`.
+The repository root holds two ready prompts: [`GENERATE_TITLES.md`](../../GENERATE_TITLES.md)
+(English) and [`GENERATE_TITLES_RU.md`](../../GENERATE_TITLES_RU.md) (Russian). They are
+not documentation but a **whole prompt**: paste the file into a chat with any LLM that
+can produce code, fill in the “INPUTS” block at the end, and you get `html` / `css` /
+`js` ready for a `kind: "code"` template.
 
-Промпт описывает контракт рантайма, поэтому модель не изобретает своё:
+The prompt describes the runtime contract, so the model does not invent its own:
 
-- `code.html` — фрагмент разметки внутри `body`, без собственных `<html>`/`<head>`;
-- фон прозрачный, подложки и тени — только у конкретных плашек;
-- `{{...}}` — только в HTML/CSS и только один раз при загрузке; живая логика в JS —
-  через `vars()` / `onData()` / `data` / `[data-bind]`;
-- вёрстка в процентах от дизайнерского бокса, без фиксированных `px`;
-- никакой сети, форм и `localStorage`;
-- вход и выход титра делает система (`inTransition`/`outTransition`) — внутри iframe
-  анимируются только отдельные элементы;
-- брендовые значения выносятся в CSS-переменные вверху `code.css`;
-- в ответе — три блока кода и легенда переменных, чтобы их сразу завести в Control.
+- `code.html` is a fragment of markup inside `body`, with no `<html>`/`<head>` of its own;
+- the background is transparent; backings and shadows belong to specific plates only;
+- `{{...}}` only in HTML/CSS and only once, on load; live logic in JS goes through
+  `vars()` / `onData()` / `data` / `[data-bind]`;
+- layout in percent of the design box, without fixed `px`;
+- no network, forms or `localStorage`;
+- the title animates its own entrance and exit through `onShow` / `onHide` — the phase
+  contract described in [“Transitions”](#transitions-entrance-and-exit);
+- brand values go into CSS variables at the top of `code.css`;
+- the answer contains three code blocks and a legend of variables, ready to be created in
+  Control.
 
-Куда вставлять результат: панель **Editor** → **+ Код** → поля HTML / CSS / JavaScript.
-Если удобнее держать анимацию файлом — соберите три части в один `.html` в
-`graphics/animations/` (см. [«Анимации из файлов»](#анимации-из-файлов-без-веб-редактора)).
-Как образец модели полезно дать один из встроенных примеров: `example-countdown`,
-`example-clock`, `example-external-data` или `code-sample` (бегущая строка).
+Where to paste the result: the **Editor** panel → **New animation** → **From code** → the
+HTML / CSS / JavaScript tabs of the dock. If you would rather keep the animation as a
+file, put the three parts into one `.html` in `graphics/animations/` (see
+[“Animations from files”](#animations-from-files-without-the-web-editor)). As a sample
+for the model it helps to give one of the built-in examples: `example-countdown`,
+`example-clock`, `example-external-data` or `code-sample` (the ticker).
 
 ---
 
-## Alpha-видео в оверлеях
+## Alpha video in overlays
 
-**`.mov` с alpha (ProRes 4444, HEVC+alpha, Animation) в Browser Source не играет
-вообще** — Chromium не умеет ни ProRes, ни alpha в H.264, поэтому такой файл не
-запустится независимо от размера. Нужна конвертация.
+**A `.mov` with alpha (ProRes 4444, HEVC+alpha, Animation) does not play in a Browser
+Source at all** — Chromium handles neither ProRes nor alpha in H.264, so such a file will
+not start whatever its size. It has to be converted.
 
-Проверено отрисовкой в Chromium (тот же движок, что в OBS Browser Source):
+Verified by rendering in Chromium (the same engine as the OBS Browser Source):
 
-| Формат | Alpha | Куда ставить |
+| Format | Alpha | Where to put it |
 | --- | --- | --- |
-| animated **WebP** | работает | слой `gif` или `image` (это просто `<img>`) |
-| **WebM VP9** + alpha | работает | слой `video` |
-| **WebM VP8** + alpha | работает | слой `video` |
-| ProRes 4444 `.mov` | **не декодируется** | — |
+| animated **WebP** | works | a `gif` or `image` layer (it is just an `<img>`) |
+| **WebM VP9** + alpha | works | a `video` layer |
+| **WebM VP8** + alpha | works | a `video` layer |
+| ProRes 4444 `.mov` | **not decoded** | — |
 
-### Перетаскивание прямо в редакторе
+### Drag and drop right in the editor
 
-В панели **Editor**, в секции слоя **«ВИДЕО»**, файл можно просто перетащить
-(или выбрать кликом):
+In the **Editor** panel, in the **“Video”** section of a video layer, a file can simply
+be dropped (or picked with a click):
 
-- `.webm`, `.webp`, `.gif`, `.png`, `.apng`, `.jpg`, `.svg` — публикуются **как есть**;
-- всё остальное (`.mov`, `.mp4`, `.mkv`, `.avi`, ProRes/HEVC с alpha) — сервер сам
-  конвертирует, показывая **два прогресс-бара**: «Загрузка» (реальный прогресс отправки)
-  и «Конвертация» (реальный прогресс ffmpeg). По завершении `src` слоя подставляется
-  автоматически, остаётся нажать «Сохранить».
+- `.webm`, `.webp`, `.gif`, `.png`, `.apng`, `.jpg`, `.svg` are published **as they are**;
+- everything else (`.mov`, `.mp4`, `.mkv`, `.avi`, ProRes/HEVC with alpha) is converted by
+  the server, with **two progress bars**: “Uploading” (the real upload progress) and
+  “Converting” (the real ffmpeg progress). When it finishes, the layer's `src` is set
+  automatically and all that is left is to press “Save”.
 
-Результат складывается в **`<runtimeRoot>/assets/notGT/media/`** и отдаётся как
-`/assets/notGT/media/<файл>`. В Docker это том `assets`, то есть загруженное
-**переживает пересборку контейнера** (в отличие от `graphics/media/`, который попадает
-в образ). Каталог переопределяется ключом `mediaDir` в конфиге бандла. Ограничение
-загрузки — 2 ГБ.
+The result goes to **`<runtimeRoot>/assets/notGT/media/`** and is served as
+`/assets/notGT/media/<file>`. In Docker that is the `assets` volume, so what you upload
+**survives a container rebuild** (unlike `graphics/media/`, which ends up in the image).
+The directory can be overridden with the `mediaDir` key in the bundle config. The upload
+limit is 2 GB.
 
-Рядом со зоной drop есть список «уже загружено» (из `GET /bundles/notGT/media/list`),
-чтобы переиспользовать файл или удалить его. Картинки в этом списке помечаются
-«картинка» и **не подставляются** в видео-слой: `<video>` их не проиграет. Такую картинку
-надо класть в слой **`Картинка`** или **`GIF`** — там рендерится `<img>`, который
-animated WebP играет.
+Next to the drop zone is the “Uploaded files” list (from
+`GET /bundles/notGT/media/list`), to reuse a file or delete it. Images in that list are
+tagged “image” and are **not put** into a video layer: a `<video>` cannot play them. Such
+an image belongs in an **`Image`** or **`GIF`** layer — an `<img>` is rendered there, and
+it plays animated WebP.
 
-Короткие клипы конвертер переводит в WebP (легче), а в видео-слой — в WebM
-(единственный видеоформат с alpha, который играет Chromium). Поэтому один и тот же
-`.mov` в видео-слое и в слое-картинке даст разные файлы, и это нормально.
+The converter turns short clips into WebP (lighter), but for a video layer into WebM (the
+only video format with alpha that Chromium plays). So the same `.mov` gives different
+files in a video layer and in an image layer, and that is fine.
 
-**Нужен ffmpeg на сервере.** Dockerfile его ставит (`--build-arg INSTALL_FFMPEG=false`,
-если не нужен). Без ffmpeg загрузка готовых `.webm`/`.webp` продолжает работать, а
-попытка конвертации вернёт понятную ошибку с подсказкой.
+**ffmpeg is needed on the server.** The Dockerfile installs it
+(`--build-arg INSTALL_FFMPEG=false` if you do not need it). Without ffmpeg, uploading
+ready `.webm`/`.webp` files keeps working, and an attempt to convert returns a clear error
+with a hint.
 
-Эндпоинты (защищены сессией NodeCG, токен API им не нужен):
+Endpoints (protected by the NodeCG session; they need no API token):
 
-| Метод | Путь | Назначение |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/bundles/notGT/media/upload?name=<имя>&kind=video` | тело — сырые байты файла; ответ `{jobId}`. `kind=video` (так делает зона в редакторе) заставляет конвертер выдать **WebM**: `<video>` не умеет играть WebP, поэтому короткий клип, который в режиме `auto` стал бы WebP, для видео-слоя кодируется в WebM |
-| `GET` | `/bundles/notGT/media/jobs/:id` | состояние и прогресс задачи |
-| `GET` | `/bundles/notGT/media/list` | уже загруженные файлы |
-| `DELETE` | `/bundles/notGT/media/file/:name` | удалить файл |
+| `POST` | `/bundles/notGT/media/upload?name=<name>&kind=video` | the body is the raw bytes of the file; the response is `{jobId}`. `kind=video` (what the editor's drop zone sends) makes the converter produce **WebM**: a `<video>` cannot play WebP, so a short clip that would become WebP in `auto` mode is encoded to WebM for a video layer |
+| `GET` | `/bundles/notGT/media/jobs/:id` | state and progress of a job |
+| `GET` | `/bundles/notGT/media/list` | the files already uploaded |
+| `DELETE` | `/bundles/notGT/media/file/:name` | delete a file |
 
-### Конвертер
+### The converter
 
 ```bash
 cd bundles/notGT
 
-# короткий луп (<= 10 c) -> animated WebP, с автообрезкой содержимого
+# a short loop (<= 10 s) -> animated WebP, cropped to its content automatically
 node scripts/convert-alpha.mjs ~/overlay.mov
 
-# длиннее -> WebM VP9
+# longer -> WebM VP9
 node scripts/convert-alpha.mjs ~/overlay.mov --format webm
 
-# уменьшить и поджать
+# scale down and compress harder
 node scripts/convert-alpha.mjs ~/overlay.mov --format webm --max-width 960 --crf 34
 
-# посмотреть команды, ничего не запуская
+# print the commands without running anything
 node scripts/convert-alpha.mjs ~/overlay.mov --dry-run
 ```
 
-Что делает: читает параметры через `ffprobe`, проверяет наличие alpha, ищет реальный
-бокс содержимого (`cropdetect`) и обрезает по нему, при необходимости масштабирует и
-пересчитывает fps, выбирает формат по длительности (`--threshold`, по умолчанию 10 c),
-а потом печатает выигрыш по размеру и готовый `src` для слоя. Результат попадает в
-`graphics/media/` и отдаётся как `/bundles/notGT/graphics/media/<файл>`.
+What it does: reads the parameters with `ffprobe`, checks for alpha, finds the real box
+of the content (`cropdetect`) and crops to it, scales and resamples the fps if asked,
+picks the format by duration (`--threshold`, 10 s by default), then prints the size saved
+and a ready `src` for the layer. The result goes to `graphics/media/` and is served as
+`/bundles/notGT/graphics/media/<file>`.
 
-Ключевые опции: `--format auto|webp|webm|webm-vp8`, `--out <dir>`, `--quality` (WebP),
+Key options: `--format auto|webp|webm|webm-vp8`, `--out <dir>`, `--quality` (WebP),
 `--crf` (VP8/VP9), `--bitrate` (VP8), `--fps`, `--scale w:h`, `--max-width`,
 `--crop w:h:x:y`, `--no-crop`, `--dry-run`.
 
-### Если хочется своими руками
+### If you want to do it by hand
 
 ```bash
-# animated WebP (короткие лупы)
+# animated WebP (short loops)
 ffmpeg -i in.mov -c:v libwebp_anim -pix_fmt yuva420p -q:v 80 -loop 0 -an out.webp
 
-# WebM VP9 (длиннее). -auto-alt-ref 0 обязателен: без него libvpx
-# вообще отказывается кодировать прозрачность
+# WebM VP9 (longer). -auto-alt-ref 0 is required: without it libvpx
+# refuses to encode transparency at all
 ffmpeg -i in.mov -c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 \
   -b:v 0 -crf 30 -row-mt 1 -cpu-used 2 -an out.webm
 
-# автообрезка по содержимому — самый крупный выигрыш
+# cropping to the content automatically is the biggest saving
 CROP=$(ffmpeg -i in.mov -vf cropdetect=limit=0.1:round=2 -frames:v 90 -f null - 2>&1 \
        | grep -o 'crop=[0-9:]*' | tail -1)
 ```
 
-### Грабля с проверкой alpha
+### A trap when checking alpha
 
-**Не проверяйте прозрачность WebM через `ffprobe`/`ffmpeg`.** В WebM alpha лежит
-отдельным auxiliary-планом, и ffmpeg-декод его не показывает — файл выглядит
-непрозрачным, хотя Chromium/OBS проигрывают его с alpha корректно. Проверять нужно
-в OBS (или в Chromium). Для WebP такой проблемы нет, и конвертер сам проверяет alpha.
+**Do not check a WebM's transparency with `ffprobe`/`ffmpeg`.** In WebM the alpha is a
+separate auxiliary plane and ffmpeg's decoder does not show it — the file looks opaque
+although Chromium/OBS play it with alpha correctly. Check it in OBS (or in Chromium).
+WebP has no such problem, and the converter checks its alpha itself.
 
 ---
 
-## Траблшутинг
+## Troubleshooting
 
-**`401 {"error":"unauthorized"}`.** Задан `apiToken`, а запрос идёт без него. Добавьте
-`Authorization: Bearer <token>`, `X-API-Token: <token>` или `?token=<token>`. Проверьте,
-что в конфиге нет лишних пробелов в токене.
+**`401 {"error":"unauthorized"}`.** `apiToken` is set and the request comes without it.
+Add `Authorization: Bearer <token>`, `X-API-Token: <token>` or `?token=<token>`. Check
+that the token in the config has no stray spaces.
 
-**В логе предупреждение, что API открыт.** `apiToken` пустой. Задайте токен в
-`bundles/notGT/cfg/notGT.json` и перезапустите NodeCG — либо закройте API Basic
-Auth'ом на уровне Traefik (см. `docker-compose.yml`).
+**A warning in the log that the API is open.** `apiToken` is empty. Set a token in
+`bundles/notGT/cfg/notGT.json` and restart NodeCG — or close the API with Basic Auth at
+the Traefik level (see `docker-compose.yml`).
 
-**На графике пусто.** Проверьте по порядку: out существует (панель «Titles & Outs») →
-URL содержит правильный `?out=` → у размещения `enabled: true` → анимация реально
-показывается или играет (в `GET /api/state` это `activeVisible` / `playing`).
-Включите `&debug=1`.
+**The graphics are empty.** Check in order: the out exists (the “Titles & Outs” panel) →
+the URL has the right `?out=` → the placement has `enabled: true` → the animation is
+actually shown or playing (in `GET /api/state` that is `activeVisible` / `playing`). Turn
+on `&debug=1`.
 
-**В консоли страницы `No out matching "…"`.** В URL `?out=` указан id, которого нет.
-Создайте out с таким id или поправьте URL.
+**`No out matching "…"` in the page console.** The `?out=` in the URL names an id that
+does not exist. Create an out with that id or fix the URL.
 
-**Данные не появляются на графике.** Не перезагружайте Browser Source: значения приходят
-через Replicant'ы. Убедитесь, что путь в `{{...}}`/`binding`/`data-bind` совпадает с
-ключом в `GET /api/data` (регистр и вложенность важны).
+**Data does not appear on the graphics.** Do not reload the Browser Source: values arrive
+through Replicants. Make sure the path in `{{...}}`/`binding`/`data-bind` matches the key
+in `GET /api/data` (case and nesting matter).
 
-**Правка конфига не применилась.** Конфиг читается при старте — перезапустите NodeCG
+**A config edit did not apply.** The config is read on start — restart NodeCG
 (`docker compose restart notgt`).
 
-**Companion не подсвечивает кнопку.** Проверьте, что feedback опрашивает `/api/state`
-(а не `/api/health`), что указан `X-API-Token` и что JSON path написан точно как в
-таблице выше (`activeVisible`, а не `active.visible`). Убедитесь, что между Companion и
-сервером нет Basic Auth, который возвращает `401`.
+**Companion does not light the button.** Check that the feedback polls `/api/state` (not
+`/api/health`), that `X-API-Token` is given, and that the JSON path is written exactly as
+in the table above (`activeVisible`, not `active.visible`). Make sure there is no Basic
+Auth between Companion and the server answering `401`.
 
-**Не сохранилось после пересоздания контейнера.** Проверьте, что в `docker-compose.yml`
-на месте volumes для `/opt/nodecg/db` и `/opt/nodecg/assets`. Без них каждый новый
-контейнер стартует с чистого состояния.
+**Nothing was kept after the container was recreated.** Check that the volumes for
+`/opt/nodecg/db` and `/opt/nodecg/assets` are in place in `docker-compose.yml`. Without
+them every new container starts from a clean state.
 
-**Логи.** Панель NodeCG или консоль процесса; в Docker —
+**Logs.** The NodeCG panel or the process console; in Docker —
 
 ```bash
 docker compose logs -f notgt
 ```
 
-Либо файлы в `logs/` (в Docker — том `notgt-logs`).
+Or the files in `logs/` (in Docker, the `notgt-logs` volume).
 
 ---
 
-## Проверка (smoke-тесты)
+## Verification (smoke tests)
 
-В бандле есть два headless-теста на Puppeteer, которые проверяют критерии приёмки
-без OBS. NodeCG должен быть уже запущен на `127.0.0.1:9090` (адрес переопределяется
-через `NOTGT_BASE`, путь к Chromium — через `CHROME_PATH`).
+The bundle has headless Puppeteer tests that check the acceptance criteria without OBS.
+NodeCG must already be running on `127.0.0.1:9090` (the address is overridden with
+`NOTGT_BASE`, the path to Chromium with `CHROME_PATH`).
 
 ```bash
 cd bundles/notGT
 npm run test:e2e
 ```
 
-Что проверяет `scripts/e2e-out.mjs` (графика):
+What `scripts/e2e-out.mjs` checks (graphics):
 
-- фон страницы полностью прозрачный (`rgba(0, 0, 0, 0)`),
-- `POST /api/titles/<id>/show` выводит титр **менее чем за 500 мс**,
-- текст слоя соответствует значению переменной, включая подстановку `{{...}}`,
-- `POST /api/data` меняет текст на экране **без перезагрузки страницы** — JS-контекст
-  и сам DOM-узел сохраняются (проверка «без мигания»),
-- code-анимация рендерится в своём sandbox-iframe и видит `vars()`/`data`,
-- loop-размещение стоит в эфире, пока включён тумблер «В эфире» (и не гаснет само),
-  а выключение тумблера и удаление размещения снимают его с эфира.
+- the page background is fully transparent (`rgba(0, 0, 0, 0)`),
+- `POST /api/titles/<id>/show` puts a title up **in under 500 ms**,
+- a layer's text matches the variable's value, `{{...}}` substitution included,
+- `POST /api/data` changes the text on screen **without reloading the page** — the JS
+  context and the DOM node itself are preserved (the “no flicker” check),
+- a code animation renders in its own sandbox iframe and sees `vars()`/`data`,
+- a `loop` placement stays on air while the “On air” switch is on (and does not go out by
+  itself), and turning the switch off or deleting the placement takes it off air.
 
-Что проверяет `scripts/e2e-panels.mjs` (дашборд): все три панели монтируются в
-standalone-режиме, не дают ошибок в консоли, а в редакторе присутствует Konva-canvas.
+What `scripts/e2e-panels.mjs` checks (dashboard): all three panels mount in standalone
+mode in English and in Russian with no console errors; the editor has its Konva canvas;
+moving, resizing and cropping a placement snap to the right lines; and the “On air” switch
+puts a placement on air and keeps it there.
 
-Скриншоты складываются в `bundles/notGT/.e2e/` (каталог в `.gitignore`).
+Screenshots are saved to `bundles/notGT/.e2e/` (the directory is in `.gitignore`).

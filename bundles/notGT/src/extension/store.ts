@@ -10,7 +10,13 @@ import {
 	createDefaultOut,
 	outUrl,
 } from "../shared/defaults";
-import { missingLibrary, seedLanguage, seedLibrary, seedVariables } from "../shared/seed";
+import {
+	missingLibrary,
+	redrawnExamples,
+	seedLanguage,
+	seedLibrary,
+	seedVariables,
+} from "../shared/seed";
 import {
 	BUNDLE_NAME,
 	type ActiveTitleState,
@@ -411,17 +417,29 @@ export function createStore(nodecg: ServerAPI): Store {
 		meta.value = { initialized: true, schemaVersion: SCHEMA_VERSION };
 		log.info("Seeded the example library (%s), an out and sample data", lang);
 	} else if ((meta.value.schemaVersion ?? 1) < SCHEMA_VERSION) {
-		// The library an installation starts with has grown twice: v2 turned
-		// the file examples into code templates, v3 made the whole examples
-		// gallery part of it. Add what this installation is missing, with
-		// sample values for the variables it does not have. An example the
-		// operator deleted on purpose is not resurrected, because each
-		// migration only runs once.
+		// The library an installation starts with has grown: v2 turned the
+		// file examples into code templates, v3 made the whole examples
+		// gallery part of it, v4 redrew the older code examples. Add what this
+		// installation is missing, with sample values for the variables it
+		// does not have, and bring the examples nobody edited up to date. An
+		// example the operator deleted on purpose is not resurrected, and one
+		// they changed is left alone.
+		const redrawn = redrawnExamples(listTemplates(), lang);
+		if (redrawn.length > 0) {
+			// Written as they are, not through `upsertTemplate`: that would move
+			// `updatedAt` and mark them as edited by the operator.
+			const byId = new Map(redrawn.map((template) => [template.id, template]));
+			templates.value = listTemplates().map((template) => byId.get(template.id) ?? template);
+		}
 		const added = missingLibrary(listTemplates(), lang);
 		for (const template of added) upsertTemplate(template);
 		titleData.value = seedVariables(lang, readData());
 		meta.value = { ...meta.value, schemaVersion: SCHEMA_VERSION };
-		log.info("Added %d example animation(s) to the library", added.length);
+		log.info(
+			"Library updated: %d example(s) added, %d redrawn",
+			added.length,
+			redrawn.length,
+		);
 	}
 
 	return {

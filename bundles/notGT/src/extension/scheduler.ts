@@ -52,8 +52,12 @@ export class Scheduler {
 			}
 		}
 
-		for (const key of [...this.timers.keys()]) {
-			if (!desired.has(key)) this.stop(key);
+		for (const [key, entry] of [...this.timers.entries()]) {
+			// Only what was held and no longer is gets taken off here. A one-shot
+			// in flight has its own timer and ends by itself: an unrelated edit
+			// to the outs — another title switched on, a placement dragged —
+			// must not cut it short.
+			if (!desired.has(key) && !entry.hold) this.stop(key);
 		}
 	}
 

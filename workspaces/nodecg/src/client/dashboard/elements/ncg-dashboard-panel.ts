@@ -140,6 +140,12 @@ export class NcgDashboardPanel extends Polymer.PolymerElement {
 				@apply --layout-vertical;
 			}
 
+			/* notGT fork: a fullbleed panel owns the whole viewport, so the
+			   NodeCG panel chrome (title bar, drag/open buttons) is hidden. */
+			:host([fullbleed]) #header {
+				display: none;
+			}
+
 			/* When fullbleed, buttons are always visible */
 			:host([fullbleed]) #buttons {
 				transform: translateX(0%);

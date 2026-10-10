@@ -40,6 +40,30 @@ export function missingLibrary(existing: TitleTemplate[], lang: ExampleLang): Ti
 	return seedLibrary(lang).filter((template) => !ids.has(template.id));
 }
 
+/**
+ * Built-in code examples whose look was redrawn after they first shipped. They
+ * are full-frame, so swapping their code leaves every placement where it is.
+ */
+const REDRAWN = ["code-sample", "example-countdown", "example-clock", "example-external-data"];
+
+/**
+ * The redrawn examples of an existing library that the operator never edited
+ * (`createdAt === updatedAt`: every save from the dashboard or the API moves
+ * `updatedAt`), with their current code. Name, playback and timestamps are
+ * kept, and so is the language the example was seeded in.
+ */
+export function redrawnExamples(existing: TitleTemplate[], lang: ExampleLang): TitleTemplate[] {
+	const fresh = (id: string, language: ExampleLang) =>
+		GALLERY.find((example) => example.id === id)?.template(language).code;
+	return existing
+		.filter((template) => REDRAWN.includes(template.id) && template.createdAt === template.updatedAt)
+		.flatMap((template) => {
+			const seededIn: ExampleLang = /[а-яё]/i.test(template.code?.html ?? "") ? "ru" : lang;
+			const code = fresh(template.id, seededIn);
+			return code ? [{ ...template, code }] : [];
+		});
+}
+
 /** Read by the file animation that ships in `graphics/animations/`. */
 function sponsor(lang: ExampleLang): TitleData {
 	return {

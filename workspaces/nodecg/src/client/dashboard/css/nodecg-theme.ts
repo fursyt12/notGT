@@ -7,8 +7,11 @@ $documentContainer.innerHTML = `<dom-module id="nodecg-theme">
 			html {
 				color: white;
 
-				--nodecg-brand-blue: #00bebe;
-				--nodecg-brand-blue-dark: #004949;
+				/* notGT fork: the teal NodeCG brand is replaced by the notGT
+				   accent so the few remaining core surfaces (dialogs, core
+				   pages reached by hash) match bundles/notGT/dashboard/ui.css. */
+				--nodecg-brand-blue: #4aa8ff;
+				--nodecg-brand-blue-dark: #1f6feb;
 				--default-primary-color: var(--nodecg-brand-blue);
 				--primary-color: var(--nodecg-brand-blue);
 

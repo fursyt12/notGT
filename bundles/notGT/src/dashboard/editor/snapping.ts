@@ -101,6 +101,60 @@ export function snapCoordinate(
 }
 
 /**
+ * Snaps the scale of a box that is resized from its top-left corner with its
+ * proportions kept — a placement under the size handle.
+ *
+ * Such a resize has one degree of freedom, so a line on either axis decides
+ * the scale for both: the box's far edge or its centre lands on the line, and
+ * the other axis follows. The line that is closest on screen wins, the centre
+ * first on a tie, the same as when a box is moved.
+ */
+export function snapScale(
+	scale: number,
+	/** The corner that stays put, in stage px. */
+	origin: { x: number; y: number },
+	/** Size of the box at scale 1, in stage px. */
+	unit: { width: number; height: number },
+	linesX: SnapLine[],
+	linesY: SnapLine[],
+	threshold: number,
+): { scale: number; guidesX: number[]; guidesY: number[] } {
+	const none = { scale, guidesX: [], guidesY: [] };
+	if (threshold <= 0 || unit.width <= 0 || unit.height <= 0) return none;
+
+	const found: Array<{ scale: number; distance: number }> = [];
+	const consider = (lines: SnapLine[], start: number, size: number, part: number) => {
+		for (const line of lines) {
+			const distance = Math.abs(line.at - (start + size * scale * part));
+			if (distance > threshold) continue;
+			const candidate = (line.at - start) / (size * part);
+			if (candidate > 0) found.push({ scale: candidate, distance });
+		}
+	};
+	// `part` is how far along the box the point sits: 0.5 its centre, 1 its far edge.
+	consider(linesX, origin.x, unit.width, 0.5);
+	consider(linesY, origin.y, unit.height, 0.5);
+	consider(linesX, origin.x, unit.width, 1);
+	consider(linesY, origin.y, unit.height, 1);
+	if (found.length === 0) return none;
+
+	const snapped = found.reduce((best, next) => (next.distance < best.distance ? next : best)).scale;
+	// Every line the snapped box now sits on gets a guide, whichever axis decided.
+	const touched = (lines: SnapLine[], start: number, size: number) => [
+		...new Set(
+			lines
+				.map((line) => line.at)
+				.filter((at) => [0.5, 1].some((part) => Math.abs(start + size * snapped * part - at) < 0.5)),
+		),
+	];
+	return {
+		scale: snapped,
+		guidesX: touched(linesX, origin.x, unit.width),
+		guidesY: touched(linesY, origin.y, unit.height),
+	};
+}
+
+/**
  * Lines every placement can stick to: the out's edges, its centre, the 5 %
  * broadcast safe area, and the edges and centres of the *other* animations on
  * the same out (so two titles can be lined up against each other).

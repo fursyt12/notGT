@@ -476,6 +476,38 @@ async function main() {
 					`x ${snapped?.x} (want ${wanted.toFixed(2)}), y ${snapped?.y}`,
 				);
 
+				// --- the size handle sticks to the same lines ------------------------
+				// A resize has one degree of freedom, so dragging the corner until
+				// the window's right edge is a few px past the middle of the out has
+				// to land the scale exactly on (960 - left) / width, not on wherever
+				// the pointer happened to stop.
+				const sized = await readItem();
+				const sizedWindow = await windowOnPage();
+				const leftOut = (sized.x / 100) * 1920 + crop.x * sized.scale;
+				const wantedScale = (960 - leftOut) / crop.width;
+				await page.mouse.move(sizedWindow.right - 6, sizedWindow.bottom - 6);
+				await page.mouse.down();
+				await page.mouse.move(
+					stage.x + ((960 + 4) / 1920) * stage.w,
+					sizedWindow.bottom - 6,
+					{ steps: 12 },
+				);
+				await page.mouse.up();
+				await sleep(500);
+				const resized = await readItem();
+				check(
+					"editor.html: the size handle snaps the window's edge to the out's centre",
+					Math.abs((resized?.scale ?? 0) - wantedScale) < 0.0006,
+					`scale ${resized?.scale} (want ${wantedScale.toFixed(4)}, was ${sized.scale})`,
+				);
+				// Back to the placement the crop checks below were written for.
+				await fetch(`${BASE}/api/outs/${fixtureOut}/items/${itemId}`, {
+					method: "PATCH",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ x: sized.x, y: sized.y, scale: sized.scale }),
+				});
+				await sleep(500);
+
 				// --- the crop tool -------------------------------------------------
 				await page.click("button[data-crop-toggle]");
 				await sleep(200);

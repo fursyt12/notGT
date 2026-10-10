@@ -2866,6 +2866,9 @@ export function EditorApp() {
 							activeItemId={activeItemId}
 							selectedLayerId={selectedLayerId}
 							cropMode={cropMode}
+							liveIds={playingIds}
+							unsaved={dirty}
+							liveDraft={!activeItem && onAir}
 							previewPlaying={previewPlaying}
 							restartToken={restartToken}
 							data={data}

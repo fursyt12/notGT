@@ -60,10 +60,10 @@ export const clockExample: ExampleCode = {
 :root {
 	--accent: #ff3b30;
 	--ink: #ffffff;
-	--muted: #8fd3ff;
+	--muted: #aab6c4;
 	--ok: #38d39f;
 	--warn: #ffb020;
-	--plate: rgba(8, 20, 28, 0.9);
+	--plate: linear-gradient(180deg, rgba(24, 33, 45, 0.97), rgba(10, 14, 20, 0.97));
 }
 
 html,
@@ -82,13 +82,23 @@ body {
 	display: flex;
 	align-items: center;
 	gap: 30px;
-	padding: 26px 38px 26px 26px;
-	border-radius: 22px;
+	padding: 26px 56px 26px 40px;
 	background: var(--plate);
-	box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
 	font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
 	color: var(--ink);
 	animation: clock-in 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+	clip-path: polygon(0 0, calc(100% - 34px) 0, 100% 34px, 100% 100%, 0 100%);
+}
+
+/* The same red edge and slanted cut the rest of the package has. */
+.clock::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 10px;
+	background: var(--accent);
 }
 
 @keyframes clock-in {
@@ -109,10 +119,8 @@ body {
 	width: 190px;
 	height: 190px;
 	border-radius: 50%;
-	background: radial-gradient(circle at 50% 35%, #16283a 0%, #08141c 70%);
-	box-shadow:
-		inset 0 0 0 2px rgba(255, 255, 255, 0.08),
-		0 0 30px rgba(143, 211, 255, 0.08);
+	background: radial-gradient(circle at 50% 35%, #223041 0%, #0b1017 72%);
+	box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
 }
 
 /* Часовые риски — repeating-conic-gradient, без картинок и SVG. */
@@ -203,7 +211,7 @@ body {
 	margin: -7px 0 0 -7px;
 	border-radius: 50%;
 	background: var(--accent);
-	box-shadow: 0 0 0 4px rgba(8, 20, 28, 0.9);
+	box-shadow: 0 0 0 4px #0b1017;
 	z-index: 3;
 }
 
@@ -218,7 +226,7 @@ body {
 
 .readout__title {
 	font-size: 30px;
-	font-weight: 700;
+	font-weight: 800;
 	letter-spacing: 0.02em;
 }
 
@@ -270,10 +278,10 @@ body {
 	font-weight: 600;
 	letter-spacing: 0.06em;
 	text-transform: uppercase;
-	color: var(--warn);
+	color: var(--muted);
 }
 
-.readout__source.is-net {
+.readout__source.is-net .readout__dot {
 	color: var(--ok);
 }
 
@@ -283,6 +291,7 @@ body {
 	border-radius: 50%;
 	background: currentColor;
 	animation: dot 1.8s ease-in-out infinite;
+	color: var(--warn);
 }
 
 @keyframes dot {

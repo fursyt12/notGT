@@ -37,10 +37,9 @@
 				bottom: 9%;
 				display: flex;
 				align-items: stretch;
-				border-radius: 12px;
-				overflow: hidden;
 				font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
-				box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+				/* Срез на правом краю — общий мотив встроенных примеров. */
+				clip-path: polygon(0 0, 100% 0, calc(100% - 26px) 100%, 0 100%);
 				transform: translateX(120%);
 				opacity: 0;
 				transition:
@@ -56,13 +55,16 @@
 			.bug__label {
 				display: flex;
 				align-items: center;
-				padding: 16px 22px;
-				font-size: 26px;
+				position: relative;
+				z-index: 1;
+				padding: 16px 44px 16px 24px;
+				font-size: 24px;
 				font-weight: 800;
 				letter-spacing: 0.14em;
 				text-transform: uppercase;
 				color: #ffffff;
 				background: var(--accent, #ff3b30);
+				clip-path: polygon(0 0, 100% 0, calc(100% - 22px) 100%, 0 100%);
 			}
 
 			.bug__body {
@@ -70,13 +72,14 @@
 				flex-direction: column;
 				justify-content: center;
 				gap: 2px;
-				padding: 14px 30px 14px 24px;
-				background: rgba(8, 20, 28, 0.94);
+				margin-left: -22px;
+				padding: 14px 52px 14px 44px;
+				background: linear-gradient(180deg, rgba(24, 33, 45, 0.97), rgba(10, 14, 20, 0.97));
 			}
 
 			.bug__name {
 				font-size: 40px;
-				font-weight: 700;
+				font-weight: 800;
 				color: #ffffff;
 				line-height: 1.05;
 			}
@@ -84,8 +87,8 @@
 			.bug__meta {
 				font-size: 22px;
 				font-weight: 500;
-				color: #8fd3ff;
-				letter-spacing: 0.04em;
+				color: #aab6c4;
+				letter-spacing: 0.02em;
 			}
 		</style>
 	</head>

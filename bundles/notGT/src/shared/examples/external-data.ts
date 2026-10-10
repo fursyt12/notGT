@@ -130,11 +130,11 @@ export const externalDataExample: ExampleCode = {
 }
 
 :root {
-	--accent: #38bdf8;
+	--accent: #ff3b30;
 	--ink: #ffffff;
-	--muted: #9fb3c8;
+	--muted: #aab6c4;
 	--warn: #ffb020;
-	--plate: rgba(8, 20, 28, 0.9);
+	--plate: linear-gradient(180deg, rgba(24, 33, 45, 0.97), rgba(10, 14, 20, 0.97));
 }
 
 html,
@@ -151,14 +151,13 @@ body {
 	left: 4%;
 	top: 8%;
 	width: 430px;
-	padding: 24px 28px;
-	border-radius: 22px;
+	padding: 28px 34px 24px;
 	background: var(--plate);
-	box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
 	font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
 	color: var(--ink);
 	overflow: hidden;
 	animation: wx-in 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+	clip-path: polygon(0 0, calc(100% - 34px) 0, 100% 34px, 100% 100%, 0 100%);
 }
 
 @keyframes wx-in {
@@ -192,7 +191,7 @@ body {
 
 .wx__city {
 	font-size: 30px;
-	font-weight: 700;
+	font-weight: 800;
 	letter-spacing: 0.02em;
 }
 
@@ -240,7 +239,7 @@ body {
 	width: 84px;
 	height: 84px;
 	flex: 0 0 auto;
-	color: var(--accent);
+	color: var(--ink);
 	animation: wx-float 4.5s ease-in-out infinite;
 }
 
@@ -396,7 +395,7 @@ body {
 	height: 12px;
 	margin: 5px;
 	border-radius: 50%;
-	background: #08141c;
+	background: #10161f;
 }
 
 /* --- состояния --------------------------------------------------- */
@@ -406,7 +405,7 @@ body {
 .wx.is-loading .wx__cond,
 .wx.is-loading .wx__detail-value {
 	color: transparent;
-	border-radius: 8px;
+	border-radius: 2px;
 	background: linear-gradient(
 		90deg,
 		rgba(255, 255, 255, 0.08) 0%,
@@ -621,7 +620,7 @@ body {
 
 	async function refresh() {
 		var cfg = config();
-		el.card.style.setProperty("--accent", vars("weather.accent", "#38bdf8"));
+		el.card.style.setProperty("--accent", vars("weather.accent", "#ff3b30"));
 		// Подпись ставим из JS с фолбэком: у [data-bind] фолбэка нет.
 		el.city.textContent = cfg.city;
 		if (!lastGood) showLoading();
