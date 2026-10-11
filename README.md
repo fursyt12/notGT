@@ -22,13 +22,10 @@
   <img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-FFD23F?style=flat-square&labelColor=0C2B25">
 </p>
 
-<p align="center">
-  <video src="media/present.mp4" poster="media/present.jpg" controls width="900"></video>
-</p>
+## Demo
 
-<p align="center">
-  <a href="https://github.com/user-attachments/assets/52d9aae9-f9ee-41ef-9719-8a67913fda9d"><b>▶ Watch notGT in 22 seconds</b></a> — the dashboard, the out and the editor, filmed from a running server
-</p>
+https://github.com/user-attachments/assets/52d9aae9-f9ee-41ef-9719-8a67913fda9d
+
 
 <p align="center">
   <img src="media/screenshots/on-air.png" alt="A lower third, a score bug, a live poll and a logo bug on air" width="900">
