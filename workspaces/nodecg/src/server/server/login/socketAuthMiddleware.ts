@@ -6,6 +6,7 @@ import type { TypedServerSocket } from "../../../types/socket-protocol";
 import { UnAuthErrCode } from "../../../types/socket-protocol";
 import { config } from "../../config";
 import { createLogger } from "../../logger";
+import { accessProvider, isKnownLocalUser, READ_ONLY_EVENTS } from "./access";
 import { UnauthorizedError } from "./UnauthorizedError";
 
 const log = createLogger("socket-auth");
@@ -38,6 +39,21 @@ export const createSocketAuthMiddleware = (db: DatabaseAdapter) => {
 				return;
 			}
 
+			// A key of a graphic rather than of a user: the socket may watch,
+			// and nothing else.
+			if (accessProvider()?.findKey(token)) {
+				socket.data.readOnly = true;
+				socket.use(([event], proceed) => {
+					if (READ_ONLY_EVENTS.has(event)) {
+						proceed();
+					} else {
+						proceed(new Error(`"${event}" refused: this key only reads`));
+					}
+				});
+				next(undefined);
+				return;
+			}
+
 			const apiKey = await db.findApiKey(token);
 
 			if (!apiKey) {
@@ -65,7 +81,10 @@ export const createSocketAuthMiddleware = (db: DatabaseAdapter) => {
 			const provider = user.identities[0]!.provider_type;
 			const providerAllowed =
 				config.login.enabled && config.login?.[provider]?.enabled;
-			const allowed = db.isSuperUser(user) && providerAllowed;
+			const allowed =
+				db.isSuperUser(user) &&
+				providerAllowed &&
+				(provider !== "local" || isKnownLocalUser(user.name));
 
 			if (allowed) {
 				if (!socketsByKey.has(token)) {

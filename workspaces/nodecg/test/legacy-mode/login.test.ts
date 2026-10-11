@@ -19,7 +19,11 @@ test("login should deny access to bad credentials", async ({ loginPage }) => {
 		loginPage.waitForNavigation(),
 		loginPage.click("#localSubmit"),
 	]);
-	expect(loginPage.url()).toBe(C.loginUrl());
+	// Back on the sign-in page, which now says why.
+	expect(loginPage.url()).toBe(`${C.loginUrl()}?failed`);
+	expect(await loginPage.$eval(".failed", (el) => el.textContent)).toBe(
+		"Wrong username or password.",
+	);
 });
 
 test("logging in and out should work", async ({ loginPage }) => {

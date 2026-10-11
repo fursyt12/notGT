@@ -1,6 +1,7 @@
 import type express from "express";
 
 import { config } from "../config";
+import { accessProvider, isKnownLocalUser } from "../server/login/access";
 
 /**
  * Express middleware that checks if the user is authenticated.
@@ -15,11 +16,46 @@ export const authCheck: express.RequestHandler = async (req, res, next) => {
 		let { user } = req;
 		let isUsingKeyOrSocketToken = false;
 		let keyOrSocketTokenAuthenticated = false;
-		if (req.query.key ?? req.cookies.socketToken) {
+		let presented: unknown = req.query.key ?? req.cookies.socketToken;
+
+		// notGT: a key of a graphic rather than of a user. It opens what its
+		// grant names and nothing else — least of all the dashboard.
+		const grant =
+			typeof presented === "string"
+				? accessProvider()?.findKey(presented)
+				: undefined;
+		if (grant) {
+			const { pathname } = new URL(req.originalUrl, "http://localhost");
+			if (grant.allows({ path: pathname, query: req.query })) {
+				// The files the page asks for next carry no key: a browser with
+				// no session (OBS) presents this one as a cookie instead.
+				if (!req.isAuthenticated()) {
+					res.cookie("socketToken", presented, {
+						secure: req.secure,
+						sameSite: req.secure ? "none" : undefined,
+					});
+				}
+
+				next();
+				return;
+			}
+
+			if (req.query.key !== undefined) {
+				res.status(403).send("This key does not open this page");
+				return;
+			}
+
+			// Only the cookie left behind by a graphic: the browser may still
+			// belong to an operator with a session of their own.
+			presented = undefined;
+		}
+
+		if (presented) {
 			isUsingKeyOrSocketToken = true;
-			const apiKey = await res.locals.databaseAdapter.findApiKey(
-				req.query.key ?? req.cookies.socketToken,
-			);
+			const apiKey =
+				typeof presented === "string"
+					? await res.locals.databaseAdapter.findApiKey(presented)
+					: null;
 
 			// No record of this API Key found, reject the request.
 			if (!apiKey) {
@@ -56,11 +92,19 @@ export const authCheck: express.RequestHandler = async (req, res, next) => {
 		keyOrSocketTokenAuthenticated = isUsingKeyOrSocketToken && allowed;
 		const provider = user.identities[0]!.provider_type;
 		const providerAllowed = config.login?.[provider]?.enabled;
+		// notGT: a local user who was taken off the team is not let in by the
+		// key or the session they still hold.
+		const known = provider !== "local" || isKnownLocalUser(user.name);
 		if (
 			(keyOrSocketTokenAuthenticated || req.isAuthenticated()) &&
 			allowed &&
-			providerAllowed
+			providerAllowed &&
+			known
 		) {
+			// A request let in by a key has no session; whoever handles it next
+			// still needs to know whose it is.
+			req.user ??= user;
+
 			let apiKey = user.apiKeys[0];
 
 			// This should only happen if the database is manually edited, say, in the event of a security breach

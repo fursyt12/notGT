@@ -61,6 +61,12 @@ const PANELS = [
 		layoutTools: true,
 		shot: "panel-editor.png",
 	},
+	{
+		file: "team.html",
+		expectText: ["Team", "Groups"],
+		expectRu: ["Команда", "Группы"],
+		shot: "panel-team.png",
+	},
 ];
 
 async function main() {

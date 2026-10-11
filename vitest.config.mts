@@ -5,6 +5,9 @@ export default defineConfig({
 		env: {
 			test: "true",
 			NODECG_TEST: "true",
+			// notGT switches the sign-in on by default; NodeCG's own suites were
+			// written for a server that is open unless a test configures a login.
+			NOTGT_LOGIN: "off",
 		},
 		coverage: {
 			include: ["workspaces/*/src"],

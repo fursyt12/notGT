@@ -34,6 +34,8 @@ import {
 } from "../shared/types";
 export interface BundleConfig {
 	apiToken?: string;
+	/** The key of the WebSocket API. Empty = `apiToken` is its key too. */
+	wsToken?: string;
 	allowUnauthenticatedApi?: boolean;
 	hideApiState?: boolean;
 	defaultOutId?: string;
@@ -103,6 +105,8 @@ export interface Store {
 	effectiveData(): TitleData;
 
 	outUrl(outId: string): string;
+	/** Where the key of an out's OBS link comes from, once someone keeps such keys. */
+	setOutKeys(keyOf: (outId: string) => string | undefined): void;
 }
 
 const DEFAULT_ACTIVE: ActiveTitleState = {
@@ -402,8 +406,9 @@ export function createStore(nodecg: ServerAPI): Store {
 		return merged;
 	}
 
+	let outKeyOf: ((outId: string) => string | undefined) | undefined;
 	function outUrlFor(outId: string): string {
-		return outUrl(outId);
+		return outUrl(outId, { token: outKeyOf?.(outId) });
 	}
 
 	// ---------------------------------------------------------------------
@@ -491,6 +496,9 @@ export function createStore(nodecg: ServerAPI): Store {
 		toggle,
 		effectiveData,
 		outUrl: outUrlFor,
+		setOutKeys(keyOf) {
+			outKeyOf = keyOf;
+		},
 	};
 }
 

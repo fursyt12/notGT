@@ -18,10 +18,11 @@ import { Strategy as TwitchStrategy } from "passport-twitch-helix";
 
 import { config } from "../../config";
 import { createLogger } from "../../logger";
+import { accessProvider } from "./access";
 
 type StrategyDoneCb = (
 	error: NodeJS.ErrnoException | undefined,
-	profile?: User,
+	profile?: User | false,
 ) => void;
 
 /**
@@ -359,8 +360,14 @@ export function createMiddleware(
 
 							if (expected === actual) {
 								allowed = true;
-								roles.push(await db.getSuperUserRole());
 							}
+						} else if (accessProvider()?.verifyUser(username, password)) {
+							// Not in the config: one of the team a bundle keeps.
+							allowed = true;
+						}
+
+						if (allowed) {
+							roles.push(await db.getSuperUserRole());
 						}
 
 						log.info(
@@ -368,6 +375,14 @@ export function createMiddleware(
 							allowed ? "Granting" : "Denying",
 							username,
 						);
+
+						// A wrong name or password is a failed sign-in, not a user
+						// without roles: the page says so instead of silently
+						// coming back, and no record is kept of what was typed.
+						if (!allowed) {
+							done(undefined, false);
+							return;
+						}
 
 						const user = await db.upsertUser({
 							name: username,
@@ -441,6 +456,8 @@ export function createMiddleware(
 				{
 					user: req.user,
 					config,
+					failed: req.query.failed !== undefined,
+					firstRun: accessProvider()?.defaultSignIn?.(),
 				},
 			);
 		}
@@ -488,7 +505,7 @@ export function createMiddleware(
 
 	app.post(
 		"/login/local",
-		passport.authenticate("local", { failureRedirect: "/login" }),
+		passport.authenticate("local", { failureRedirect: "/login?failed" }),
 		redirectPostLogin,
 	);
 

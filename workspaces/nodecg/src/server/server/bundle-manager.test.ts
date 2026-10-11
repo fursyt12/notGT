@@ -93,6 +93,17 @@ test("loader - should detect and load bundle configuration files", () => {
 	expect(bundle?.config).toEqual({ bundleConfig: true });
 });
 
+test("loader - should fall back to the config in the bundle's own cfg folder", () => {
+	const bundle = bundleManager.find("config-test-own-cfg");
+	expect(bundle?.config).toEqual({ bundleConfig: "own" });
+});
+
+test("loader - should prefer the installation's cfg folder to the bundle's own", () => {
+	// `config-test-json` has a file in both; the bundle's says "shadowed".
+	const bundle = bundleManager.find("config-test-json");
+	expect(bundle?.config).toEqual({ bundleConfig: true });
+});
+
 test("loader - should not load bundles with a non-satisfactory nodecg.compatibleRange", () => {
 	const bundle = bundleManager.find("incompatible-range");
 	expect(bundle).toBe(undefined);

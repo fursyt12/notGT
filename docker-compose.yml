@@ -4,15 +4,17 @@
 # QUICK START (the default setup — a plain port, no reverse proxy):
 #
 #   docker compose up --build -d
-#   http://localhost:9090/dashboard/
+#   http://localhost:9090/dashboard/     sign in as admin / admin, then change
+#                                        the password in the Team tab
 #
 # The published port is configurable through `.env` (see `.env.example`):
 #   NOTGT_PORT=9090   host port to publish (the container always listens on 9090)
 #
-# Publishing the port exposes the dashboard and `/api` to everyone who can
-# reach this machine. That is usually what you want on a show LAN; for a public
-# host set `apiToken` in the bundle config (bind mounted below) and/or put the
-# service behind Traefik with Basic Auth — see the TRAEFIK block below.
+# Publishing the port lets everyone who can reach this machine as far as the
+# sign-in page, so the first thing to do is to change the default password.
+# For a public host also put the service behind Traefik for TLS — see the
+# TRAEFIK block below — and set `apiToken` in the bundle config (bind mounted
+# below) for scripts. NOTGT_LOGIN=off in `.env` switches the sign-in off.
 #
 # The *API* token is NOT configured here: it lives in the bundle config that is
 # bind mounted below (./bundles/notGT/cfg/notGT.json).
@@ -35,6 +37,15 @@ services:
     environment:
       NODE_ENV: production
       # TZ: Europe/Moscow
+      # Sign-in for the dashboard (see `.env.example`). It is ON by default: a
+      # new server lets `admin` / `admin` in and asks for a real password in
+      # the Team tab. NOTGT_LOGIN_USER + NOTGT_LOGIN_PASSWORD name the
+      # administrator here instead; NOTGT_LOGIN=off opens the dashboard and
+      # the API to everyone who can reach the port.
+      NOTGT_LOGIN: "${NOTGT_LOGIN:-}"
+      NOTGT_LOGIN_USER: "${NOTGT_LOGIN_USER:-}"
+      NOTGT_LOGIN_PASSWORD: "${NOTGT_LOGIN_PASSWORD:-}"
+      NOTGT_SESSION_SECRET: "${NOTGT_SESSION_SECRET:-}"
 
     # ---------------------------------------------------------------------
     # PERSISTENCE (explicit acceptance criterion)

@@ -5,7 +5,12 @@
 		"apiToken": {
 			"type": "string",
 			"default": "",
-			"description": "Shared secret for the /api endpoints (Bitfocus Companion, external integrations). Send it as `Authorization: Bearer <token>`, `X-API-Token: <token>` or `?token=<token>`. When empty the API is unauthenticated (only safe if the server is not reachable from untrusted networks)."
+			"description": "Shared secret for the /api endpoints and the WebSocket API on /api/ws (Bitfocus Companion, external integrations). Send it as `Authorization: Bearer <token>`, `X-API-Token: <token>` or `?token=<token>`; over the WebSocket also as a `login` frame. When empty the API is unauthenticated, unless the sign-in (NodeCG login) is switched on — only safe if the server is not reachable from untrusted networks."
+		},
+		"wsToken": {
+			"type": "string",
+			"default": "",
+			"description": "The key of the WebSocket API on /api/ws (the Bitfocus Companion module). Send it as `?token=<key>` in the address, as `Authorization: Bearer <key>`, or in a `login` frame. When set, the WebSocket takes this key and not `apiToken`; when empty, `apiToken` is the key of the WebSocket too."
 		},
 		"allowUnauthenticatedApi": {
 			"type": "boolean",

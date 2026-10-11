@@ -12,6 +12,7 @@ import {
 	type TitleTemplate,
 } from "../shared/types";
 import {
+	type Access,
 	type ApiRequest,
 	type ApiResponse,
 	corsHeaders,
@@ -33,6 +34,8 @@ interface Router {
 }
 
 export interface ApiHooks {
+	/** Who is let in; shared with the WebSocket API. */
+	access: Access;
 	/** Re-scans `graphics/animations/` for file-authored animations. */
 	syncAnimations?: () => { added: number; total: number; removed: number };
 	/** Length of a template's video layer in ms, when it has one. */
@@ -43,13 +46,13 @@ export function createApiRouter(
 	nodecg: ServerAPI,
 	store: Store,
 	scheduler: Scheduler,
-	hooks: ApiHooks = {},
+	hooks: ApiHooks,
 ): unknown {
 	const router = nodecg.Router() as unknown as Router;
 	const config = (nodecg.bundleConfig ?? {}) as BundleConfig;
 
 	router.use(corsHeaders as Handler);
-	router.use(createApiAuth(nodecg) as Handler);
+	router.use(createApiAuth(nodecg, hooks.access) as Handler);
 
 	// ---------------------------------------------------------------- health
 	router.get("/health", (_req, res) => {
@@ -395,6 +398,13 @@ export function buildPublicState(store: Store, config: BundleConfig): PublicStat
 			width: out.width,
 			height: out.height,
 			url: store.outUrl(out.id),
+			items: out.items.map((item) => ({
+				id: item.id,
+				templateId: item.templateId,
+				enabled: item.enabled,
+				held: Boolean(item.held),
+				mode: item.playback?.mode ?? "once",
+			})),
 		}));
 		state.templates = store.listTemplates().map((template) => ({
 			id: template.id,

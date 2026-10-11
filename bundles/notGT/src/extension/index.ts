@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { BUNDLE_NAME, MESSAGES } from "../shared/types";
 import { createApiRouter } from "./api";
-import type { Handler } from "./auth";
+import { createAccess, type Handler } from "./auth";
 import { createMediaRouter } from "./media";
 import { probeDurationMs } from "./video-duration";
 import { syncFileAnimations } from "./file-animations";
@@ -10,6 +10,9 @@ import { createSources } from "./sources";
 import { Scheduler } from "./scheduler";
 import { playTemplateOnce } from "./trigger";
 import { createStore, type ServerAPI } from "./store";
+import { createTeam } from "./team";
+import { createTeamRouter, TEAM_BASE } from "./team-api";
+import { createWsApi } from "./ws";
 
 /**
  * notGT extension entrypoint.
@@ -17,7 +20,8 @@ import { createStore, type ServerAPI } from "./store";
  * Responsibilities:
  *  - declare + seed the Replicants that hold the whole titling state,
  *  - own playback timers (see `scheduler.ts`),
- *  - expose the REST API used by Bitfocus Companion and external systems.
+ *  - expose the REST API and its live counterpart, the WebSocket API, used by
+ *    Bitfocus Companion and external systems.
  */
 export default function notGTExtension(nodecg: ServerAPI): {
 	store: ReturnType<typeof createStore>;
@@ -49,12 +53,51 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	const syncResult = syncAnimations();
 
 	const mount = nodecg.mount as unknown as (path: string, handler: unknown) => void;
+	// The team: users, the groups that share outs, and the keys that belong to
+	// an out or a group rather than to a person. Kept next to the database.
+	const team = createTeam(
+		nodecg,
+		store,
+		path.resolve(__dirname, "..", "..", "..", "db", `${BUNDLE_NAME}-team.json`),
+	);
+	// NodeCG's own login and its session checks ask the team about the users
+	// it does not list itself, and about the keys of the OBS links: such a key
+	// opens the page of its out (and the files that page loads), read-only.
+	const graphics = `/bundles/${BUNDLE_NAME}/graphics/`;
+	(
+		nodecg.util as unknown as {
+			setAccessProvider?(provider: unknown): void;
+		}
+	).setAccessProvider?.({
+		verifyUser: (username: string, password: string) => team.loginEnabled && team.verifyUser(username, password),
+		hasUser: (username: string) => team.hasUser(username),
+		defaultSignIn: () => team.defaultSignIn(),
+		findKey: (key: string) => {
+			const outId = team.findOut(key);
+			if (!outId) return undefined;
+			return {
+				allows: ({ path: requested, query }: { path: string; query: Record<string, unknown> }) =>
+					requested === `${graphics}out.html`
+						? query["out"] === outId
+						: requested.startsWith(graphics) || requested.startsWith("/assets/"),
+			};
+		},
+	});
+	store.setOutKeys((outId) => team.outKey(outId));
+	mount(TEAM_BASE, createTeamRouter(nodecg, team, nodecg.util.authCheck as unknown as Handler));
+
+	// One answer to "who may drive the show" for both APIs.
+	const access = createAccess(nodecg, team);
 	const router = createApiRouter(nodecg, store, scheduler, {
+		access,
 		syncAnimations,
 		videoDuration,
 	});
 	mount("/api", router);
 	mount(`/bundles/${BUNDLE_NAME}/api`, router);
+
+	// The same verbs over a WebSocket, with the state pushed instead of polled.
+	const ws = createWsApi(nodecg, store, scheduler, access, team);
 
 	// Drag-and-dropped media for the `video` layer. Lives in the NodeCG assets
 	// tree (a Docker volume), so uploads survive a container rebuild. Guarded by
@@ -121,6 +164,7 @@ export default function notGTExtension(nodecg: ServerAPI): {
 
 	nodecg.listenFor("serverStopping", (() => {
 		scheduler.dispose();
+		ws?.close();
 	}) as any);
 
 	// Re-derive playback whenever outs/templates are edited from the dashboard.
@@ -129,6 +173,13 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	nodecg.log.info(
 		"notGT ready — REST API on /api (state, titles/show|hide|toggle|trigger, data, templates, outs, animations)",
 	);
+	if (ws) nodecg.log.info("WebSocket API on %s (state push, the same verbs)", ws.paths[0]);
+	if (access.loginEnabled) {
+		nodecg.log.info(
+			"Login is on: the dashboard asks for a username and password%s",
+			access.ws.hasToken ? "" : "; integrations sign in with the same pair (no `wsToken` or `apiToken` is set)",
+		);
+	}
 	if (syncResult.total > 0 || syncResult.removed > 0) {
 		nodecg.log.info(
 			"File animations: %d registered from graphics/animations (%d added, %d removed)",

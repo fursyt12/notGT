@@ -553,7 +553,12 @@ export async function smokeTest({ app, node, copyTree, log }) {
 
 	let output = "";
 	const start = async () => {
-		const child = spawn(node, ["index.js"], { cwd: copy, stdio: ["ignore", "pipe", "pipe"] });
+		// The pages below are fetched without signing in.
+		const child = spawn(node, ["index.js"], {
+			cwd: copy,
+			stdio: ["ignore", "pipe", "pipe"],
+			env: { ...process.env, NOTGT_LOGIN: "off" },
+		});
 		const exited = new Promise((resolve) => child.once("exit", resolve));
 		child.stdout.on("data", (chunk) => (output += chunk));
 		child.stderr.on("data", (chunk) => (output += chunk));

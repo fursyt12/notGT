@@ -11,6 +11,7 @@ import { Logger } from "./logger";
 import type { Replicator } from "./replicant/replicator";
 import type { ServerReplicant } from "./replicant/server-replicant";
 import type { ExtensionEventMap } from "./server/extensions";
+import { setAccessProvider } from "./server/login/access";
 import { authCheck } from "./util/authcheck";
 
 export function serverApiFactory(
@@ -121,6 +122,13 @@ export function serverApiFactory(
 			 * @param {function} next - The next middleware in the control flow.
 			 */
 			authCheck: authCheck,
+
+			/**
+			 * _Extension only_<br/>
+			 * notGT: lets a bundle keep its own users and keys. See
+			 * `AccessProvider` in `server/login/access.ts`.
+			 */
+			setAccessProvider: setAccessProvider,
 		};
 
 		/**

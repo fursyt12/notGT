@@ -25,7 +25,10 @@ draw what they are sent, so the state in the API always matches what is on scree
 - [Quick start](#quick-start)
 - [Dashboard: panels](#dashboard-panels)
 - [Bundle configuration](#bundle-configuration)
+- [Sign-in (login)](#sign-in-login)
+- [Team: users, groups and keys](#team-users-groups-and-keys)
 - [REST API](#rest-api)
+- [WebSocket API](#websocket-api)
 - [Bitfocus Companion](#bitfocus-companion)
 - [OBS Studio](#obs-studio)
 - [Persistence](#persistence)
@@ -168,9 +171,10 @@ node index.js
 
 Then:
 
-- the dashboard — `http://localhost:9090/dashboard/`
-- add the graphics to OBS:
-  `http://localhost:9090/bundles/notGT/graphics/out.html?out=main`
+- the dashboard — `http://localhost:9090/dashboard/`. Sign in as `admin` / `admin` and
+  change the password in the **Team** tab (see [Sign-in](#sign-in-login));
+- add the graphics to OBS: copy the out's address with “Link for OBS” — it looks like
+  `http://localhost:9090/bundles/notGT/graphics/out.html?out=main&key=out_…`
 
 Building the bundle (if you changed `src/`):
 
@@ -187,7 +191,7 @@ For the Docker deployment see `docker-compose.yml` and `.env.example` in the rep
 The dashboard is at `http://<host>/dashboard/`. The bundle's panel files are served from
 `/bundles/notGT/dashboard/<file>`.
 
-The tabs at the top are the bundle's three panels, each taking the whole screen
+The tabs at the top are the bundle's four panels, each taking the whole screen
 (`fullbleed`). Each has its own job, and settings are not repeated between them:
 
 | Panel             | What it is for                                               |
@@ -195,6 +199,7 @@ The tabs at the top are the bundle's three panels, each taking the whole screen
 | **Control**       | on air: show, hide, change the data                           |
 | **Titles & Outs** | setup: outs, the animation library, what sits on which out    |
 | **Editor**        | look: the out's canvas, layers, code, position and crop       |
+| **Team**          | people: users, groups, whose outs are whose, the keys         |
 
 In every panel yellow — the brand's Lemon — means one thing: **this is on air right now**. Deleting and other rare
 actions live in the `⋯` menu at the end of a row.
@@ -407,6 +412,12 @@ its own with a “Replay” button (plays the entrance again). The live preview 
 right on the canvas, where the placement is (or in the centre, if the template is not on
 this out yet). The arrow on the right folds the dock away.
 
+### Team (`team.html`)
+
+For an administrator: the groups with their outs and WebSocket keys, the users, and the
+OBS link of every out. Described in [Team](#team-users-groups-and-keys). Everyone else
+sees which groups they are in.
+
 ---
 
 ## Bundle configuration
@@ -423,13 +434,123 @@ cp bundles/notGT/cfg/notGT.example.json \
 | Key                        | Type    | Default      | Purpose                                                                                        |
 | -------------------------- | ------- | ------------ | ---------------------------------------------------------------------------------------------- |
 | `apiToken`                 | string  | `""`         | Shared secret for `/api`. An empty string means the API is open.                                |
+| `wsToken`                  | string  | `""`         | The key of the [WebSocket API](#websocket-api) — what goes into the Companion module. Empty = `apiToken` is the WebSocket's key too. |
 | `allowUnauthenticatedApi`  | boolean | `false`      | Explicitly allow an open API and silence the warning. Ignored when `apiToken` is set.           |
 | `hideApiState`             | boolean | `false`      | Drop `templates`/`outs` from the `GET /api/state` response (for frequent polling from Companion). |
 | `defaultOutId`             | string  | `"main"`     | The `id` of the out created on first run.                                                       |
 | `language`                 | string  | `""`         | Language of the example library and sample data on first run: `en` or `ru`. Empty = the server process's locale, else English. |
 
 The config is read once, when the bundle starts — **restart NodeCG after editing it**
-(in Docker: `docker compose restart notgt`).
+(in Docker: `docker compose restart notgt`). A `notGT.json` in the `cfg/` folder of the
+installation itself (next to `nodecg.json`) is read too, and wins when both exist.
+
+---
+
+## Sign-in (login)
+
+The dashboard asks for a username and a password. **A new server lets `admin` / `admin`
+in** — the sign-in page says so — and the first thing to do is to give that administrator
+a real password: the **Team** tab shows a warning with a “Change the password” button
+until it is done. Until then, anyone who can reach the port knows the way in.
+
+Everyone else is added in the Team tab too; see
+[Team](#team-users-groups-and-keys). What is set where the server is started is only
+this:
+
+| To…                                    | from the launcher                                                    | in Docker (`.env`)                                    |
+| -------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| keep the default and change the password in the dashboard | nothing to do                                     | nothing to do                                         |
+| name the administrator yourself        | the “Вход по паролю” card: a name, a password, “Задать администратора здесь” | `NOTGT_LOGIN_USER=…` and `NOTGT_LOGIN_PASSWORD=…` |
+| switch the sign-in off                 | “Отключить” on the same card                                         | `NOTGT_LOGIN=off`                                     |
+
+Each of these applies after the server is restarted. An administrator named this way
+replaces the default one: an `admin` account whose password nobody changed is removed.
+Such an administrator's password is changed where it was set, not in the Team tab. The
+launcher does not write the password down — it stores an HMAC of it.
+
+With the sign-in **off** the dashboard opens for everyone who can reach the port, the OBS
+links need no key and the API is open unless `apiToken` is set. That suits a closed show
+LAN and nothing else.
+
+The launcher and the variables are shorthand for the `login` block of `cfg/nodecg.json`,
+NodeCG's own config, which can also be written by hand and wins over the variables:
+
+```json
+{
+  "login": {
+    "enabled": true,
+    "sessionSecret": "a-long-random-string",
+    "local": {
+      "enabled": true,
+      "allowedUsers": [{ "username": "operator", "password": "s3cret" }]
+    }
+  }
+}
+```
+
+Every entry of `allowedUsers` is an administrator. A password can be written as
+`sha256:<hex>` instead of plain text, where `<hex>` is the HMAC-SHA256 of the password
+keyed with `sessionSecret` (that is what the launcher writes). `"enabled": false` switches
+the sign-in off; no `login` block at all is the default described above.
+
+What the sign-in means for the rest:
+
+- **The dashboard** sends a stranger to the sign-in page; “Sign Out” is in the header.
+- **OBS.** A Browser Source cannot sign in, so its address carries a key:
+  `…/out.html?out=main&key=out_…`. The key belongs to the **out**, not to whoever copies
+  the link: every operator sees the same address, it does not change when people sign in
+  or out, and it opens that one out and nothing else. The “Link for OBS” buttons copy the
+  address with the key in it. Without the key the source shows the sign-in page instead
+  of the titles — so **after updating from a version without the sign-in, copy the links
+  into OBS again**.
+- **The REST API** is no longer open, `apiToken` or not: a request needs the token or the
+  session of a signed-in operator. `GET /api/health` stays open.
+- **The WebSocket API** takes the token or the username and password in its `login` frame.
+
+The sign-in keeps strangers on the same network out of the control room; it does not
+encrypt anything. Over plain `http://` the password travels as text, so on a network you
+do not trust put TLS in front (the Traefik block of `docker-compose.yml`).
+
+---
+
+## Team: users, groups and keys
+
+For a show with several people — a VJ, streamer 1, streamer 2 — who each work with their
+own outs. It is managed in the **Team** tab of the dashboard, by an administrator.
+
+- A **group** (“VJ”, “Streamer 1”) is a set of outs: tick the outs it works with. An out
+  can be in several groups.
+- A **user** has a name, a password and the groups they are in. A member sees the outs of
+  their groups in Control, Titles & Outs and Editor, and no others. An **administrator**
+  sees every out, makes and deletes outs, and manages the team. There is always at least
+  one: the last administrator can be neither deleted nor made a member.
+- An **out** has one **OBS link**, with a key of its own (`…&key=out_…`). The link is the
+  same for everyone, belongs to no user, and opens that out's page only — its socket
+  reads the show and cannot change it. “New link” in the Team tab replaces the key: the
+  old address stops working at once.
+- A group has **WebSocket keys** (`ws_…`), as many as it needs — one per Companion, say.
+  A group's key sees and drives the outs of that group and no others (see
+  [Signing in](#signing-in)). Revoking a key disconnects whatever uses it.
+
+Changes apply at once, without a restart: a user removed from the team is signed out, a
+key that was revoked is disconnected, an out added to a group shows up for its members
+and its keys.
+
+Two things to know:
+
+- **What a member is kept from is what the dashboard shows them.** The outs of other
+  groups are hidden from a member's panels, and the keys — an out's, a group's — are
+  enforced by the server. But a signed-in member's browser talks to NodeCG the way an
+  administrator's does, so this separates a team that works together; it is not a wall
+  between people who should not trust each other. The animations and the variables are
+  shared by everyone.
+- **With the sign-in switched off there are no users**: whoever opens the dashboard is an
+  administrator and the OBS links need no key. Groups and their WebSocket keys work all
+  the same — and once any group has a key, the WebSocket stops being open.
+
+The team is kept in `db/notGT-team.json`, next to NodeCG's database (the `notgt-db`
+volume in Docker): back it up with the rest. Passwords are stored as scrypt hashes; the
+keys are stored as they are, since they have to be shown again.
 
 ---
 
@@ -455,6 +576,11 @@ The examples below use the short `/api`; swap the prefix if you need the other o
   `allowUnauthenticatedApi: true` flag silences that warning. The safe reading: an empty
   token is acceptable only when the server is unreachable from untrusted networks or sits
   behind Basic Auth at the Traefik level.
+- With the [sign-in](#sign-in-login) switched on, the session of a signed-in operator is
+  let in as well — and with an empty `apiToken` it is the only way in, the API is not
+  open any more. For scripts and Companion set an `apiToken`.
+- The REST API is all or nothing: `apiToken` reaches every out. The keys that reach a
+  [group's](#team-users-groups-and-keys) outs only are WebSocket keys.
 - A request with no token or a wrong one gets `401 {"error":"unauthorized", ...}`.
 - CORS is open (`Access-Control-Allow-Origin: *`), so the API can be polled straight from
   a browser.
@@ -514,7 +640,24 @@ In all the examples below `$NOTGT_TOKEN` is the value of `apiToken`, and
   "activeOutId": "main",
   "playing": { "main": ["item_ab12cd34ef56"] },
   "revision": 42,
-  "outs": [{ "id": "main", "name": "Main", "width": 1920, "height": 1080, "url": "…" }],
+  "outs": [
+    {
+      "id": "main",
+      "name": "Main",
+      "width": 1920,
+      "height": 1080,
+      "url": "…",
+      "items": [
+        {
+          "id": "item_ab12cd34ef56",
+          "templateId": "lower_third",
+          "enabled": true,
+          "held": true,
+          "mode": "once"
+        }
+      ]
+    }
+  ],
   "templates": [{ "id": "lower_third", "name": "Lower third", "kind": "layers" }]
 }
 ```
@@ -524,6 +667,8 @@ In all the examples below `$NOTGT_TOKEN` is the value of `apiToken`, and
 - `playing` — which placements are actually playing now, per out.
 - `revision` — a monotonic counter: it changes on any change, a cheap way to tell that
   “something changed”.
+- `outs[].items` — the placements of an out, in short: `held` is the “On air” switch,
+  `mode` is `once` or `loop`. Whether one is on air right now is in `playing`.
 - `outs` and `templates` are **absent** when `hideApiState: true`.
 
 ### Examples
@@ -715,10 +860,137 @@ curl -sS -X POST http://<host>/api/outs/interview/stop \
 
 ---
 
+## WebSocket API
+
+The live counterpart of the REST API: the same verbs, and the state is **pushed** when it
+changes instead of being polled. This is what a Companion module connects to.
+
+- Address: `ws://<host>/api/ws` (or `ws://<host>/bundles/notGT/api/ws`); `wss://` behind
+  TLS.
+- A plain WebSocket, **not** Socket.IO. Every frame is a JSON object with a `type`.
+- Every frame the client sends is answered by exactly one `reply` frame that carries the
+  same `id`.
+
+### The conversation
+
+```
+server → {"type":"hello","protocol":1,"bundle":"notGT","version":"0.7.2",
+          "authRequired":true,"authenticated":false,"login":["token","password"]}
+client → {"type":"login","id":1,"token":"<wsToken>"}
+server → {"type":"reply","id":1,"command":"login","ok":true,"result":{"user":null}}
+server → {"type":"state","state":{ …the object of GET /api/state… }}
+client → {"type":"show","id":2,"templateId":"lower_third","out":"main"}
+server → {"type":"reply","id":2,"command":"show","ok":true,"result":{"active":{…}}}
+server → {"type":"state","state":{ … "activeVisible":true … }}
+```
+
+`state` comes by itself: once after signing in and then on every change, whoever made it
+— this socket, the dashboard or a REST request. It is always the whole object, with
+`outs` and `templates` (the `hideApiState` flag is about polling and does not apply).
+
+A command that failed is answered with `ok: false`:
+
+```json
+{ "type": "reply", "id": 2, "command": "show", "ok": false,
+  "error": { "code": "not_found", "message": "Unknown template: nope" } }
+```
+
+`error.code` is one of `bad_request`, `not_found`, `forbidden` (an out this key does not
+reach), `unknown_command`, `unauthorized`, `internal`. A frame that is not a JSON object gets `{"type":"error","code":"bad_request"}`
+and the connection stays open.
+
+### Signing in
+
+There are two kinds of key:
+
+- **`wsToken`** in the bundle config (`bundles/notGT/cfg/notGT.json`), next to `apiToken`
+  — the key that reaches **every out**. When it is set, the WebSocket takes it and
+  **not** `apiToken`; when it is empty, `apiToken` is the WebSocket's key as well. It does
+  not open the REST API.
+- **A group's key** (`ws_…`), made in the [Team](#team-users-groups-and-keys) tab — it
+  reaches **the outs of that group only**. This is the one to give a Companion that
+  belongs to the VJ or to a streamer.
+
+A username and a password work too, with the reach of that user: every out for an
+administrator, the outs of their groups for a member.
+
+`hello.authRequired` says whether the server asks to sign in, and `hello.login` what it
+accepts: `token` (a key exists), `password` (the [sign-in](#sign-in-login) is on), or
+both. The reply to `login` — and `hello` itself, when the key came with the handshake —
+says how far the connection reaches:
+
+```json
+{ "type": "reply", "command": "login", "ok": true,
+  "result": { "user": null, "group": "VJ", "outs": ["main", "stage"] } }
+```
+
+`outs` is `"all"` for the key of everything. A connection that does not reach every out:
+
+- gets `state` with **its outs only** — `outs`, `playing`, and a title shown by hand on
+  somebody else's out is not reported as `active`;
+- is answered `forbidden` when a command names an out outside its reach;
+- must name the `out` in `show`, `toggle` and `trigger` — unless it reaches exactly one,
+  which is then taken for granted (so a one-out group never has to);
+- `hide`, `stop` and `reset` without `out` apply to **its** outs, not to the whole show;
+- the variables (`setData`, `select`, …) are shared by the whole team and stay open to it.
+
+When the team is edited, the connection follows: an out added to the group arrives in the
+next `state`, a revoked key is closed with 4401.
+
+- **In the handshake**, the way a token goes to REST: `ws://<host>/api/ws?token=<key>`, or
+  the `Authorization: Bearer <key>` / `X-API-Token` header. `hello.authenticated` is then
+  already `true`.
+- **With a frame**: `{"type":"login","token":"…"}` or
+  `{"type":"login","username":"…","password":"…"}`.
+
+Anything else before signing in, a wrong token or password, or no `login` frame within
+10 seconds closes the connection with code **4401**. On an open server (`authRequired:
+false`) a `login` frame is simply answered with `ok: true`, so a client does not need two
+code paths.
+
+### Commands
+
+`out` is the id of an out; where it is optional, leaving it out means “every out”.
+
+| `type`           | Parameters                                          | What it does                                                                                             |
+| ---------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `show`           | `templateId`, `out?`, `data?`, `label?`             | Shows a title (as `POST /api/titles/:id/show`).                                                           |
+| `hide`           | `out?`, `templateId?`                               | Hides the title.                                                                                          |
+| `toggle`         | `templateId`, `out?`, `data?`, `label?`             | Shows it, or hides it if it is the one on air.                                                            |
+| `trigger`        | `templateId`, `out?`, `holdMs?`, `data?`, `label?`  | Plays once: the placements of that template, or a timed show when it is placed nowhere.                   |
+| `trigger`        | `out`, `itemId`, `holdMs?`                          | Plays one particular placement once.                                                                      |
+| `hold`           | `out`, `itemId`, `held?`                            | The “On air” switch of a placement. Without `held` it flips.                                              |
+| `stop`           | `out?`                                              | Takes everything off an out.                                                                              |
+| `reset`          | —                                                   | Clears the program state and stops playback on every out.                                                 |
+| `setData`        | `data`, `mode?` (`merge` \| `replace`)              | Writes variables.                                                                                         |
+| `deleteData`     | `path`                                              | Deletes a variable.                                                                                       |
+| `select`         | `path`, `index`                                     | Chooses the element of a list variable.                                                                   |
+| `select`         | `path`, `delta`, `wrap?`                            | Steps from the current element: `1` is “next”, `-1` “previous”; wraps around unless `wrap` is `false`.   |
+| `clearSelection` | `path`                                              | Back to element `0`.                                                                                      |
+| `getState`       | —                                                   | The state, in the reply.                                                                                  |
+| `getData`        | `path?`, `raw?`                                     | The variables, or one value.                                                                              |
+| `subscribe`      | `topics`                                            | `state` (on by default) and `data` — the variable store, pushed as `{"type":"data","data":{…}}`.          |
+| `unsubscribe`    | `topics`                                            | Stops a push.                                                                                             |
+| `ping`           | —                                                   | Answers; for a client that wants its own keep-alive.                                                      |
+
+The server pings every 30 seconds at the protocol level (a WebSocket library answers by
+itself) and drops a connection that stopped answering.
+
+### Trying it
+
+```bash
+npx wscat -c "ws://<host>/api/ws?token=$NOTGT_WS_TOKEN"
+> {"type":"toggle","id":1,"templateId":"lower_third","out":"main"}
+```
+
+---
+
 ## Bitfocus Companion
 
-There is no dedicated Companion module in the package — the stock HTTP module is used.
-It covers 95 % of the job: show a title, hide it, light a button by state.
+There is no dedicated Companion module in the package yet. Until there is one, the stock
+HTTP module covers 95 % of the job — show a title, hide it, light a button by state — and
+is described first. A module of its own connects to the
+[WebSocket API](#websocket-api); see [the end of this section](#a-dedicated-module).
 
 ### Connecting
 
@@ -826,17 +1098,43 @@ Notes:
   do not need an instant reaction 1000–2000 ms will do; below 250 ms there is no point,
   the state is recomputed on the server anyway.
 
-### Looking ahead: a dedicated module
+### A dedicated module
 
-If push instead of polling is needed later, the right way is a separate Companion module
-on `@companion-module/base` that connects to NodeCG over **Socket.IO** and subscribes to
-the Replicants directly. That gives:
+A module on `@companion-module/base` talks to the [WebSocket API](#websocket-api) and
+needs no polling at all:
 
-- state updates without polling (the server sends the changes itself);
-- dynamic dropdowns of templates and outs in actions (instead of typing ids by hand);
-- ready-made variables/feedbacks with proper names.
+- **Config fields**: host, port, and either a key — a group's from the Team tab, or
+  `wsToken` for the whole show — or a username and a password; `hello.login` tells which
+  of them the server accepts.
+- **Feedbacks and variables** come from the `state` frame, which arrives on every change:
+  `activeVisible` / `activeTemplateId` for “this title is on air”, `playing[out]` and
+  `outs[].items[].held` for placements, `selection` for the chosen element of a list.
+- **Dropdowns** for actions are filled from `state.templates` and `state.outs` (with their
+  `items`), so nobody types ids by hand.
+- **Actions** are the commands of the table above: `show`, `hide`, `toggle`, `trigger`,
+  `hold`, `select` with `delta: 1` for “next guest”, `setData` for a text field.
 
-This is not implemented yet; the HTTP scheme above is the recommended way.
+The core of such a module:
+
+```js
+import WebSocket from "ws";
+
+const ws = new WebSocket(`ws://${config.host}:${config.port}/api/ws`);
+ws.on("message", (raw) => {
+	const frame = JSON.parse(raw);
+	if (frame.type === "hello" && frame.authRequired) {
+		ws.send(JSON.stringify({ type: "login", token: config.key })); // a group's key, or wsToken
+	} else if (frame.type === "state") {
+		this.state = frame.state; // then checkFeedbacks() and setVariableValues()
+	}
+});
+ws.on("close", (code) => {
+	// 4401 = wrong credentials: report it and do not hammer; anything else: reconnect.
+});
+
+// An action:
+ws.send(JSON.stringify({ type: "toggle", templateId: "lower_third", out: "main" }));
+```
 
 ---
 
@@ -1521,11 +1819,18 @@ Or the files in `logs/` (in Docker, the `notgt-logs` volume).
 
 The bundle has headless Puppeteer tests that check the acceptance criteria without OBS.
 NodeCG must already be running on `127.0.0.1:9090` (the address is overridden with
-`NOTGT_BASE`, the path to Chromium with `CHROME_PATH`).
+`NOTGT_BASE`, the path to Chromium with `CHROME_PATH`). They come in two runs, because
+one needs a server anyone can use and the other a server with a sign-in:
 
 ```bash
 cd bundles/notGT
+
+# the out page, the panels, Excel, media, the WebSocket API —
+# against a server started with NOTGT_LOGIN=off
 npm run test:e2e
+
+# the team and the sign-in — against a server with the sign-in on
+NOTGT_USER=admin NOTGT_PASSWORD=<the administrator's password> npm run test:e2e:team
 ```
 
 What `scripts/e2e-out.mjs` checks (graphics):
@@ -1539,9 +1844,28 @@ What `scripts/e2e-out.mjs` checks (graphics):
 - a `loop` placement stays on air while the “On air” switch is on (and does not go out by
   itself), and turning the switch off or deleting the placement takes it off air.
 
-What `scripts/e2e-panels.mjs` checks (dashboard): all three panels mount in standalone
+What `scripts/e2e-panels.mjs` checks (dashboard): all four panels mount in standalone
 mode in English and in Russian with no console errors; the editor has its Konva canvas;
 moving, resizing and cropping a placement snap to the right lines; and the “On air” switch
 puts a placement on air and keeps it there.
+
+What `scripts/e2e-team.mjs` checks (the team; needs a server with the sign-in on and an
+administrator's `NOTGT_USER` / `NOTGT_PASSWORD`): an administrator makes groups, users and
+keys and a member cannot; a member sees their groups' outs only; an out's key opens that
+out's page, not another out and not the dashboard, and its socket cannot write; a group's
+WebSocket key sees and drives that group's outs only; a revoked key and a removed user
+lose access at once.
+
+What `scripts/e2e-ws.mjs` checks (the WebSocket API): the handshake and the first
+`state`, every verb and its reply, that a change made over REST is pushed to the socket,
+and — on a server that asks to sign in — that a token and a username with a password are
+let in while a stranger is closed with 4401. It needs no browser. For a protected server
+give it the credentials:
+
+```bash
+NOTGT_TOKEN=<apiToken> node scripts/e2e-ws.mjs
+NOTGT_TOKEN=<apiToken> NOTGT_WS_TOKEN=<wsToken> node scripts/e2e-ws.mjs
+NOTGT_USER=operator NOTGT_PASSWORD=<password> node scripts/e2e-ws.mjs
+```
 
 Screenshots are saved to `bundles/notGT/.e2e/` (the directory is in `.gitignore`).

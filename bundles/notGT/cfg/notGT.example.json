@@ -1,5 +1,6 @@
 {
 	"apiToken": "change-me",
+	"wsToken": "change-me-too",
 	"allowUnauthenticatedApi": false,
 	"hideApiState": false,
 	"defaultOutId": "main",

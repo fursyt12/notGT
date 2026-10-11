@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import {
 	clone,
@@ -10,6 +10,7 @@ import {
 } from "../shared/binding";
 import { localNumber, t } from "./i18n";
 import { getNodecg, type ClientReplicant } from "../shared/client";
+import { TEAM_BASE, type TeamMe } from "../shared/team";
 import type { ExampleLang, GalleryExample } from "../shared/examples/gallery";
 import {
 	createDefaultOut,
@@ -606,8 +607,15 @@ const EMPTY_SELECTION: VariableSelection = {};
 export function useTemplates(): TitleTemplate[] {
 	return useReplicantValue(() => getDb().templates, EMPTY_TEMPLATES);
 }
+/**
+ * The outs this operator works with. A member of the team gets the outs of
+ * their groups; what is written back goes through `listOuts()`, which is
+ * always the whole list, so the outs of the others are never lost.
+ */
 export function useOuts(): Out[] {
-	return useReplicantValue(() => getDb().outs, EMPTY_OUTS);
+	const outs = useReplicantValue(() => getDb().outs, EMPTY_OUTS);
+	const current = useMe();
+	return useMemo(() => visibleOuts(outs, current), [outs, current]);
 }
 export function useTitleData(): TitleData {
 	return useReplicantValue(() => getDb().titleData, EMPTY_DATA);
@@ -767,8 +775,102 @@ export function outUrlFor(outId: string): string {
 	return outUrl(outId);
 }
 
+// --------------------------------------------------------------------- team
+
+/**
+ * Who the operator at this panel is and which outs are theirs to see — asked
+ * of the server (`/team/me`), because the team is not a Replicant: it holds
+ * secrets. Asked again whenever the team or the list of outs changes.
+ */
+let me: TeamMe | undefined;
+let meWatched = false;
+const meListeners = new Set<() => void>();
+
+function loginEnabled(): boolean {
+	const scope = globalThis as unknown as {
+		nodecg?: { config?: { login?: { enabled?: boolean } } };
+	};
+	return Boolean(scope.nodecg?.config?.login?.enabled);
+}
+
+function loadMe(): void {
+	void fetch(`${TEAM_BASE}/me`, { headers: { accept: "application/json" } })
+		.then((response) => (response.ok ? (response.json() as Promise<TeamMe>) : undefined))
+		.then((next) => {
+			if (!next || typeof next.role !== "string") return;
+			me = next;
+			for (const listener of meListeners) listener();
+		})
+		.catch(() => {
+			// Offline for a moment: what was known stays.
+		});
+}
+
+function subscribeMe(listener: () => void): () => void {
+	meListeners.add(listener);
+	if (!meWatched) {
+		meWatched = true;
+		const nodecg = getNodecg();
+		nodecg.Replicant<number>(REPLICANTS.teamRevision, BUNDLE_NAME).on("change", loadMe);
+		// A new out has a key the last answer does not know.
+		let known = "";
+		getDb().outs.on("change", (outs: Out[] | undefined) => {
+			const ids = (outs ?? []).map((out) => out.id).join("\n");
+			if (ids !== known) {
+				known = ids;
+				loadMe();
+			}
+		});
+	}
+	return () => meListeners.delete(listener);
+}
+
+/** The operator, as state; `undefined` until the server has answered. */
+export function useMe(): TeamMe | undefined {
+	return useSyncExternalStore(subscribeMe, () => me);
+}
+
+/** Every out there is — for the Team panel, where an administrator shares them out. */
+export function useAllOuts(): Out[] {
+	return useReplicantValue(() => getDb().outs, EMPTY_OUTS);
+}
+
+/** Moves whenever the team is edited, by anyone. */
+export function useTeamRevision(): number {
+	return useReplicantValue(
+		() => getNodecg().Replicant<number>(REPLICANTS.teamRevision, BUNDLE_NAME) as ClientReplicant<number>,
+		0,
+	);
+}
+
+/** Whether the operator manages the team and the outs. Everyone does while the sign-in is off. */
+export function useIsAdmin(): boolean {
+	const current = useMe();
+	return current ? current.role === "admin" : !loginEnabled();
+}
+
+/** The outs an operator works with: all of them for an administrator. */
+function visibleOuts(outs: Out[], current: TeamMe | undefined): Out[] {
+	if (!current) return loginEnabled() ? EMPTY_OUTS : outs;
+	if (current.outs === "all") return outs;
+	const mine = new Set(current.outs);
+	return outs.filter((out) => mine.has(out.id));
+}
+
+/**
+ * The address that goes into OBS. With the sign-in switched on it carries a
+ * key: a Browser Source has no session. The key is the out's own — the same
+ * address for everyone on the team, whoever signs in or out, and it opens
+ * that out and nothing else.
+ */
 export function absoluteOutUrl(outId: string): string {
-	return `${window.location.origin}${outUrl(outId)}`;
+	return `${window.location.origin}${outUrl(outId, { token: me?.outKeys[outId] })}`;
+}
+
+/** The same address as state: a panel that shows it redraws once the key is known. */
+export function useOutUrl(outId: string): string {
+	useMe();
+	return absoluteOutUrl(outId);
 }
 
 export function copyText(text: string): Promise<void> {

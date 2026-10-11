@@ -2,7 +2,7 @@
 	"name": "notGT",
 	"version": "0.7.2",
 	"private": true,
-	"description": "notGT — web titling / animation system for NodeCG. Multi-out broadcast graphics controlled from the dashboard, Bitfocus Companion or plain HTTP.",
+	"description": "notGT — web titling / animation system for NodeCG. Multi-out broadcast graphics controlled from the dashboard, Bitfocus Companion, plain HTTP or a WebSocket.",
 	"license": "MIT",
 	"type": "commonjs",
 	"nodecg": {
@@ -26,6 +26,13 @@
 				"name": "editor",
 				"title": "Editor",
 				"file": "editor.html",
+				"fullbleed": true,
+				"headerColor": "#0c2b25"
+			},
+			{
+				"name": "team",
+				"title": "Team",
+				"file": "team.html",
 				"fullbleed": true,
 				"headerColor": "#0c2b25"
 			}
@@ -64,13 +71,15 @@
 		"build": "node scripts/build.mjs",
 		"watch": "node scripts/build.mjs --watch",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test:e2e": "node scripts/e2e-out.mjs && node scripts/e2e-panels.mjs && node scripts/e2e-excel.mjs && node scripts/e2e-media.mjs",
+		"test:e2e": "node scripts/e2e-out.mjs && node scripts/e2e-panels.mjs && node scripts/e2e-excel.mjs && node scripts/e2e-media.mjs && node scripts/e2e-ws.mjs",
+		"test:e2e:team": "node scripts/e2e-team.mjs && node scripts/e2e-ws.mjs",
 		"convert-alpha": "node scripts/convert-alpha.mjs"
 	},
 	"devDependencies": {
 		"@types/node": "^20.19.0",
 		"@types/react": "^18.3.12",
 		"@types/react-dom": "^18.3.1",
+		"@types/ws": "^8.18.2",
 		"@vitejs/plugin-react": "^4.3.4",
 		"esbuild": "^0.24.0",
 		"exceljs": "^4.4.0",
@@ -79,6 +88,7 @@
 		"react-dom": "^18.3.1",
 		"react-konva": "^18.2.10",
 		"typescript": "^5.6.3",
-		"vite": "^5.4.11"
+		"vite": "^5.4.11",
+		"ws": "^8.22.0"
 	}
 }

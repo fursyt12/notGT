@@ -13,7 +13,6 @@ import { collectBindingPaths } from "../shared/binding";
 import type { Out, OutItem, TitleTemplate } from "../shared/types";
 import { N_, getLang, t, tr, useLang, type Phrase } from "./i18n";
 import {
-	absoluteOutUrl,
 	addExample,
 	addItem,
 	clone,
@@ -29,6 +28,8 @@ import {
 	saveTemplate,
 	triggerItem,
 	updateItem,
+	useIsAdmin,
+	useOutUrl,
 	useOuts,
 	useRuntime,
 	useTemplates,
@@ -181,7 +182,8 @@ function PlacementRow({
 function OutCard({ out }: { out: Out }) {
 	const templates = useTemplates();
 	const runtime = useRuntime();
-	const url = absoluteOutUrl(out.id);
+	const url = useOutUrl(out.id);
+	const admin = useIsAdmin();
 	const playing = runtime.playing?.[out.id] ?? [];
 	const items = [...out.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
@@ -220,7 +222,7 @@ function OutCard({ out }: { out: Out }) {
 					value={out.height}
 					onCommit={(height) => saveOut({ ...clone(out), height })}
 				/>
-				<Menu items={outMenu} label={t("Actions: {name}", { name: out.name })} />
+				{admin ? <Menu items={outMenu} label={t("Actions: {name}", { name: out.name })} /> : null}
 			</header>
 
 			<div className="tt-url">
@@ -386,6 +388,7 @@ function Library() {
 
 function App() {
 	const outs = useOuts();
+	const admin = useIsAdmin();
 	useLang();
 
 	return (
@@ -395,15 +398,19 @@ function App() {
 					<h2>Outs</h2>
 					<span className="hint truncate">{t("One out is one Browser Source in OBS")}</span>
 					<span className="spacer" />
-					<button type="button" onClick={() => createOut(t("New out"))}>
-						<Icon name="plus" size={14} />
-						{t("New out")}
-					</button>
+					{admin ? (
+						<button type="button" onClick={() => createOut(t("New out"))}>
+							<Icon name="plus" size={14} />
+							{t("New out")}
+						</button>
+					) : null}
 				</header>
 				{outs.length === 0 ? (
 					<section className="panel">
 						<div className="empty">
-							{t("No outs yet. Create the first one and paste its address into a Browser Source in OBS.")}
+							{admin
+								? t("No outs yet. Create the first one and paste its address into a Browser Source in OBS.")
+								: t("No outs are shared with you yet. An administrator adds outs to your group in the Team panel.")}
 						</div>
 					</section>
 				) : (

@@ -30,6 +30,12 @@ export const REPLICANTS = {
 	meta: "meta",
 	/** Spreadsheets whose sheets are list variables (`DataSource[]`). Persistent. */
 	sources: "sources",
+	/**
+	 * A counter that moves when the team changes (users, groups, keys). The
+	 * team itself is not a Replicant — it holds secrets — so panels watch this
+	 * and ask again. Not persistent.
+	 */
+	teamRevision: "teamRevision",
 } as const;
 
 /**
@@ -362,7 +368,10 @@ export interface RuntimeState {
 	revision: number;
 }
 
-/** Shape returned by `GET /api/state` — this is what Companion polls. */
+/**
+ * Shape returned by `GET /api/state` — what Companion polls — and pushed in the
+ * `state` frame of the WebSocket API.
+ */
 export interface PublicState {
 	active: ActiveTitleState;
 	/** Flattened mirrors of `active`, so Companion can bind a JSON path directly. */
@@ -373,7 +382,21 @@ export interface PublicState {
 	revision: number;
 	/** arrayPath -> chosen element index. */
 	selection: VariableSelection;
-	outs?: Array<{ id: string; name: string; width: number; height: number; url: string }>;
+	outs?: Array<{
+		id: string;
+		name: string;
+		width: number;
+		height: number;
+		url: string;
+		/** The placements, in short: enough to trigger one or flip its toggle. */
+		items: Array<{
+			id: string;
+			templateId: string;
+			enabled: boolean;
+			held: boolean;
+			mode: PlaybackConfig["mode"];
+		}>;
+	}>;
 	templates?: Array<{ id: string; name: string; kind: TemplateKind }>;
 }
 

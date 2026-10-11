@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -7,7 +8,70 @@ import { klona as clone } from "klona/json";
 import type { NodeCG } from "../../types/nodecg";
 import { nodecgConfigSchema } from "../../types/nodecg-config-schema";
 
-export const loadConfig = (cfgDirOrFile: string) => {
+/**
+ * notGT: the sign-in is on unless someone switched it off.
+ *
+ * Who signs in comes from one of three places, the first that speaks:
+ *
+ *  1. a `login` block in the config file. `enabled: true` is NodeCG's own
+ *     login, as configured; `enabled: false` switches the sign-in off (this is
+ *     what the launcher's «Отключить» writes);
+ *  2. `NOTGT_LOGIN=off` in the environment — off; or `NOTGT_LOGIN_USER` and
+ *     `NOTGT_LOGIN_PASSWORD` — the local login for that one operator, for a
+ *     container whose whole configuration is a few lines of `.env`;
+ *  3. nothing at all — the local login with no operator of its own. The notGT
+ *     bundle then keeps the users, starting with a default administrator
+ *     (`admin` / `admin`) that it asks to be given a real password.
+ *
+ * The sessions are salted with `NOTGT_SESSION_SECRET`, or with a secret made
+ * up for this run when it is not set.
+ */
+const sessionSecret = (env: NodeJS.ProcessEnv): string =>
+	env.NOTGT_SESSION_SECRET?.trim() || crypto.randomBytes(32).toString("hex");
+
+export const loginIsOff = (env: NodeJS.ProcessEnv = process.env): boolean =>
+	["off", "false", "no", "0"].includes(
+		env.NOTGT_LOGIN?.trim().toLowerCase() ?? "",
+	);
+
+export const loginFromEnv = (env: NodeJS.ProcessEnv = process.env) => {
+	const username = env.NOTGT_LOGIN_USER?.trim() ?? "";
+	const password = env.NOTGT_LOGIN_PASSWORD ?? "";
+	if (!username && !password) {
+		return undefined;
+	}
+
+	// Half a login would leave the dashboard open while looking protected.
+	if (!username || !password) {
+		throw new Error(
+			"NOTGT_LOGIN_USER and NOTGT_LOGIN_PASSWORD must be set together",
+		);
+	}
+
+	return {
+		enabled: true,
+		sessionSecret: sessionSecret(env),
+		local: {
+			enabled: true,
+			allowedUsers: [{ username, password }],
+		},
+	};
+};
+
+/** The sign-in nobody configured: on, with the users the bundle keeps. */
+export const defaultLogin = (env: NodeJS.ProcessEnv = process.env) => ({
+	enabled: true,
+	sessionSecret: sessionSecret(env),
+	local: {
+		enabled: true,
+		allowedUsers: [],
+	},
+});
+
+export const loadConfig = (
+	cfgDirOrFile: string,
+	env: NodeJS.ProcessEnv = process.env,
+) => {
 	let isFile = false;
 	try {
 		isFile = fs.lstatSync(cfgDirOrFile).isFile();
@@ -31,7 +95,18 @@ export const loadConfig = (cfgDirOrFile: string) => {
 		stopDir: cfgDir,
 	});
 	const result = cc.search(cfgDir);
-	const userCfg = result?.config ?? {};
+	const fileCfg = result?.config ?? {};
+	let userCfg = fileCfg;
+	if (fileCfg?.login === undefined && !loginIsOff(env)) {
+		userCfg = { ...fileCfg, login: loginFromEnv(env) ?? defaultLogin(env) };
+	} else if (fileCfg?.login?.enabled === false && !loginIsOff(env)) {
+		// The file says "off"; an operator named in the environment is a
+		// later, more deliberate word.
+		const envLogin = loginFromEnv(env);
+		if (envLogin) {
+			userCfg = { ...fileCfg, login: envLogin };
+		}
+	}
 
 	if (userCfg?.bundles?.enabled && userCfg?.bundles?.disabled) {
 		throw new Error(

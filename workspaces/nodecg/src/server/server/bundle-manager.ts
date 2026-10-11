@@ -191,7 +191,7 @@ export class BundleManager extends TypedEmitter<BundleManagerEventMap> {
 				// Parse each bundle and push the result onto the bundles array
 				const bundle = parseBundle(
 					bundlePath,
-					loadBundleCfg(cfgPath, bundleName),
+					loadBundleCfg(cfgPath, bundleName, bundlePath),
 				);
 
 				if (isLegacyProject()) {
@@ -360,7 +360,7 @@ export class BundleManager extends TypedEmitter<BundleManagerEventMap> {
 			try {
 				const reparsedBundle = parseBundle(
 					bundle.dir,
-					loadBundleCfg(this._cfgPath, bundle.name),
+					loadBundleCfg(this._cfgPath, bundle.name, bundle.dir),
 				);
 				this.add(reparsedBundle);
 				this.emit("bundleChanged", reparsedBundle);
@@ -404,24 +404,36 @@ function isGitData(bundleName: string, filePath: string): boolean {
 
 /**
  * Determines which config file to use for a bundle.
+ *
+ * NodeCG's own place for it is the `cfg` folder of the installation. notGT
+ * also looks in the `cfg` folder of the bundle itself: that is where the notGT
+ * bundle keeps its config (`bundles/notGT/cfg/notGT.json`), so that it travels
+ * with the bundle and can be mounted into a container on its own. The
+ * installation's folder wins when both have a file.
  */
 function loadBundleCfg(
 	cfgDir: string,
 	bundleName: string,
+	bundleDir?: string,
 ): NodeCG.Bundle.UnknownConfig | undefined {
+	const searchPlaces = [
+		`${bundleName}.json`,
+		`${bundleName}.yaml`,
+		`${bundleName}.yml`,
+		`${bundleName}.js`,
+		`${bundleName}.config.js`,
+	];
+	const dirs = bundleDir ? [cfgDir, path.join(bundleDir, "cfg")] : [cfgDir];
 	try {
-		const cc = cosmiconfig("nodecg", {
-			searchPlaces: [
-				`${bundleName}.json`,
-				`${bundleName}.yaml`,
-				`${bundleName}.yml`,
-				`${bundleName}.js`,
-				`${bundleName}.config.js`,
-			],
-			stopDir: cfgDir,
-		});
-		const result = cc.search(cfgDir);
-		return result?.config;
+		for (const dir of dirs) {
+			const cc = cosmiconfig("nodecg", { searchPlaces, stopDir: dir });
+			const result = cc.search(dir);
+			if (result) {
+				return result.config;
+			}
+		}
+
+		return undefined;
 	} catch (_: unknown) {
 		throw new Error(
 			`Config for bundle "${bundleName}" could not be read. Ensure that it is valid JSON, YAML, or CommonJS.`,

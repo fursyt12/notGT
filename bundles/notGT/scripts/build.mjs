@@ -79,6 +79,7 @@ const dashboardEntries = {
 	control: SRC("dashboard", "control.tsx"),
 	titles: SRC("dashboard", "titles.tsx"),
 	editor: SRC("dashboard", "editor.tsx"),
+	team: SRC("dashboard", "team.tsx"),
 };
 
 const graphicsEntries = {

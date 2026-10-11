@@ -1,0 +1,167 @@
+/* notGT — Team panel (fullbleed workspace tab): users, groups and keys.
+ *
+ * Only `tm-` prefixed classes live here; everything else comes from ui.css.
+ */
+
+.tm {
+	display: grid;
+	grid-template-columns: minmax(420px, 1.1fr) minmax(380px, 1fr);
+	align-items: start;
+	gap: 20px;
+	width: 100%;
+	max-width: 1480px;
+	margin: 0 auto;
+	padding: 20px;
+}
+
+.tm--single {
+	grid-template-columns: minmax(0, 1fr);
+	max-width: 760px;
+}
+
+.tm-wide {
+	grid-column: 1 / -1;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+@media (max-width: 900px) {
+	.tm {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.tm-col {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+}
+
+.tm-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 32px;
+	padding-left: 16px;
+}
+
+.tm-error {
+	padding: 0 16px;
+}
+
+/* The one thing on this page that should not be left for later. */
+.tm-warn {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	padding: 12px 16px;
+	border: 1px solid var(--ng-danger);
+}
+
+/* ------------------------------------------------------------------- groups */
+
+.tm-group__name {
+	font-size: 15px;
+}
+
+.tm-block {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px 16px;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.tm-label {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--ng-muted);
+}
+
+.tm-picks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 18px;
+}
+
+.tm-pick {
+	max-width: 100%;
+}
+
+.tm-key {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.tm-key__label {
+	flex: 0 0 110px;
+	font-weight: 500;
+}
+
+.tm-key input,
+.tm-link input {
+	color: var(--ng-muted);
+}
+
+/* -------------------------------------------------------------------- users */
+
+.tm-user {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 8px 12px 16px;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.tm-user:first-child {
+	border-top: 0;
+}
+
+.tm-user__head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 32px;
+}
+
+.tm-user__name {
+	flex: 0 1 auto;
+	font-weight: 500;
+}
+
+/* The role is a word or two: the field is as wide as that, and the name keeps the rest. */
+.tm-user__head select {
+	flex: 0 0 auto;
+	width: auto;
+}
+
+.tm-new {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 12px 16px;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+/* -------------------------------------------------------------------- links */
+
+.tm-link {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 46px;
+	padding: 4px 8px 4px 16px;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.tm-link:first-child {
+	border-top: 0;
+}
+
+.tm-link__name {
+	flex: 0 0 120px;
+	font-weight: 500;
+}

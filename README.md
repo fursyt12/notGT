@@ -60,6 +60,14 @@ ready to use the moment it starts.
   switched off. The timers run on the server, so every out and every dashboard agree.
 - **REST API.** Show, hide, toggle and trigger titles, write variables, manage outs and
   the library — from Companion, a script or `curl`.
+- **WebSocket API.** The same verbs on `/api/ws`, with the state pushed when it changes —
+  what a Companion module connects to, no polling.
+- **Sign-in.** The dashboard asks for a username and a password — `admin` / `admin` on a
+  new server, to be changed on the first day — and the API is not open to the whole
+  network. It can be switched off for a closed show LAN.
+- **Team.** An administrator adds users and puts them in groups — VJ, streamer 1,
+  streamer 2. A group has its outs and its own WebSocket keys; every out has one OBS link
+  that belongs to no one and opens that out only.
 - **Alpha video.** Drop a ProRes or HEVC clip with transparency onto the editor and it
   is converted with ffmpeg to something a browser can play.
 - **Excel as data.** Drop a workbook on the Data panel, or track one on the server: each
@@ -97,9 +105,11 @@ cd notGT
 docker compose up --build -d      # http://localhost:9090/dashboard/
 ```
 
-No reverse proxy and no `.env` are needed. Set `NOTGT_PORT` in a `.env` (copy
-`.env.example`) to publish another port, and see the commented-out TRAEFIK block in
-`docker-compose.yml` for a hostname, TLS and Basic Auth in front of it.
+Sign in as **`admin` / `admin`** and change the password in the **Team** tab straight
+away. No reverse proxy and no `.env` are needed. Set `NOTGT_PORT` in a `.env` (copy
+`.env.example`) to publish another port, `NOTGT_LOGIN=off` to switch the sign-in off, and
+see the commented-out TRAEFIK block in `docker-compose.yml` for a hostname and TLS in
+front of it.
 
 <details>
 <summary>If the image does not build</summary>
@@ -237,7 +247,7 @@ docs/                   the Windows build, notes on the core
 
 | | |
 | --- | --- |
-| **[Operator manual](bundles/notGT/README.md)** · [по-русски](bundles/notGT/README_RU.md) | The mental model, the three panels, the full REST API, OBS and Companion setup, writing a code animation, alpha video, persistence, troubleshooting |
+| **[Operator manual](bundles/notGT/README.md)** · [по-русски](bundles/notGT/README_RU.md) | The mental model, the panels, sign-in and the team, the full REST and WebSocket API, OBS and Companion setup, writing a code animation, alpha video, persistence, troubleshooting |
 | **[Generating titles with an LLM](GENERATE_TITLES.md)** · [по-русски](GENERATE_TITLES_RU.md) | A prompt that already knows the runtime contract: fill in what you want, get `html` / `css` / `js` for a code animation |
 | **[Windows build](docs/windows-build.md)** | The layout of the portable package, the build flags, the release process |
 | **[Launcher](launcher/README.md)** | The small control panel that starts the server on Windows |

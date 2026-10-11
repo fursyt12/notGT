@@ -220,6 +220,14 @@ export class Replicator {
 				JSON.stringify(data, undefined, 2),
 			);
 			try {
+				if (
+					socket.data.readOnly &&
+					!this.declaredReplicants.get(data.namespace)?.has(data.name)
+				) {
+					cb("This key only reads", undefined);
+					return;
+				}
+
 				const replicant = this.declare(data.name, data.namespace, data.opts);
 				cb(undefined, {
 					value: replicant.value,
@@ -282,6 +290,17 @@ export class Replicator {
 
 		socket.on("replicant:read", (data, cb) => {
 			log.replicants("replicant:read", JSON.stringify(data, undefined, 2));
+			if (
+				socket.data.readOnly &&
+				!this.declaredReplicants.get(data.namespace)?.has(data.name)
+			) {
+				if (typeof cb === "function") {
+					cb(undefined, undefined);
+				}
+
+				return;
+			}
+
 			const replicant = this.declare(data.name, data.namespace);
 			if (typeof cb === "function") {
 				if (replicant) {

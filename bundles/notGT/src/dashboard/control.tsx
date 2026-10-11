@@ -18,7 +18,7 @@ import type {
 	VariableSelection,
 } from "../shared/types";
 import {
-	absoluteOutUrl,
+	useOutUrl,
 	addArrayColumn,
 	appendArrayItem,
 	coerce,
@@ -312,7 +312,7 @@ function OutBlock({ out }: { out: Out }) {
 					{out.width}×{out.height}
 				</span>
 				<span className="spacer" />
-				<CopyButton text={absoluteOutUrl(out.id)} label={t("Link for OBS")} />
+				<CopyButton text={useOutUrl(out.id)} label={t("Link for OBS")} />
 			</header>
 			{items.length === 0 ? (
 				<div className="empty">
