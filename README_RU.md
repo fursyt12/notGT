@@ -22,6 +22,10 @@
   <img alt="Лицензия MIT" src="https://img.shields.io/badge/licence-MIT-FFD23F?style=flat-square&labelColor=0C2B25">
 </p>
 
+## Демо
+
+https://github.com/user-attachments/assets/52d9aae9-f9ee-41ef-9719-8a67913fda9d
+
 <p align="center">
   <img src="media/screenshots/on-air.png" alt="Плашка с именем, счёт матча, опрос и логотип с плашкой эфира — в эфире" width="900">
 </p>
