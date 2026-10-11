@@ -9,10 +9,13 @@
  *     notGT.cmd               fallback bootstrap (always works)
  *     launcher/index.mjs      control UI + server supervisor
  *     launcher/ui.html
- *     node/node.exe ...       official Windows Node runtime
+ *     node/node.exe           official Windows Node runtime (nothing else of it)
  *     app/                    NodeCG runtime root
- *       index.js, package.json, node_modules/, workspaces/<pkg>/dist
- *       bundles/notGT/        built bundle (no node_modules)
+ *       index.js, package.json
+ *       workspaces/nodecg/    the server bundled into one file, its templates,
+ *                             schemas and client (see windows-app.mjs)
+ *       node_modules/         only what cannot be bundled: native addons
+ *       bundles/notGT/        built bundle (no sources, no node_modules)
  *       cfg/ db/ assets/ logs/
  *     README.txt
  *
@@ -38,6 +41,14 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
+import {
+	bundleServer,
+	copyRuntimeModules,
+	copySideFiles,
+	smokeTest,
+	writeLicences,
+} from "./windows-app.mjs";
+
 // ---------------------------------------------------------------------------
 // Constants / CLI
 // ---------------------------------------------------------------------------
@@ -51,6 +62,14 @@ const LAUNCHER_EXE_NAME = "notGT Launcher.exe";
 const BUNDLE_DIR = path.join(REPO_ROOT, "bundles", "notGT");
 const LAUNCHER_DIR = path.join(REPO_ROOT, "launcher");
 const LAUNCHER_C_SRC = path.join(LAUNCHER_DIR, "win", "notGT-launcher.c");
+/** The NodeCG server, relative to the root of an installed tree. */
+const SERVER_ENTRY = path.join(
+	"workspaces",
+	"nodecg",
+	"dist",
+	"server",
+	"bootstrap.js",
+);
 const NODE_DIST_BASE = "https://nodejs.org/dist";
 
 function parseArgs(argv) {
@@ -59,6 +78,9 @@ function parseArgs(argv) {
 		out: "dist",
 		skipBuild: false,
 		zip: true,
+		smoke: false,
+		appOnly: false,
+		prodRoot: null,
 		help: false,
 	};
 	for (let i = 0; i < argv.length; i++) {
@@ -79,6 +101,16 @@ function parseArgs(argv) {
 				break;
 			case "--no-zip":
 				opts.zip = false;
+				break;
+			case "--smoke":
+				opts.smoke = true;
+				break;
+			case "--app-only":
+				opts.appOnly = true;
+				opts.zip = false;
+				break;
+			case "--prod-root":
+				opts.prodRoot = path.resolve(take());
 				break;
 			case "--help":
 			case "-h":
@@ -190,6 +222,25 @@ function human(bytes) {
 	return `${n.toFixed(n >= 10 || u === 0 ? 0 : 1)} ${units[u]}`;
 }
 
+function countFiles(dir) {
+	let total = 0;
+	const stack = [dir];
+	while (stack.length > 0) {
+		const current = stack.pop();
+		let entries;
+		try {
+			entries = fs.readdirSync(current, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			if (entry.isDirectory()) stack.push(path.join(current, entry.name));
+			else total += 1;
+		}
+	}
+	return total;
+}
+
 function dirSize(dir) {
 	let total = 0;
 	const stack = [dir];
@@ -233,9 +284,10 @@ function exists(p) {
  * privileges to unzip on Windows — is useless. So walk the tree manually and
  * copy through the links, skipping symlink cycles.
  *
- * `skipNames` drops entries by basename (e.g. `node_modules`).
+ * `skipNames` drops entries by basename (e.g. `node_modules`); `keep`, when
+ * given, is asked about every other entry and drops the ones it refuses.
  */
-function copyTree(src, dest, { skipNames = [] } = {}) {
+function copyTree(src, dest, { skipNames = [], keep = null } = {}) {
 	if (!exists(src)) throw new Error(`Cannot copy missing path: ${src}`);
 	const active = new Set(); // realpaths on the current descent, for cycles
 
@@ -257,6 +309,7 @@ function copyTree(src, dest, { skipNames = [] } = {}) {
 			fs.mkdirSync(to, { recursive: true });
 			for (const entry of fs.readdirSync(from)) {
 				if (skipNames.includes(entry)) continue;
+				if (keep && !keep(path.join(from, entry), entry)) continue;
 				walk(path.join(from, entry), path.join(to, entry));
 			}
 			active.delete(real);
@@ -380,6 +433,20 @@ function listWorkspaces() {
  * touched (it is needed by the running dev server).
  */
 function stageProductionNodeModules() {
+	// `--prod-root`: a tree that is already installed for production — the
+	// manifests, the built workspaces and `node_modules` side by side, as in
+	// the Docker image. It is read, never modified.
+	if (opts.prodRoot) {
+		const entry = path.join(opts.prodRoot, SERVER_ENTRY);
+		if (!exists(path.join(opts.prodRoot, "node_modules")) || !exists(entry)) {
+			throw new Error(
+				`--prod-root ${opts.prodRoot} must hold node_modules and ${SERVER_ENTRY}`,
+			);
+		}
+		log(`Using the production tree at ${opts.prodRoot} (no install)`);
+		return { stage: opts.prodRoot, temporary: false };
+	}
+
 	const stage = fs.mkdtempSync(path.join(os.tmpdir(), "notgt-win-stage-"));
 	log(
 		`Staging production dependencies in ${stage} (root node_modules untouched)…`,
@@ -405,49 +472,122 @@ function stageProductionNodeModules() {
 			PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true",
 		},
 	});
-	const stagedModules = path.join(stage, "node_modules");
-	if (!exists(path.join(stagedModules, "nodecg"))) {
+	if (!exists(path.join(stage, "node_modules", "nodecg"))) {
 		throw new Error("Staging install did not produce node_modules/nodecg");
 	}
-	return { stage, stagedModules };
+	return { stage, temporary: true };
 }
 
 // ---------------------------------------------------------------------------
 // 3. Assemble app/
 // ---------------------------------------------------------------------------
 
-function assembleApp(stagedModules) {
+/** Files of the notGT bundle that are only needed to build or test it. */
+function bundleRuntimeFile(full, name) {
+	if (name.endsWith(".map")) return false;
+	const parent = path.dirname(full);
+	if (parent === BUNDLE_DIR) {
+		return !["src", "package-lock.json", "tsconfig.json"].includes(name);
+	}
+	// The one script the running server calls is the alpha-video converter.
+	if (parent === path.join(BUNDLE_DIR, "scripts")) return name === "convert-alpha.mjs";
+	return true;
+}
+
+/**
+ * `app/` is what the server runs from. NodeCG finds itself by the `nodecgRoot`
+ * flag of `app/package.json`, at `app/workspaces/nodecg`, and reads its
+ * templates, schemas and client files from there — so those are laid out as in
+ * the repository, and the server is one bundled file in the usual place.
+ */
+async function assembleApp(stage) {
 	const app = path.join(PACKAGE_DIR, "app");
 	fs.mkdirSync(app, { recursive: true });
 
-	// Runtime entry point + root manifest (needed: nodecgRoot: true).
-	fs.copyFileSync(path.join(REPO_ROOT, "index.js"), path.join(app, "index.js"));
+	// The root manifest (needed: nodecgRoot: true) and an entry point that
+	// loads the bundled server directly; there is no `node_modules/nodecg`.
 	fs.copyFileSync(
 		path.join(REPO_ROOT, "package.json"),
 		path.join(app, "package.json"),
 	);
+	fs.writeFileSync(
+		path.join(app, "index.js"),
+		'import "./workspaces/nodecg/dist/server/bootstrap.js";\n',
+		"utf8",
+	);
 
-	// Built workspaces (dist/, types/, schemas/, …) — no nested node_modules.
-	fs.mkdirSync(path.join(app, "workspaces"), { recursive: true });
-	for (const ws of listWorkspaces()) {
-		copyTree(ws, path.join(app, "workspaces", path.basename(ws)), {
-			skipNames: ["node_modules"],
-		});
+	// NodeCG: its manifest, what it reads from disk, and the server itself.
+	const nodecgSrc = path.join(stage, "workspaces", "nodecg");
+	const nodecg = path.join(app, "workspaces", "nodecg");
+	fs.mkdirSync(path.join(nodecg, "dist", "server"), { recursive: true });
+	fs.copyFileSync(
+		path.join(nodecgSrc, "package.json"),
+		path.join(nodecg, "package.json"),
+	);
+	copyTree(path.join(nodecgSrc, "schemas"), path.join(nodecg, "schemas"));
+	copyTree(
+		path.join(nodecgSrc, "dist", "client"),
+		path.join(nodecg, "dist", "client"),
+		{ keep: (_full, name) => !name.endsWith(".map") },
+	);
+	copyTree(
+		path.join(nodecgSrc, "dist", "server", "templates"),
+		path.join(nodecg, "dist", "server", "templates"),
+	);
+
+	log("Bundling the server into one file…");
+	const server = await bundleServer({
+		entry: path.join(stage, SERVER_ENTRY),
+		outFile: path.join(app, SERVER_ENTRY),
+		nodeMajor: opts.nodeVersion.split(".")[0],
+		esbuildFrom: [BUNDLE_DIR, REPO_ROOT],
+	});
+	log(
+		`  ${human(server.bytes)} from ${server.packages.length} packages` +
+			(server.warnings.length > 0 ? `, ${server.warnings.length} bundler warning(s)` : ""),
+	);
+	if (process.env.NOTGT_DEBUG) {
+		for (const text of server.warnings) console.log(`    warning: ${text}`);
+		log(`  not installed, left as run-time requires: ${server.absent.join(", ")}`);
+		for (const [name, bytes] of server.largest) {
+			console.log(`    ${human(bytes).padStart(10)}  ${name}`);
+		}
+	}
+	const sideFiles = copySideFiles(
+		server.packages,
+		path.dirname(path.join(app, SERVER_ENTRY)),
+	);
+	log(`  files the bundle reads next to itself: ${sideFiles.length}`);
+
+	const kept = copyRuntimeModules({
+		root: stage,
+		app,
+		externals: server.externals,
+		copyTree,
+	});
+	log(`  kept on disk (native addons and what they need): ${kept.join(", ") || "nothing"}`);
+	if (kept.length === 0) {
+		throw new Error(
+			"No native addon was found in the dependency tree — the database driver should be one.",
+		);
 	}
 
-	// Built notGT bundle — no node_modules, no e2e artifacts.
+	const licences = writeLicences(
+		path.join(app, "THIRD-PARTY-LICENSES.txt"),
+		server.packages,
+	);
+	log(`  licences of ${licences.packages} bundled packages → app/THIRD-PARTY-LICENSES.txt`);
+
+	// Built notGT bundle — no sources, no node_modules, no test artifacts.
 	fs.mkdirSync(path.join(app, "bundles"), { recursive: true });
 	copyTree(path.join(BUNDLE_DIR), path.join(app, "bundles", "notGT"), {
 		skipNames: ["node_modules", ".e2e"],
+		keep: bundleRuntimeFile,
 	});
 	// Never ship a real bundle config (apiToken lives there).
 	fs.rmSync(path.join(app, "bundles", "notGT", "cfg", "notGT.json"), {
 		force: true,
 	});
-
-	// Production-only dependency tree, symlinks dereferenced so the zip is
-	// portable to Windows without needing symlink support.
-	copyTree(stagedModules, path.join(app, "node_modules"));
 
 	// Fresh state directories. Deliberately NOT copied from the repo: cfg may
 	// hold secrets, db/ and assets/ hold the developer's data.
@@ -530,9 +670,16 @@ async function ensureNodeRuntime(destDir, version) {
 	if (!exists(path.join(inner, "node.exe"))) {
 		throw new Error(`node.exe missing after extracting ${zipName} (${inner})`);
 	}
+	// Only the runtime itself: npm and corepack are some 2,400 files that
+	// nothing in the package runs.
 	fs.rmSync(destDir, { recursive: true, force: true });
-	copyTree(inner, destDir);
-	log(`Node runtime placed in ${path.relative(REPO_ROOT, destDir)}`);
+	fs.mkdirSync(destDir, { recursive: true });
+	for (const file of ["node.exe", "LICENSE"]) {
+		if (exists(path.join(inner, file))) {
+			fs.copyFileSync(path.join(inner, file), path.join(destDir, file));
+		}
+	}
+	log(`Node runtime placed in ${path.relative(REPO_ROOT, destDir)} (node.exe only)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -724,13 +871,28 @@ function makeZip() {
 }
 
 function printSummary(zipPath, exeBuilt) {
-	const checks = [
+	const shell = [
 		["notGT Launcher.exe", path.join(PACKAGE_DIR, LAUNCHER_EXE_NAME)],
 		["notGT.cmd", path.join(PACKAGE_DIR, "notGT.cmd")],
 		["launcher/index.mjs", path.join(PACKAGE_DIR, "launcher", "index.mjs")],
 		["launcher/ui.html", path.join(PACKAGE_DIR, "launcher", "ui.html")],
 		["node/node.exe", path.join(PACKAGE_DIR, "node", "node.exe")],
+	];
+	const checks = [
+		...(opts.appOnly ? [] : shell),
 		["app/index.js", path.join(PACKAGE_DIR, "app", "index.js")],
+		[
+			"app/workspaces/nodecg/dist/server/bootstrap.js (the bundled server)",
+			path.join(PACKAGE_DIR, "app", SERVER_ENTRY),
+		],
+		[
+			"app/workspaces/nodecg/dist/client",
+			path.join(PACKAGE_DIR, "app", "workspaces", "nodecg", "dist", "client"),
+		],
+		[
+			"app/node_modules/better-sqlite3",
+			path.join(PACKAGE_DIR, "app", "node_modules", "better-sqlite3"),
+		],
 		[
 			"app/bundles/notGT/extension/index.js",
 			path.join(
@@ -741,10 +903,6 @@ function printSummary(zipPath, exeBuilt) {
 				"extension",
 				"index.js",
 			),
-		],
-		[
-			"app/workspaces/nodecg/dist",
-			path.join(PACKAGE_DIR, "app", "workspaces", "nodecg", "dist"),
 		],
 	];
 	console.log("");
@@ -760,13 +918,16 @@ function printSummary(zipPath, exeBuilt) {
 		.sort((a, b) => a.name.localeCompare(b.name))) {
 		const full = path.join(PACKAGE_DIR, entry.name);
 		const size = entry.isDirectory() ? dirSize(full) : fs.statSync(full).size;
+		const files = entry.isDirectory() ? `${countFiles(full)} files` : "";
 		console.log(
-			`  ${entry.isDirectory() ? "d" : "f"} ${entry.name.padEnd(24)} ${human(size)}`,
+			`  ${entry.isDirectory() ? "d" : "f"} ${entry.name.padEnd(24)} ${human(size).padStart(10)}  ${files}`,
 		);
 	}
-	log(`Total package size: ${human(dirSize(PACKAGE_DIR))}`);
+	log(
+		`Total package size: ${human(dirSize(PACKAGE_DIR))} in ${countFiles(PACKAGE_DIR)} files`,
+	);
 	if (zipPath) log(`Zip: ${zipPath} (${human(fs.statSync(zipPath).size)})`);
-	if (!exeBuilt) {
+	if (!exeBuilt && !opts.appOnly) {
 		warn(
 			`No "${LAUNCHER_EXE_NAME}": ship notGT.cmd as the entry point (or rebuild with mingw-w64).`,
 		);
@@ -777,11 +938,32 @@ function printSummary(zipPath, exeBuilt) {
 // main
 // ---------------------------------------------------------------------------
 
+/**
+ * The packaged `node.exe` can only run on Windows, and the native addons in
+ * `app/` are those of the machine that installed them. So on Windows the
+ * package is tested with its own runtime, and elsewhere with the Node that
+ * runs this script — which still proves the bundled server.
+ */
+async function runSmokeTest() {
+	const packaged = path.join(PACKAGE_DIR, "node", "node.exe");
+	await smokeTest({
+		app: path.join(PACKAGE_DIR, "app"),
+		node: IS_WINDOWS && exists(packaged) ? packaged : process.execPath,
+		copyTree,
+		log,
+	});
+}
+
 async function main() {
 	if (opts.help) {
 		console.log(
 			"Usage: node scripts/build-windows.mjs [--node-version 22.14.0] [--out dist]\n" +
-				"                                       [--skip-build] [--no-zip]",
+				"                                       [--skip-build] [--no-zip] [--smoke]\n" +
+				"                                       [--app-only] [--prod-root <dir>]\n\n" +
+				"  --smoke      start the packaged server and check that it works\n" +
+				"  --app-only   assemble app/ only: no Node runtime, launcher or zip\n" +
+				"  --prod-root  use an already installed production tree instead of\n" +
+				"               running `npm ci --omit=dev` in a staging directory",
 		);
 		return;
 	}
@@ -802,12 +984,20 @@ async function main() {
 	fs.rmSync(PACKAGE_DIR, { recursive: true, force: true });
 	fs.mkdirSync(PACKAGE_DIR, { recursive: true });
 
-	const { stage, stagedModules } = stageProductionNodeModules();
+	const { stage, temporary } = stageProductionNodeModules();
 	try {
 		log("Assembling app/…");
-		assembleApp(stagedModules);
+		await assembleApp(stage);
 	} finally {
-		fs.rmSync(stage, { recursive: true, force: true });
+		if (temporary) fs.rmSync(stage, { recursive: true, force: true });
+	}
+
+	if (opts.appOnly) {
+		log("--app-only: no Node runtime, launcher or zip");
+		if (opts.smoke) await runSmokeTest();
+		printSummary(null, false);
+		log("Done.");
+		return;
 	}
 
 	fs.mkdirSync(path.join(PACKAGE_DIR, "launcher"), { recursive: true });
@@ -826,6 +1016,8 @@ async function main() {
 	const exeBuilt = buildLauncherExe();
 	writeCmdFallback();
 	fs.writeFileSync(path.join(PACKAGE_DIR, "README.txt"), readmeText(), "utf8");
+
+	if (opts.smoke) await runSmokeTest();
 
 	const zipPath = opts.zip ? makeZip() : null;
 	printSummary(zipPath, exeBuilt);

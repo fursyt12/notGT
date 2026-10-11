@@ -102,7 +102,10 @@ jobs:
           & x86_64-w64-mingw32-gcc --version | Select-Object -First 1
 
       - name: Build the Windows package
-        run: node scripts/build-windows.mjs --node-version 22.14.0
+        # --smoke starts the packaged server with the packaged node.exe and
+        # checks the dashboard, the out page, the API and the database, so a
+        # package that cannot start on Windows fails here instead of shipping.
+        run: node scripts/build-windows.mjs --node-version 22.14.0 --smoke
 
       # Fail loudly rather than publishing a build without the launcher.
       - name: Assert the launcher executable exists
