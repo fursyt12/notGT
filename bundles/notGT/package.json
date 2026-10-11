@@ -1,6 +1,6 @@
 {
 	"name": "notGT",
-	"version": "0.7.1",
+	"version": "0.7.2",
 	"private": true,
 	"description": "notGT — web titling / animation system for NodeCG. Multi-out broadcast graphics controlled from the dashboard, Bitfocus Companion or plain HTTP.",
 	"license": "MIT",
