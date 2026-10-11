@@ -3,10 +3,39 @@
 	<head>
 		<meta http-equiv="X-UA-Compatible" content="IE=edge; charset=UTF-8">
 		<meta name="viewport" content="width=device-width" initial-scale="1">
-		<meta name="theme-color" content="#1b2430">
+		<meta name="theme-color" content="#0c2b25">
 		<link rel="manifest" href="/manifest.json">
+		<link rel="icon" href="/favicon.ico" sizes="any">
+		<link rel="icon" type="image/svg+xml" href="/dashboard/img/notgt-mark.svg">
+		<link rel="stylesheet" href="/dashboard/fonts/fonts.css">
 
 		<title>notGT</title>
+
+		<script type="text/javascript">
+			// notGT theme: picked in any panel of the notGT bundle and kept in
+			// localStorage("notgt.theme") as dark | light | system. Set before the
+			// first paint and followed live — a panel's change arrives as a
+			// `storage` event.
+			(function () {
+				var system = window.matchMedia("(prefers-color-scheme: light)");
+				function apply() {
+					var theme = "dark";
+					try {
+						theme = localStorage.getItem("notgt.theme") || "dark";
+					} catch (error) {}
+					if (theme === "system") theme = system.matches ? "light" : "dark";
+					theme = theme === "light" ? "light" : "dark";
+					document.documentElement.dataset.theme = theme;
+					var meta = document.querySelector('meta[name="theme-color"]');
+					if (meta) meta.content = theme === "light" ? "#f5ecda" : "#0c2b25";
+				}
+				apply();
+				window.addEventListener("storage", function (event) {
+					if (event.key === "notgt.theme") apply();
+				});
+				system.addEventListener("change", apply);
+			})();
+		</script>
 
 		<script type="text/javascript">
 			// Allow child iframes to reliably find this parent frame
@@ -56,9 +85,32 @@
 		<script src="/dashboard.js"></script>
 
 		<style>
+			/* notGT palette — mirrors bundles/notGT/dashboard/ui.css. Dark is Cream
+			   on Studio, light is Studio on Cream; Signal is the accent in both. */
+			html {
+				--notgt-bg: #0c2b25;
+				--notgt-bg-2: #123630;
+				--notgt-line: #2c5a4f;
+				--notgt-fg: #f5ecda;
+				--notgt-muted: #a9b8a8;
+				--notgt-accent: #ff5a8c;
+				--notgt-logo-on-dark: block;
+				--notgt-logo-on-light: none;
+			}
+
+			html[data-theme="light"] {
+				--notgt-bg: #f5ecda;
+				--notgt-bg-2: #ecdfc7;
+				--notgt-line: #c9ba9a;
+				--notgt-fg: #0c2b25;
+				--notgt-muted: #55695f;
+				--notgt-logo-on-dark: none;
+				--notgt-logo-on-light: block;
+			}
+
 			body {
 				overflow: hidden;
-				background-color: #1b2430;
+				background-color: var(--notgt-bg);
 				display: flex;
 				flex-direction: column;
 				margin: 0;

@@ -27,14 +27,14 @@ const css = String.raw`/*
  * Variables (all optional):
  *   speaker.name    the big line
  *   speaker.role    the chip above it
- *   speaker.accent  colour of the chip (#ff3b30)
+ *   speaker.accent  colour of the chip (#ff5a8c)
  */
 .kt {
 	position: absolute;
 	left: 0;
 	bottom: 0;
-	color: #fff;
-	font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+	color: #f5ecda;
+	font-family: Montserrat, "Segoe UI", Roboto, Arial, sans-serif;
 }
 
 /* The slanted cut on the trailing edge is a clip-path, so the chip can also be
@@ -42,8 +42,9 @@ const css = String.raw`/*
 .kt__chip {
 	display: inline-block;
 	padding: 11px 44px 11px 20px;
-	background: linear-gradient(135deg, var(--accent, #ff3b30), var(--accent-deep, #dc2a20));
+	background: linear-gradient(135deg, var(--accent, #ff5a8c), var(--accent-deep, #ff5a8c));
 	clip-path: polygon(0 0, 100% 0, calc(100% - 22px) 100%, 0 100%);
+	color: #0c2b25;
 	font-size: 27px;
 	font-weight: 700;
 	letter-spacing: 0.1em;
@@ -62,13 +63,13 @@ const css = String.raw`/*
 	line-height: 1.06;
 	letter-spacing: -0.025em;
 	white-space: nowrap;
-	text-shadow: 0 6px 28px rgba(4, 8, 14, 0.55);
+	text-shadow: 0 6px 28px rgba(3, 14, 11, 0.55);
 }
 
 .kt__rule {
 	width: 100%;
 	height: 4px;
-	background: linear-gradient(90deg, #fff 0, #fff 30%, rgba(255, 255, 255, 0) 100%);
+	background: linear-gradient(90deg, #f5ecda 0, #f5ecda 30%, rgba(245, 236, 218, 0) 100%);
 	transform-origin: left center;
 }
 

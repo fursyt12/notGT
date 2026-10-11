@@ -42,6 +42,7 @@ import type {
 import type { GalleryExample } from "../shared/examples/gallery";
 import { EditorCanvas } from "./editor/canvas";
 import { useCodeDocument } from "./editor/code-preview";
+import { Splitter, useDeskFullscreen, useEditorLayout, type LayoutEdge } from "./editor/layout";
 import {
 	CheckField,
 	ColorField,
@@ -100,6 +101,7 @@ import {
 	Icon,
 	IconButton,
 	LangSwitch,
+	ThemeSwitch,
 	Menu,
 	PlaybackFields,
 	exampleMenuItem,
@@ -206,10 +208,10 @@ function makeLayer(type: LayerType, z: number): Layer {
 			width: 40,
 			style: {
 				...base.style,
-				fontFamily: "Inter, 'Segoe UI', Roboto, Arial, sans-serif",
+				fontFamily: "Montserrat, 'Segoe UI', Roboto, Arial, sans-serif",
 				fontSize: 56,
 				fontWeight: 700,
-				color: "#ffffff",
+				color: "#f5ecda",
 				align: "left",
 				lineHeight: 1.15,
 				textTransform: "none",
@@ -223,7 +225,7 @@ function makeLayer(type: LayerType, z: number): Layer {
 			shape: "rect",
 			width: 30,
 			height: 12,
-			style: { ...base.style, fill: "#4aa8ff", radius: 8 },
+			style: { ...base.style, fill: "#ff5a8c", radius: 8 },
 		};
 	}
 	if (type === "video") {
@@ -1550,7 +1552,7 @@ function LayerInspector({
 					{srcPreview ? (
 						<img className="ed-image-preview" src={srcPreview} alt="" />
 					) : (
-						<div className="ed-image-preview ed-image-preview--empty">{t("No image set")}</div>
+						<div className="ed-image-preview ed-image-preview--empty" data-theme="dark">{t("No image set")}</div>
 					)}
 					<div className="ed-grid2">
 						<NumField
@@ -1970,13 +1972,18 @@ function CodeDock({
 	data,
 	onCode,
 	onHooks,
+	onResize,
+	onResetSize,
 }: {
 	template: TitleTemplate;
 	data: TitleData;
 	onCode: (patch: Partial<CodeBlock>) => void;
 	/** Called with the phases the previewed animation says it animates itself. */
 	onHooks: (hooks: CodeHooks) => void;
+	onResize: (edge: LayoutEdge, size: number) => void;
+	onResetSize: (edge: LayoutEdge) => void;
 }) {
+	const bodyRef = useRef<HTMLDivElement | null>(null);
 	const [tab, setTab] = useState<CodeTab>("html");
 	const [open, setOpen] = useState(true);
 	const [nonce, setNonce] = useState(0);
@@ -2021,6 +2028,16 @@ function CodeDock({
 
 	return (
 		<div className="ed-dock">
+			{open ? (
+				<Splitter
+					edge="dock"
+					label={t("Height of the code dock")}
+					title={t("Drag to resize · double-click to reset")}
+					measure={() => bodyRef.current?.getBoundingClientRect().height ?? 0}
+					onResize={onResize}
+					onReset={onResetSize}
+				/>
+			) : null}
 			<div className="ed-dock__bar">
 				<div className="ed-tabs" role="tablist" aria-label={t("Animation code")}>
 					{CODE_TABS.map((item) => (
@@ -2055,7 +2072,7 @@ function CodeDock({
 				/>
 			</div>
 			{/* Folded, not unmounted: the preview keeps running and reporting its hooks. */}
-			<div className="ed-dock__body" hidden={!open}>
+			<div className="ed-dock__body" hidden={!open} ref={bodyRef}>
 				{tab === "help" ? (
 					<CodeHelp />
 				) : (
@@ -2068,7 +2085,7 @@ function CodeDock({
 					/>
 				)}
 				<div className="ed-dock__preview">
-					<div className="ed-code-preview" ref={box.ref}>
+					<div className="ed-code-preview" data-theme="dark" ref={box.ref}>
 						{/* The iframe only exists once there is a document to show: an
 						    iframe created with an empty `srcdoc` and filled in a moment
 						    later sometimes keeps its initial about:blank and never
@@ -2142,6 +2159,10 @@ export function EditorApp() {
 	const [flash, setFlash] = useState("");
 	/** The crop tool is on: the canvas edits the active placement's window. */
 	const [cropMode, setCropMode] = useState(false);
+	const layout = useEditorLayout();
+	const deskFull = useDeskFullscreen();
+	const leftRef = useRef<HTMLDivElement | null>(null);
+	const rightRef = useRef<HTMLDivElement | null>(null);
 	const [inspectorTab, setInspectorTab] = useState<InspectorTab>("placement");
 	/** What the edited code animation animates itself; `null` until its preview reports. */
 	const [codeHooks, setCodeHooks] = useState<CodeHooks | null>(null);
@@ -2758,6 +2779,13 @@ export function EditorApp() {
 					<Icon name="crop" size={14} />
 					{t("Crop")}
 				</button>
+				<IconButton
+					className={deskFull.active ? "is-on" : undefined}
+					icon={deskFull.active ? "collapse" : "expand"}
+					label={deskFull.active ? t("Exit full screen") : t("The desk in full screen")}
+					onClick={deskFull.toggle}
+					disabled={!out}
+				/>
 				{cropMode && activeItem ? (
 					<>
 						<span className="ed-hint" data-crop-hint>
@@ -2809,11 +2837,12 @@ export function EditorApp() {
 				<button type="button" className="primary" onClick={persist} disabled={!draft || !dirty}>
 					{t("Save")}
 				</button>
+				<ThemeSwitch />
 				<LangSwitch />
 			</div>
 
-			<div className="ed-main">
-				<div className="ed-side">
+			<div className="ed-main" style={layout.style}>
+				<div className="ed-side" ref={leftRef}>
 					{out ? (
 						<OutItemsList
 							out={out}
@@ -2877,9 +2906,13 @@ export function EditorApp() {
 							onSelectLayer={setSelectedLayerId}
 							onLayerChange={updateLayer}
 							onItemChange={patchItem}
+							deskRef={deskFull.deskRef}
+							deskFull={deskFull.active}
+							deskFilled={deskFull.filled}
+							onToggleDeskFull={deskFull.toggle}
 						/>
 					) : (
-						<div className="ed-center">
+						<div className="ed-center" data-theme="dark">
 							<div className="ed-empty">
 								<h2>{outsLoaded ? t("No outs yet") : t("Loading…")}</h2>
 								{outsLoaded ? (
@@ -2896,6 +2929,8 @@ export function EditorApp() {
 							template={draft}
 							data={data}
 							onHooks={setCodeHooks}
+							onResize={layout.resize}
+							onResetSize={layout.reset}
 							onCode={(patch) =>
 								updateTemplate({
 									code: {
@@ -2914,7 +2949,24 @@ export function EditorApp() {
 					) : null}
 				</div>
 
-				<div className="ed-side ed-side--right">
+				<Splitter
+					edge="left"
+					label={t("Width of the left bar")}
+					title={t("Drag to resize · double-click to reset")}
+					measure={() => leftRef.current?.getBoundingClientRect().width ?? 0}
+					onResize={layout.resize}
+					onReset={layout.reset}
+				/>
+				<Splitter
+					edge="right"
+					label={t("Width of the right bar")}
+					title={t("Drag to resize · double-click to reset")}
+					measure={() => rightRef.current?.getBoundingClientRect().width ?? 0}
+					onResize={layout.resize}
+					onReset={layout.reset}
+				/>
+
+				<div className="ed-side ed-side--right" ref={rightRef}>
 					{draft ? (
 						<>
 							<div className="ed-tabs ed-tabs--fill" role="tablist" aria-label={t("Inspector")}>

@@ -13,21 +13,21 @@
 				"title": "Control",
 				"file": "control.html",
 				"fullbleed": true,
-				"headerColor": "#1d2b3a"
+				"headerColor": "#0c2b25"
 			},
 			{
 				"name": "titles",
 				"title": "Titles & Outs",
 				"file": "titles.html",
 				"fullbleed": true,
-				"headerColor": "#243b53"
+				"headerColor": "#0c2b25"
 			},
 			{
 				"name": "editor",
 				"title": "Editor",
 				"file": "editor.html",
 				"fullbleed": true,
-				"headerColor": "#102a43"
+				"headerColor": "#0c2b25"
 			}
 		],
 		"graphics": [
@@ -64,7 +64,7 @@
 		"build": "node scripts/build.mjs",
 		"watch": "node scripts/build.mjs --watch",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test:e2e": "node scripts/e2e-out.mjs && node scripts/e2e-panels.mjs && node scripts/e2e-media.mjs",
+		"test:e2e": "node scripts/e2e-out.mjs && node scripts/e2e-panels.mjs && node scripts/e2e-excel.mjs && node scripts/e2e-media.mjs",
 		"convert-alpha": "node scripts/convert-alpha.mjs"
 	},
 	"devDependencies": {
@@ -73,6 +73,7 @@
 		"@types/react-dom": "^18.3.1",
 		"@vitejs/plugin-react": "^4.3.4",
 		"esbuild": "^0.24.0",
+		"exceljs": "^4.4.0",
 		"konva": "^9.3.16",
 		"react": "^18.3.1",
 		"react-dom": "^18.3.1",

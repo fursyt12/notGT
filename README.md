@@ -1,48 +1,155 @@
-# NodeCG
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="media/brand/notgt-logo-on-dark.svg">
+    <img src="media/brand/notgt-logo.svg" alt="notGT" width="380">
+  </picture>
+</h1>
 
-**English** · [Русский](README_RU.md)
+<p align="center">
+  <b>Titles without the extra magic.</b><br>
+  Broadcast titles and animated graphics made with web technologies —<br>
+  an open alternative to vMix GT, built on NodeCG.
+</p>
 
-[![NodeCG](https://raw.githubusercontent.com/nodecg/nodecg/main/media/splash.png)](https://nodecg.dev/)
+<p align="center"><b>English</b> · <a href="README_RU.md">Русский</a></p>
 
-[![Discord](https://img.shields.io/discord/754749209722486814)](https://discord.gg/nsXXDFGBEt)
-[![Build Status](https://github.com/hoishin/nodecg/workflows/CI/badge.svg)](https://github.com/hoishin/nodecg/actions?query=workflow%3ACI)
-[![Coverage Status](https://codecov.io/gh/nodecg/nodecg/branch/main/graph/badge.svg)](https://codecov.io/gh/nodecg/nodecg)
-[![Docker Build Status](https://ghcr-badge.egpl.dev/nodecg/nodecg/latest_tag)](https://ghcr.io/nodecg/nodecg)
+<p align="center">
+  <img alt="notGT 0.2.1" src="https://img.shields.io/badge/notGT-0.2.1-FF5A8C?style=flat-square&labelColor=0C2B25">
+  <img alt="NodeCG 2.8" src="https://img.shields.io/badge/NodeCG-2.8-FF5A8C?style=flat-square&labelColor=0C2B25">
+  <img alt="Node.js 22" src="https://img.shields.io/badge/Node.js-22-FF5A8C?style=flat-square&labelColor=0C2B25">
+  <img alt="Docker and Windows" src="https://img.shields.io/badge/runs%20on-Docker%20%C2%B7%20Windows-FF8A3C?style=flat-square&labelColor=0C2B25">
+  <img alt="Interface in English and Russian" src="https://img.shields.io/badge/interface-EN%20%C2%B7%20RU-FF8A3C?style=flat-square&labelColor=0C2B25">
+  <img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-FFD23F?style=flat-square&labelColor=0C2B25">
+</p>
 
-NodeCG is a broadcast graphics framework and application. It enables you to write complex, dynamic broadcast graphics using the web platform. NodeCG has no graphics or drawing primitives of its own. Instead, NodeCG provides a structure for your code and an API to facilitate moving data between the dashboard, the server, and your graphics. It makes few assumptions about how to best code a graphic, and gives you freedom to use whatever libraries, frameworks, tools, and methodologies you want. As such, NodeCG graphics can be rendered in any environment that can render HTML, including:
+<p align="center">
+  <img src="media/screenshots/on-air.png" alt="A lower third, a score bug, a live poll and a logo bug on air" width="900">
+</p>
 
-- [OBS Studio](https://obsproject.com/)
-- [vMix](http://www.vmix.com/)
-- [XSplit](https://www.xsplit.com/)
-- [CasparCG](https://github.com/CasparCG/server/releases) (v2.2.0+)
+## What notGT is
 
-> Don't see your preferred streaming software on this list? NodeCG graphics require a modern browser engine. If your streaming software's implementation of browser source uses a recent-ish browser engine, chances are that NodeCG graphics will work in it. You can check what version your streaming software uses for its browser sources by opening [whatversion.net/chrome](https://www.whatversion.net/browser/) as a browser source.
+notGT is a titling system for live production. You draw a title in the browser — from
+layers, or as plain HTML, CSS and JavaScript — put it on an **out**, and add that out to
+OBS, vMix or anything else that can show a web page. From then on the title is driven
+from the dashboard, from a Bitfocus Companion button or from one HTTP request.
 
-Have questions about NodeCG, or just want to say 'hi'? [Join our Discord server](https://discord.gg/nsXXDFGBEt)!
+The name says what it is for: **GT is struck through, so it is replaced.** notGT does the
+job of a title designer and its player without a Windows-only editor, without a licence
+and without a file format of its own: a title is a web page, and everything the web can
+do, a title can do.
 
-## notGT
+It began as a fork of [NodeCG](https://nodecg.dev/) and still stands on it — the server,
+the replicants and the bundle API are NodeCG's. But it is an application, not a
+framework: it has its own dashboard, its own editor and its own renderer, and it is
+ready to use the moment it starts.
 
-This fork runs a titling / broadcast-animation bundle named **`notGT`** (project name **notGT**).
-It adds multiple independent graphics outputs (`out.html?out=<id>`, one OBS Browser Source each),
-a set of animations authored either from primitives (text / image / gif / shape) or as raw
-HTML/CSS/JS, and a REST API for the dashboard, Bitfocus Companion and other integrations.
+## What it does
 
-The operator manual — mental model, dashboard panels, the full REST API reference, OBS and
-Companion setup, persistence and troubleshooting — lives in
-**[`bundles/notGT/README.md`](bundles/notGT/README.md)** (English) and
-**[`bundles/notGT/README_RU.md`](bundles/notGT/README_RU.md)** (Russian). The dashboard
-itself is in English and Russian too, switched with the `EN` / `RU` button in any panel.
+- **A visual editor.** The canvas is the out itself. Text, shapes, images, GIFs and
+  video with alpha are layers you drag, scale and crop, with magnets to the centre, the
+  edges, the safe area and each other.
+- **Titles in code.** An animation can be HTML, CSS and JavaScript with a small runtime
+  (`vars`, `onData`, `onShow`, `onHide`) and a live preview next to the code. It can also
+  be a file in a folder, if you would rather write it in your own editor.
+- **Variables, not retyping.** Names, scores and captions live in one data store. Change
+  a value and it changes on air without replaying the entrance; pick a row of a list and
+  that guest goes on air.
+- **As many outs as you need.** Each out is one transparent page at its own size, and one
+  Browser Source. What is on air on which out is always in sight, in Lemon yellow.
+- **Timed or held.** A title plays once and leaves by itself, or stays until it is
+  switched off. The timers run on the server, so every out and every dashboard agree.
+- **REST API.** Show, hide, toggle and trigger titles, write variables, manage outs and
+  the library — from Companion, a script or `curl`.
+- **Alpha video.** Drop a ProRes or HEVC clip with transparency onto the editor and it
+  is converted with ffmpeg to something a browser can play.
+- **Excel as data.** Drop a workbook on the Data panel, or track one on the server: each
+  sheet becomes a list, the file is re-read when it is saved, and an edit in the
+  dashboard is written back into it.
+- **A library to start from.** Eleven ready-made titles in one style: lower thirds, a
+  score bug, a live poll, a ticker, a countdown, a clock, a weather card and more.
+- **Yours to read.** The interface is in English and Russian, in a dark and a light
+  theme.
 
-To author a new title with an LLM, the bundle ships prompt files that already encode the
-runtime contract: **[`GENERATE_TITLES.md`](GENERATE_TITLES.md)** (English) and
-**[`GENERATE_TITLES_RU.md`](GENERATE_TITLES_RU.md)** (Russian). Fill in the inputs at the
-bottom and paste the prompt into a chat; you get `html` / `css` / `js` for a `kind: "code"`
-template. The library starts with eleven ready-made examples in one visual style, built
-from layers and from code alike (a score bug, lower thirds, a live poll, a ticker, a
-countdown and more), and the dashboard's gallery can add a fresh copy of any of them.
+<table>
+  <tr>
+    <td width="50%"><img src="media/screenshots/control.png" alt="Control: what is on air, and the variables"></td>
+    <td width="50%"><img src="media/screenshots/editor.png" alt="Editor: the out as a canvas"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Control</b> — what is on air, and the data behind it</td>
+    <td align="center"><b>Editor</b> — the out as a canvas, with what is on air shown live</td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="media/screenshots/editor-light.png" alt="The Editor in the light theme"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">The same Editor in the light theme. The stage stays dark: a title is drawn for video.</td>
+  </tr>
+</table>
 
-Build and run it locally (the bundle is **not** an npm workspace of this monorepo, so it has its
-own `node_modules` and is installed and built separately):
+## Quick start
+
+### Docker
+
+```bash
+git clone https://github.com/fursyt12/notGT.git
+cd notGT
+docker compose up --build -d      # http://localhost:9090/dashboard/
+```
+
+No reverse proxy and no `.env` are needed. Set `NOTGT_PORT` in a `.env` (copy
+`.env.example`) to publish another port, and see the commented-out TRAEFIK block in
+`docker-compose.yml` for a hostname, TLS and Basic Auth in front of it.
+
+<details>
+<summary>If the image does not build</summary>
+
+The image installs dependencies three times (monorepo, bundle, production-only), so the
+first build takes a few minutes and needs a couple of GB of scratch space. If it dies
+inside an `npm ci` step, read the lines _above_ npm's `Exit handler never called!`: that
+message is npm's crash tail, and the line above it is normally
+`npm error network read ETIMEDOUT` — a registry read timed out mid-install, which the
+Dockerfile already retries five times.
+
+```bash
+docker compose build --progress=plain 2>&1 | tail -60
+```
+
+If the registry is slow or filtered from your network, build against a mirror instead of
+editing anything:
+
+```bash
+NPM_REGISTRY=https://registry.npmmirror.com docker compose build
+```
+
+In Docker Desktop a plain `npm ci` failure can also be the VM running out of memory or
+disk (`docker system df` to check, Settings → Resources to raise the limit); the image
+pins its npm version and wipes its own cache to keep layers small.
+
+</details>
+
+### Windows
+
+Take the portable build from [Releases](https://github.com/fursyt12/notGT/releases),
+unpack it and run `notGT Launcher.exe`. Nothing has to be installed: the package carries
+its own Node.js. The launcher picks a network interface and a port, starts the server and
+opens the dashboard.
+
+To build the package yourself:
+
+```powershell
+node scripts/build-windows.mjs --node-version 22.14.0
+```
+
+It assembles `dist/notGT-win-x64/` and `dist/notGT-win-x64.zip`; state lives in
+`app\cfg`, `app\db` and `app\assets`. Every push to `main` builds the package on
+`windows-latest`, and a `v*` tag publishes it as a release. The layout, the flags and the
+release process are in [`docs/windows-build.md`](docs/windows-build.md).
+
+### From source
+
+Node.js 22 is needed. The bundle is **not** an npm workspace of this monorepo, so it has
+its own `node_modules` and is installed and built separately:
 
 ```bash
 npm ci
@@ -51,133 +158,140 @@ cd bundles/notGT && npm install && npm run build && cd ../..
 node index.js      # http://localhost:9090/dashboard/
 ```
 
-In a container, `docker-compose.yml` in the repository root publishes the port on
-its own — no reverse proxy and no `.env` needed:
+### Put it on air
+
+Add a Browser Source to OBS (or a Web Browser input to vMix) at the size of the out:
+
+```
+http://<host>:9090/bundles/notGT/graphics/out.html?out=main
+```
+
+Then show a title — from the Control panel, or from anywhere else:
 
 ```bash
-docker compose up --build -d      # http://localhost:9090/dashboard/
+curl -X POST http://localhost:9090/api/titles/lower-third/show
+curl -X POST 'http://localhost:9090/api/data?mode=merge' \
+     -H 'content-type: application/json' \
+     -d '{"speaker": {"name": "Anna Reed", "role": "Expert"}}'
+curl -X POST http://localhost:9090/api/titles/hide
 ```
 
-Set `NOTGT_PORT` in a `.env` (copy `.env.example`) to publish another port, and
-see the commented-out TRAEFIK block in the compose file if you want a hostname,
-TLS and Basic Auth in front of it.
+## How it works
 
-The image installs dependencies three times (monorepo, bundle, production-only),
-so the first build takes a few minutes and needs a couple of GB of scratch space.
-If it dies inside an `npm ci` step, read the lines _above_ npm's
-`Exit handler never called!`: that message is npm's crash tail, and the line above
-it is normally `npm error network read ETIMEDOUT` — a registry read timed out
-mid-install, which the Dockerfile already retries five times.
+```mermaid
+flowchart LR
+    dash["Dashboard<br>Control · Titles & Outs · Editor"]
+    remote["Companion · scripts · curl"]
+    ext["notGT extension<br>store · scheduler · REST API"]
+    out["Out page<br>out.html?out=main"]
+    mixer["OBS · vMix<br>Browser Source"]
 
-```bash
-docker compose build --progress=plain 2>&1 | tail -60
+    dash <-->|replicants| ext
+    remote -->|HTTP| ext
+    ext -->|replicants| out
+    out --> mixer
 ```
 
-If the registry is slow or filtered from your network, build against a mirror
-instead of editing anything:
+- An **animation** is a template in the library: layers, or code.
+- An **out** is a canvas of a fixed size with a URL. A **placement** puts an animation on
+  an out at a position and a scale, with its own playback.
+- **Variables** are the data the titles read. The out page keeps running while they
+  change, so a correction never restarts anything.
+- The **extension** holds the state, runs the timers and answers the API. The out page
+  only draws what it is told to — which is why the Editor can show what is on air by
+  embedding that very page.
 
-```bash
-NPM_REGISTRY=https://registry.npmmirror.com docker compose build
-```
+## Stack
 
-In Docker Desktop a plain `npm ci` failure can also be the VM running out of
-memory or disk (`docker system df` to check, Settings → Resources to raise the
-limit); the image pins its npm version and wipes its own cache to keep layers
-small.
+| Part              | Built with                                                                                   |
+| ----------------- | -------------------------------------------------------------------------------------------- |
+| Runtime           | Node.js 22 · NodeCG 2.8 (Express, Socket.IO, Effect) · SQLite for what must survive a restart |
+| Dashboard panels  | React 18 · TypeScript · Konva for the editor canvas · plain CSS on design tokens             |
+| Dashboard shell   | NodeCG's Polymer shell, restyled and reduced to the three panels                             |
+| Out page          | TypeScript and the DOM, no framework · code animations in sandboxed iframes                  |
+| Build             | Vite (panels and out page) · esbuild (extension) · tsdown (NodeCG core)                      |
+| Media             | ffmpeg — alpha video to WebM and WebP                                                        |
+| Data              | ExcelJS — `.xlsx` workbooks as list variables, read and written                              |
+| Tests             | Puppeteer end-to-end suites for the out page and the panels · Vitest for the core            |
+| Packaging         | Multi-stage Docker image · portable Windows build with a launcher · GitHub Actions           |
+| Type              | Montserrat and Handjet, self-hosted (SIL Open Font License)                                  |
 
-## Windows
-
-A portable Windows build is produced by
-[`scripts/build-windows.mjs`](scripts/build-windows.mjs): it assembles
-`dist/notGT-win-x64/` (bundled Node.js runtime, NodeCG, the built `notGT`
-bundle, a launcher) and `dist/notGT-win-x64.zip`. Nothing has to be installed
-on the target machine.
-
-```powershell
-node scripts/build-windows.mjs --node-version 22.14.0
-```
-
-Unpack the zip and run `notGT Launcher.exe` (or `notGT.cmd` when the `.exe`
-wasn't built). The launcher picks a network interface/port, starts NodeCG and
-opens the dashboard. The OBS Browser Source URL is:
+## Repository
 
 ```
-http://<host>:<port>/bundles/notGT/graphics/out.html?out=main
+bundles/notGT/          the application
+  src/extension/        store, scheduler, REST API, media conversion
+  src/dashboard/        Control, Titles & Outs, Editor
+  src/graphics/         the out page and the runtime of code animations
+  src/shared/           types, variable bindings, the example library
+  graphics/animations/  animations written as files go here
+  scripts/              build and end-to-end tests
+workspaces/nodecg/      NodeCG core, with the notGT shell
+workspaces/…            the rest of the NodeCG monorepo (CLI, database adapters)
+launcher/               the control panel of the Windows build
+media/brand/            logo, mark and the brandbook
+docs/                   the Windows build, notes on the core
 ```
 
-State lives in `app\cfg`, `app\db` and `app\assets`. CI here is Windows-only:
-every push to `main` builds the package on `windows-latest` (artifact only), and
-a `v*` tag publishes it as a GitHub Release.
-See [`docs/windows-build.md`](docs/windows-build.md) for the full layout,
-flags and release process.
+## Documentation
 
-## Documentation & API Reference
+| | |
+| --- | --- |
+| **[Operator manual](bundles/notGT/README.md)** · [по-русски](bundles/notGT/README_RU.md) | The mental model, the three panels, the full REST API, OBS and Companion setup, writing a code animation, alpha video, persistence, troubleshooting |
+| **[Generating titles with an LLM](GENERATE_TITLES.md)** · [по-русски](GENERATE_TITLES_RU.md) | A prompt that already knows the runtime contract: fill in what you want, get `html` / `css` / `js` for a code animation |
+| **[Windows build](docs/windows-build.md)** | The layout of the portable package, the build flags, the release process |
+| **[Launcher](launcher/README.md)** | The small control panel that starts the server on Windows |
+| **[NodeCG documentation](https://nodecg.dev/)** | The platform underneath: bundles, replicants, the extension API |
 
-Full docs and API reference are available at https://nodecg.dev
+## Brand
+
+<p>
+  <img alt="Studio #0C2B25" src="https://img.shields.io/badge/Studio-%230C2B25-0C2B25?style=flat-square&labelColor=0C2B25">
+  <img alt="Cream #F5ECDA" src="https://img.shields.io/badge/Cream-%23F5ECDA-F5ECDA?style=flat-square&labelColor=0C2B25">
+  <img alt="Signal #FF5A8C" src="https://img.shields.io/badge/Signal-%23FF5A8C-FF5A8C?style=flat-square&labelColor=0C2B25">
+  <img alt="Amber #FF8A3C" src="https://img.shields.io/badge/Amber-%23FF8A3C-FF8A3C?style=flat-square&labelColor=0C2B25">
+  <img alt="Lemon #FFD23F" src="https://img.shields.io/badge/Lemon-%23FFD23F-FFD23F?style=flat-square&labelColor=0C2B25">
+</p>
+
+Studio is the ground and Cream the type; Signal is the accent, Amber the second one, and
+Lemon means LIVE and nothing else. Handjet sets the logo, headings and timecodes;
+Montserrat sets everything that is read. The dashboard, the example library and this page
+all follow the brandbook, and the logo files are in [`media/brand/`](media/brand/).
+
+<p align="center">
+  <img src="media/brand/notgt-brandbook.png" alt="The notGT brandbook: logo, clear space, palette, type and how not to use the logo" width="820">
+</p>
 
 ## Development
 
-To contribute to NodeCG development:
-
 ```bash
-# Clone the repository
-git clone https://github.com/nodecg/nodecg.git
-cd nodecg
-
-# Install dependencies
+# the application
+cd bundles/notGT
 npm install
+npm run watch          # rebuild the extension, the panels and the out page on change
+npm run typecheck
+npm run test:e2e       # needs a running server; NOTGT_BASE=http://host:port to point at it
 
-# Run auto-rebuild + type-check on file changes
-npm run dev
-
-# Build all workspace packages
-npm run build
-
-# Run tests
+# the core
+npm ci                 # from the repository root
+npm run dev            # rebuild and type-check on change
 npx vitest run
-
-# Start NodeCG
-npm start
 ```
 
-For more details on contributing to NodeCG core, see [the contributor guide on the official docs site](https://nodecg.dev/docs/working-on-nodecg-core)
+The dashboard's language file is `bundles/notGT/src/dashboard/locales/ru.json`; a phrase
+without a translation is a type error. The colours of both themes are the tokens at the
+top of `bundles/notGT/dashboard/ui.css`.
 
-## Goals
+## notGT and NodeCG
 
-The NodeCG project exists to accomplish the following goals:
+notGT would not exist without [NodeCG](https://github.com/nodecg/nodecg), the broadcast
+graphics framework by Alex “Lange” Van Camp, Matt “Bluee” McNamara, Keiichiro “Hoishin”
+Amemiya and its contributors. This repository keeps the NodeCG monorepo whole, and the
+upstream documentation still applies to everything below the application. What differs
+is on top: the shell around the panels, and the `notGT` bundle that is the application
+itself.
 
-- Make broadcast graphics (also known as "character generation" or "CG") more accessible.
-- Remain as close to the web platform as possible.
-- Support broadcasts of any size and ambition.
+## Licence
 
-Let's unpack what these statements mean:
-
-### > Make broadcast graphics (also known as "character generation" or "CG") more accessible
-
-Historically, broadcast graphics have been expensive. They either required expensive hardware, expensive software, or both. NodeCG was originally created to provide real-time broadcast graphics for Tip of the Hats, which is an all-volunteer charity fundraiser that had a budget of \$0 for its first several years.
-
-Now, it is possible to create an ambitious broadcast using entirely free software and consumer hardware. The NodeCG project embraces this democratization of broadcast technology.
-
-### > Remain as close to the web platform as possible
-
-NodeCG graphics are just webpages. There is absolutely nothing special or unique about them. This is their greatest strength.
-
-By building on the web platform, and not building too many abstractions on top of it, people developing broadcast graphics with NodeCG have access to the raw potential of the web. New APIs and capabilities are continually being added to the web platform, and NodeCG developers should have access to the entirety of what the web can offer.
-
-### > Support broadcasts of any size and ambition
-
-NodeCG's roots are in small broadcasts with no budget. More recently, NodeCG has begun seeing use in increasingly elaborate productions. We believe that one set of tools can and should be able to scale up from the smallest show all the way to the biggest fathomable show. Whether you're using OBS for everything, or a hardware switcher with a traditional key/fill workflow, NodeCG can be a part of any broadcast graphics system.
-
-## Maintainers
-
-- [Matt "Bluee" McNamara](https://mattmcn.com/)
-- [Keiichiro "Hoishin" Amemiya](https://twitter.com/hoishinxii)
-
-## Designers
-
-- [Chris Hanel](http://www.chrishanel.com)
-
-## Acknowledgements
-
-- [Atmo](https://github.com/atmosfar), original dashboard concept and code, the inspiration for toth-overlay
-- [Alex "Lange" Van Camp](https://github.com/alvancamp), designer & developer of [toth-overlay](https://github.com/TipoftheHats/toth-overlay), the base on which NodeCG was built
+[MIT](LICENSE), like NodeCG. The fonts are under the SIL Open Font License; their
+licences travel with them in `bundles/notGT/graphics/fonts/`.

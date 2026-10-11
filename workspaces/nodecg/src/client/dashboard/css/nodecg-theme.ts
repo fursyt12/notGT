@@ -10,15 +10,15 @@ $documentContainer.innerHTML = `<dom-module id="nodecg-theme">
 				/* notGT fork: the teal NodeCG brand is replaced by the notGT
 				   accent so the few remaining core surfaces (dialogs, core
 				   pages reached by hash) match bundles/notGT/dashboard/ui.css. */
-				--nodecg-brand-blue: #4aa8ff;
-				--nodecg-brand-blue-dark: #1f6feb;
+				--nodecg-brand-blue: #ff5a8c;
+				--nodecg-brand-blue-dark: #e8437a;
 				--default-primary-color: var(--nodecg-brand-blue);
 				--primary-color: var(--nodecg-brand-blue);
 
 				--nodecg-accept-color: #32784A;
 				--nodecg-benign-color: #525F78;
 				--nodecg-configure-color: #6155BD;
-				--nodecg-danger-color: #CF7E44;
+				--nodecg-danger-color: #ff8a3c;
 				--nodecg-disabled-color: #8D8E91;
 				--nodecg-execute-color: #FFC700;
 				--nodecg-reject-color: #A33B3B;
@@ -116,13 +116,13 @@ $documentContainer.innerHTML = `<dom-module id="nodecg-theme">
 
 			paper-card {
 				--paper-card-header-color: white;
-				background-color: #2F3A4F;
+				background-color: #123630;
 				width: 100%;
 			}
 
 			paper-card[heading] {
 				--paper-card-header: {
-					background-color: #525F78;
+					background-color: #1a443c;
 					border-bottom: 5px solid var(--nodecg-brand-blue);
 					font-weight: bold;
 				};
@@ -134,7 +134,7 @@ $documentContainer.innerHTML = `<dom-module id="nodecg-theme">
 
 			paper-dialog,
 			paper-dialog-scrollable {
-				background-color: #2F3A4F;
+				background-color: #123630;
 				color: white;
 			}
 

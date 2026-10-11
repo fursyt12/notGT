@@ -56,7 +56,7 @@ export const countdownExample: ExampleCode = {
  *   countdown.from      — начало отсчёта для кольца прогресса (ISO 8601);
  *                         если не задано, берётся момент загрузки анимации
  *   countdown.urgent    — за сколько секунд до нуля включить «панику» (10)
- *   countdown.accent    — акцентный цвет (по умолчанию #ff3b30)
+ *   countdown.accent    — акцентный цвет (по умолчанию #ff5a8c)
  *
  * Проверить руками:
  *   curl -X POST http://localhost:9090/api/data?mode=merge \
@@ -74,10 +74,10 @@ export const countdownExample: ExampleCode = {
 }
 
 :root {
-	--accent: #ff3b30;
-	--ink: #ffffff;
-	--muted: #aab6c4;
-	--plate: linear-gradient(180deg, rgba(24, 33, 45, 0.97), rgba(10, 14, 20, 0.97));
+	--accent: #ff5a8c;
+	--ink: #f5ecda;
+	--muted: #a9b8a8;
+	--plate: linear-gradient(180deg, rgba(18, 54, 48, 0.97), rgba(10, 37, 31, 0.97));
 }
 
 html,
@@ -99,7 +99,7 @@ body {
 	gap: 34px;
 	padding: 24px 60px 24px 40px;
 	background: var(--plate);
-	font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+	font-family: Montserrat, "Segoe UI", Roboto, Arial, sans-serif;
 	color: var(--ink);
 	/* Вход анимации: карточка выезжает снизу и проявляется. */
 	animation: cd-in 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -207,7 +207,7 @@ body {
 	position: absolute;
 	inset: 12px;
 	border-radius: 50%;
-	background: #121a24;
+	background: #0a231e;
 }
 
 .ring__value {
@@ -219,14 +219,18 @@ body {
 	justify-content: center;
 	gap: 3px;
 	z-index: 1;
-	font-size: 30px;
-	font-weight: 800;
+	font-family: Handjet, Montserrat, sans-serif;
+	font-size: 42px;
+	font-weight: 700;
+	line-height: 0.8;
 	font-variant-numeric: tabular-nums;
 	color: var(--ink);
 }
 
 .ring__value small {
+	font-family: Montserrat, "Segoe UI", Roboto, Arial, sans-serif;
 	font-size: 11px;
+	line-height: 1.2;
 	font-weight: 700;
 	letter-spacing: 0.14em;
 	text-transform: uppercase;
@@ -250,11 +254,11 @@ body {
 }
 
 .num {
-	font-size: 100px;
-	font-weight: 800;
-	line-height: 1;
+	font-family: Handjet, Montserrat, sans-serif;
+	font-size: 136px;
+	font-weight: 700;
+	line-height: 0.74;
 	font-variant-numeric: tabular-nums;
-	letter-spacing: -0.02em;
 }
 
 .cap {
@@ -295,10 +299,10 @@ body {
 @keyframes cd-pulse {
 	0%,
 	100% {
-		box-shadow: 0 0 0 0 rgba(255, 59, 48, 0);
+		box-shadow: 0 0 0 0 rgba(255, 90, 140, 0);
 	}
 	50% {
-		box-shadow: 0 0 0 10px rgba(255, 59, 48, 0.22);
+		box-shadow: 0 0 0 10px rgba(255, 90, 140, 0.22);
 	}
 }
 
@@ -317,7 +321,7 @@ body {
 		box-shadow: 0 0 0 2px var(--accent);
 	}
 	50% {
-		box-shadow: 0 0 0 9px rgba(255, 59, 48, 0.22);
+		box-shadow: 0 0 0 9px rgba(255, 90, 140, 0.22);
 	}
 }
 
@@ -400,7 +404,7 @@ body {
 
 		el.card.style.setProperty(
 			"--accent",
-			vars("countdown.accent", "#ff3b30"),
+			vars("countdown.accent", "#ff5a8c"),
 		);
 		// Подпись ставим из JS с фолбэком: у [data-bind] фолбэка нет,
 		// пустая переменная затёрла бы текст в HTML.

@@ -6,6 +6,7 @@ import type { Handler } from "./auth";
 import { createMediaRouter } from "./media";
 import { probeDurationMs } from "./video-duration";
 import { syncFileAnimations } from "./file-animations";
+import { createSources } from "./sources";
 import { Scheduler } from "./scheduler";
 import { playTemplateOnce } from "./trigger";
 import { createStore, type ServerAPI } from "./store";
@@ -71,6 +72,17 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	);
 	mount(`/bundles/${BUNDLE_NAME}/media`, mediaRouter);
 	nodecg.log.info("Media drop zone: %s → %s", mediaUrlPrefix, mediaDir);
+
+	// Spreadsheets as list variables. The working copies of loaded workbooks
+	// live in the assets tree too, next to the media.
+	const sources = createSources(
+		nodecg,
+		store,
+		path.join(assetsRoot, BUNDLE_NAME, "sources"),
+		nodecg.util.authCheck as unknown as Handler,
+	);
+	mount(`/bundles/${BUNDLE_NAME}/sources`, sources.router);
+	sources.start();
 
 	// One-shot triggers from the dashboard / other bundles.
 	nodecg.listenFor(MESSAGES.trigger, ((data: any, ack: any) => {

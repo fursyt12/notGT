@@ -51,6 +51,10 @@ const clientConfigs = clientEntries.map(
 								to: "dist/client/dashboard/css",
 							},
 							{
+								from: "src/client/dashboard/fonts",
+								to: "dist/client/dashboard/fonts",
+							},
+							{
 								from: "src/client/instance",
 								to: "dist/client/instance",
 							},

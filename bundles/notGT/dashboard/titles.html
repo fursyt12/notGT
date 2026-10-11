@@ -4,6 +4,16 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>notGT — Titles &amp; Outs</title>
+		<script>
+			// The saved theme, set before the first paint; src/dashboard/theme.ts keeps it in step afterwards.
+			(function () {
+				try {
+					var theme = new URLSearchParams(location.search).get("theme") || localStorage.getItem("notgt.theme");
+					if (theme === "system") theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+					document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
+				} catch (error) {}
+			})();
+		</script>
 		<link rel="stylesheet" href="./ui.css" />
 		<link rel="stylesheet" href="./titles.css" />
 	</head>

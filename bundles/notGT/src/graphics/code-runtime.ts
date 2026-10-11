@@ -1,5 +1,6 @@
 import { interpolate } from "../shared/binding";
 import {
+	BUNDLE_NAME,
 	CODE_EXIT_MAX_MS,
 	CODE_MESSAGES,
 	type TitleData,
@@ -191,6 +192,12 @@ function serialized(data: TitleData): string {
  * `{{...}}` in the HTML/CSS is substituted once at load; for live values use
  * `vars()` / `onData()` / `[data-bind]` inside the animation.
  */
+/**
+ * The brand fonts (Montserrat, Handjet), declared in every animation so its CSS
+ * can simply name them. A font file is only fetched once something uses it.
+ */
+const FONTS = `<link rel="stylesheet" href="/bundles/${BUNDLE_NAME}/graphics/fonts/fonts.css">`;
+
 export function buildCodeDocument(
 	template: TitleTemplate,
 	data: TitleData,
@@ -202,6 +209,7 @@ export function buildCodeDocument(
 <html lang="en">
 <head>
 <meta charset="utf-8">
+${FONTS}
 <style>${BASE_CSS}
 ${css}</style>
 </head>
@@ -247,6 +255,7 @@ export async function buildSourcedDocument(
 	const baseHref = url.href.slice(0, url.href.lastIndexOf("/") + 1);
 	const injection =
 		`<base href="${baseHref}">` +
+		FONTS +
 		`<style>${BASE_CSS}</style>` +
 		`<script>${runtimeShim(serialized(data))}</script>`;
 

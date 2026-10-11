@@ -36,19 +36,20 @@ const css = String.raw`/*
 	position: absolute;
 	inset: 0 0 auto 0;
 	padding: 0 44px 34px;
-	background: linear-gradient(180deg, rgba(24, 33, 45, 0.97), rgba(10, 14, 20, 0.97));
+	background: linear-gradient(180deg, rgba(18, 54, 48, 0.97), rgba(10, 37, 31, 0.97));
 	/* The same slanted cut the plates have, taken out of the top corner. */
 	clip-path: polygon(0 0, calc(100% - 46px) 0, 100% 46px, 100% 100%, 0 100%);
-	color: #fff;
-	font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+	color: #f5ecda;
+	font-family: Montserrat, "Segoe UI", Roboto, Arial, sans-serif;
 }
 
 .poll__tag {
 	display: inline-block;
 	padding: 9px 34px 9px 16px;
 	margin-left: -44px;
-	background: linear-gradient(135deg, #ff5245, #dc2a20);
+	background: linear-gradient(135deg, #ff6c98, #ff5a8c);
 	clip-path: polygon(0 0, 100% 0, calc(100% - 18px) 100%, 0 100%);
+	color: #0c2b25;
 	font-size: 20px;
 	font-weight: 700;
 	letter-spacing: 0.14em;
@@ -78,17 +79,18 @@ const css = String.raw`/*
 	align-items: baseline;
 	justify-content: space-between;
 	gap: 16px;
-	color: #c9d3de;
+	color: #d9d3c0;
 	font-size: 27px;
 	font-weight: 600;
 }
 
 .row__pct {
-	color: #fff;
-	font-size: 34px;
-	font-weight: 800;
+	color: #f5ecda;
+	font-family: Handjet, Montserrat, sans-serif;
+	font-size: 46px;
+	font-weight: 700;
+	line-height: 0.8;
 	font-variant-numeric: tabular-nums;
-	letter-spacing: -0.02em;
 }
 
 .row__track {
@@ -100,21 +102,21 @@ const css = String.raw`/*
 .row__bar {
 	width: 0;
 	height: 100%;
-	background: #7d8ea1;
+	background: #6f8a7e;
 	transition: width 0.9s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .row.is-lead .row__head {
-	color: #fff;
+	color: #f5ecda;
 }
 
 .row.is-lead .row__bar {
-	background: linear-gradient(90deg, #ff5245, #ff3b30);
+	background: #ff5a8c;
 }
 
 .poll__total {
 	margin: 2px 0 0;
-	color: #7d8ea1;
+	color: #6f8a7e;
 	font-size: 21px;
 	letter-spacing: 0.02em;
 }`;

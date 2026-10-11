@@ -132,6 +132,9 @@ export const TRANSITION_LABEL: Record<TransitionType, Phrase> = {
 };
 
 export const FONT_FAMILIES: string[] = [
+	// The two brand fonts ship with the bundle (graphics/fonts).
+	"Montserrat, 'Segoe UI', Roboto, Arial, sans-serif",
+	"Handjet, Montserrat, sans-serif",
 	"Inter, 'Segoe UI', Roboto, Arial, sans-serif",
 	"Inter, Arial, sans-serif",
 	"Roboto, Arial, sans-serif",

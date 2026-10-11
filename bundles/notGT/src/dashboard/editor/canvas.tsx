@@ -64,6 +64,7 @@ import {
 } from "./ui";
 import { outUrl } from "../../shared/defaults";
 import { t } from "../i18n";
+import { IconButton } from "../ui";
 import { useCodeDocument } from "./code-preview";
 import {
 	type SnapBox,
@@ -111,6 +112,12 @@ export interface EditorCanvasProps {
 	onSelectLayer: (layerId: string | null) => void;
 	onLayerChange: (layerId: string, patch: Partial<Layer>) => void;
 	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
+	/** Ref for the desk element: it is what goes full screen. */
+	deskRef?: (element: HTMLElement | null) => void;
+	deskFull?: boolean;
+	/** The desk fills the panel because the browser's full screen is not available. */
+	deskFilled?: boolean;
+	onToggleDeskFull?: () => void;
 }
 
 interface Geometry {
@@ -230,6 +237,9 @@ interface DragApi {
 
 const DragContext = createContext<DragApi | null>(null);
 
+/** The interface font, for the labels the canvas draws itself. */
+const UI_FONT = "Montserrat, 'Segoe UI', sans-serif";
+
 export function EditorCanvas({
 	out,
 	templates,
@@ -248,9 +258,32 @@ export function EditorCanvas({
 	onSelectLayer,
 	onLayerChange,
 	onItemChange,
+	deskRef,
+	deskFull = false,
+	deskFilled = false,
+	onToggleDeskFull,
 }: EditorCanvasProps) {
 	const { ref, width, height } = useElementSize<HTMLDivElement>();
 	const stageRef = useRef<Konva.Stage | null>(null);
+
+	// Konva lays text out with whatever font is ready at that moment, and a web
+	// font is only fetched once something asks for it. Ask for the brand fonts
+	// up front, and lay the text out again whenever a font arrives.
+	useEffect(() => {
+		const relayout = () => {
+			const stage = stageRef.current;
+			if (!stage) return;
+			for (const node of stage.find("Text")) {
+				(node as unknown as { _setTextData?: () => void })._setTextData?.();
+			}
+			stage.batchDraw();
+		};
+		for (const family of ["Montserrat", "Handjet"]) {
+			void document.fonts.load(`16px ${family}`, "Aя").catch(() => undefined);
+		}
+		document.fonts.addEventListener("loadingdone", relayout);
+		return () => document.fonts.removeEventListener("loadingdone", relayout);
+	}, []);
 
 	// Camera state: position (pan) and scale (zoom)
 	const [cameraX, setCameraX] = useState(0);
@@ -690,7 +723,12 @@ export function EditorCanvas({
 	return (
 		<SnapContext.Provider value={snapApi}>
 			<DragContext.Provider value={dragApi}>
-			<div className="ed-center">
+			<div
+				className={`ed-center${deskFilled ? " is-filled" : ""}`}
+				data-theme="dark"
+				data-desk-full={deskFull ? "" : undefined}
+				ref={deskRef}
+			>
 			<div className="ed-canvas-wrap" ref={ref}>
 				{fit > 0 ? (
 					<div className="ed-canvas-stage" style={{ width: stageW, height: stageH }}>
@@ -819,7 +857,7 @@ export function EditorCanvas({
 									y={stageH * 0.05}
 									width={stageW * 0.9}
 									height={stageH * 0.9}
-									stroke="rgba(74,168,255,0.45)"
+									stroke="rgba(255,90,140,0.45)"
 									strokeWidth={1}
 									dash={[6, 6]}
 									listening={false}
@@ -829,7 +867,7 @@ export function EditorCanvas({
 									y={stageH * 0.45}
 									width={stageW * 0.1}
 									height={stageH * 0.1}
-									stroke="rgba(74,168,255,0.22)"
+									stroke="rgba(255,90,140,0.22)"
 									strokeWidth={1}
 									listening={false}
 								/>
@@ -909,10 +947,10 @@ export function EditorCanvas({
 									resizeEnabled={Boolean(selectedLayer && !selectedLayer.locked)}
 									keepRatio={false}
 									anchorSize={9}
-									anchorStroke="#4aa8ff"
-									anchorFill="#0d141c"
+									anchorStroke="#ff5a8c"
+									anchorFill="#0c2b25"
 									anchorCornerRadius={2}
-									borderStroke="#4aa8ff"
+									borderStroke="#ff5a8c"
 									borderDash={[4, 3]}
 									rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
 									boundBoxFunc={snapLayerResize}
@@ -949,7 +987,7 @@ export function EditorCanvas({
 										<Rect
 											width={draftBox.boxW}
 											height={draftBox.boxH}
-											stroke="rgba(178,140,255,0.85)"
+											stroke="rgba(245,236,218,0.55)"
 											strokeWidth={1}
 											dash={[10, 6]}
 											listening={false}
@@ -958,11 +996,13 @@ export function EditorCanvas({
 											text={t("Preview of “{name}” — it is not on this out yet", {
 												name: draftBox.template.name,
 											})}
-											x={12}
-											y={12}
-											width={Math.max(10, draftBox.boxW - 24)}
-											fontSize={14}
-											fill="rgba(205,180,255,0.95)"
+											x={0}
+											y={-22}
+											width={Math.max(260, draftBox.boxW)}
+											wrap="none"
+											fontFamily={UI_FONT}
+											fontSize={13}
+											fill="rgba(245,236,218,0.8)"
 											listening={false}
 										/>
 									</Group>
@@ -977,7 +1017,7 @@ export function EditorCanvas({
 										<Line
 											key={`gx${index}`}
 											points={[x, 0, x, stageH]}
-											stroke="rgba(255,77,210,0.95)"
+											stroke="rgba(255,138,60,0.95)"
 											strokeWidth={1}
 											dash={[6, 4]}
 										/>
@@ -986,7 +1026,7 @@ export function EditorCanvas({
 										<Line
 											key={`gy${index}`}
 											points={[0, y, stageW, y]}
-											stroke="rgba(255,77,210,0.95)"
+											stroke="rgba(255,138,60,0.95)"
 											strokeWidth={1}
 											dash={[6, 4]}
 										/>
@@ -1046,6 +1086,16 @@ export function EditorCanvas({
 						{t("Click to select · middle button to pan · wheel to zoom")}
 					</span>
 				)}
+				{onToggleDeskFull ? (
+					<IconButton
+						className="small ed-desk-full"
+						icon={deskFull ? "collapse" : "expand"}
+						label={deskFull ? t("Exit full screen") : t("Full screen")}
+						size={14}
+						onClick={onToggleDeskFull}
+						data-desk-toggle
+					/>
+				) : null}
 			</div>
 			</div>
 			</DragContext.Provider>
@@ -1249,7 +1299,7 @@ function CodePlaceholder({ boxW, boxH }: { boxW: number; boxH: number }) {
 		<Rect
 			width={boxW}
 			height={boxH}
-			stroke="rgba(255,190,90,0.45)"
+			stroke="rgba(245,236,218,0.4)"
 			strokeWidth={1}
 			dash={[8, 6]}
 			listening={false}
@@ -1438,7 +1488,7 @@ function PlacementHandles({
 					height={win.height}
 					fill="rgba(0,0,0,0.001)"
 					fillEnabled={template.kind !== "layers"}
-					stroke="rgba(74,168,255,0.9)"
+					stroke="rgba(255,90,140,0.9)"
 					strokeWidth={1}
 					dash={[5, 4]}
 					hitStrokeWidth={14}
@@ -1450,9 +1500,9 @@ function PlacementHandles({
 					<Rect
 						width={HANDLE}
 						height={HANDLE}
-						fill="rgba(74,168,255,0.95)"
+						fill="rgba(255,90,140,0.95)"
 						cornerRadius={3}
-						stroke="#0d141c"
+						stroke="#0c2b25"
 						strokeWidth={1}
 					/>
 					<Text
@@ -1464,7 +1514,7 @@ function PlacementHandles({
 						align="center"
 						verticalAlign="middle"
 						fontSize={11}
-						fill="#0d141c"
+						fill="#0c2b25"
 						listening={false}
 					/>
 				</Group>
@@ -1478,9 +1528,9 @@ function PlacementHandles({
 					<Rect
 						width={HANDLE}
 						height={HANDLE}
-						fill="rgba(255,209,102,0.95)"
+						fill="rgba(255,138,60,0.95)"
 						cornerRadius={3}
-						stroke="#0d141c"
+						stroke="#0c2b25"
 						strokeWidth={1}
 					/>
 					<Text
@@ -1492,7 +1542,7 @@ function PlacementHandles({
 						align="center"
 						verticalAlign="middle"
 						fontSize={12}
-						fill="#0d141c"
+						fill="#0c2b25"
 						listening={false}
 					/>
 				</Group>
@@ -1526,7 +1576,7 @@ function cropFor(geom: Geometry, preview: DragPreview | null): ItemCrop {
 // ------------------------------------------------------------------- crop tool
 
 /** Darkens everything outside the crop window. */
-const CROP_SHADE = "rgba(4,8,14,0.62)";
+const CROP_SHADE = "rgba(3,14,11,0.62)";
 
 /** Where the crop handles sit, as fractions of the window. */
 const CROP_ANCHORS: Array<{ id: string; fx: number; fy: number; cursor: string }> = [
@@ -1784,7 +1834,7 @@ function CropOverlay({
 				<Rect
 					width={win.width}
 					height={win.height}
-					stroke="rgba(255,209,102,0.95)"
+					stroke="rgba(255,138,60,0.95)"
 					strokeWidth={1}
 					listening={false}
 				/>
@@ -1802,8 +1852,8 @@ function CropOverlay({
 						y={anchor.fy * win.height - CROP_HANDLE / 2}
 						width={CROP_HANDLE}
 						height={CROP_HANDLE}
-						fill="rgba(255,209,102,0.92)"
-						stroke="#0d141c"
+						fill="rgba(255,138,60,0.95)"
+						stroke="#0c2b25"
 						strokeWidth={1}
 						cornerRadius={2}
 						onMouseDown={onAnchorDown(anchor)}
@@ -2128,8 +2178,8 @@ function LayerNode({
 							height={boxH}
 							rotation={rotation}
 							opacity={opacity}
-							fill="rgba(74,168,255,0.06)"
-							stroke="rgba(74,168,255,0.65)"
+							fill="rgba(255,90,140,0.06)"
+							stroke="rgba(255,90,140,0.65)"
 							strokeWidth={1}
 							dash={[8, 6]}
 							cornerRadius={(style.radius ?? 0) * k}
@@ -2141,8 +2191,9 @@ function LayerNode({
 							x={posX - originX + 8}
 							y={posY - originY + 8}
 							width={Math.max(10, boxW - 16)}
+							fontFamily={UI_FONT}
 							fontSize={12}
-							fill="rgba(143,211,255,0.95)"
+							fill="rgba(245,236,218,0.8)"
 							listening={false}
 						/>
 					</Fragment>

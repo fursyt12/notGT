@@ -54,6 +54,30 @@ async function api(method, url, body) {
 	return json;
 }
 
+/** A file animation small enough to read: a label that follows a variable. */
+const FILE_ANIMATION = `<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="notgt:name" content="E2E file animation" />
+		<style>
+			#bug { position: absolute; left: 5%; bottom: 10%; padding: 12px 20px; background: var(--accent, #000); color: #0c2b25; font: 700 40px Montserrat, sans-serif; opacity: 0; }
+			#bug.is-visible { opacity: 1; }
+		</style>
+	</head>
+	<body>
+		<div id="bug"><span data-bind="e2eFile.name"></span> <span id="label">{{e2eFile.name ?? none}}</span></div>
+		<script>
+			onData(function () {
+				var bug = document.getElementById("bug");
+				bug.style.setProperty("--accent", vars("e2eFile.accent", "#000"));
+				bug.classList.toggle("is-visible", vars("e2eFile.name", "") !== "");
+			});
+		</script>
+	</body>
+</html>
+`;
+
 async function main() {
 	if (!CHROME) throw new Error("No Chromium binary found; set CHROME_PATH");
 	fs.mkdirSync(outDir, { recursive: true });
@@ -119,12 +143,6 @@ async function main() {
 	await api("POST", "/api/data?mode=merge", {
 		speaker: { name: "Иван Петров", role: "Ведущий" },
 		ticker: { label: "LIVE", text: "notGT проверка" },
-		sponsor: {
-			label: "Партнёр",
-			name: "ACME",
-			meta: "Официальный партнёр трансляции",
-			accent: "#ff3b30",
-		},
 	});
 
 	const browser = await puppeteer.launch({
@@ -274,47 +292,68 @@ async function main() {
 		// --- 4b. animation authored as a FILE ----------------------------
 		await api("POST", "/api/titles/hide", {});
 		await sleep(600);
+		// The bundle ships no file animation, so the test brings its own: it is
+		// written into `graphics/animations/`, registered, shown, and removed
+		// again. That only works when the server under test serves this
+		// checkout; against any other copy the step is skipped.
 		if (process.env.SKIP_FILE_ANIMATION !== "1") {
-			await api("POST", "/api/data?mode=merge", {
-				sponsor: {
-					label: "Партнёр",
-					name: "ACME",
-					meta: "Официальный партнёр трансляции",
-					accent: "#ff3b30",
-				},
-			});
-			const sync = await api("POST", "/api/animations/sync", {});
-			check("file animations discovered on disk", sync.total >= 1, JSON.stringify(sync));
+			const fixture = path.resolve(here, "..", "graphics", "animations", "e2e-file-animation.html");
+			fs.mkdirSync(path.dirname(fixture), { recursive: true });
+			fs.writeFileSync(fixture, FILE_ANIMATION);
+			try {
+				const sync = await api("POST", "/api/animations/sync", {});
+				const listed = (await api("GET", "/api/animations")).animations ?? [];
+				if (!listed.some((entry) => entry.id === "file-e2e-file-animation")) {
+					console.log("SKIP  file animation: the server does not read this checkout");
+				} else {
+					check("file animations discovered on disk", sync.total >= 1, JSON.stringify(sync));
+					await api("POST", "/api/data?mode=merge", {
+						e2eFile: { name: "ACME", accent: "#ff5a8c" },
+					});
 
-			await api("POST", "/api/titles/file-example-file-animation/show", {});
-			await page.waitForSelector(".notgt-code-frame", { timeout: 10_000 });
-			await sleep(1200);
-			const fileInfo = await page.evaluate(() => {
-				const frame = document.querySelector(".notgt-code-frame");
-				if (!(frame instanceof HTMLIFrameElement)) return { found: false };
-				const doc = frame.contentDocument;
-				const bug = doc?.querySelector("#bug");
-				return {
-					found: true,
-					visible: bug?.classList.contains("is-visible") ?? false,
-					name: doc?.querySelector('[data-bind="sponsor.name"]')?.textContent?.trim() ?? "",
-					accent: bug ? getComputedStyle(bug).getPropertyValue("--accent").trim() : "",
-				};
-			});
-			check("file animation rendered in its iframe", fileInfo.found);
+					await api("POST", "/api/titles/file-e2e-file-animation/show", {});
+					await page.waitForSelector(".notgt-code-frame", { timeout: 10_000 });
+					await sleep(1200);
+					const fileInfo = await page.evaluate(() => {
+						const frame = document.querySelector(".notgt-code-frame");
+						if (!(frame instanceof HTMLIFrameElement)) return { found: false };
+						const doc = frame.contentDocument;
+						const bug = doc?.querySelector("#bug");
+						return {
+							found: true,
+							visible: bug?.classList.contains("is-visible") ?? false,
+							name: doc?.querySelector('[data-bind="e2eFile.name"]')?.textContent?.trim() ?? "",
+							label: doc?.querySelector("#label")?.textContent?.trim() ?? "",
+							accent: bug ? getComputedStyle(bug).getPropertyValue("--accent").trim() : "",
+						};
+					});
+					check("file animation rendered in its iframe", fileInfo.found);
+					check(
+						"file animation got {{...}} substitution and data-bind values",
+						fileInfo.name === "ACME" && fileInfo.label === "ACME",
+						JSON.stringify(fileInfo),
+					);
+					check(
+						"file animation ran its onData (vars + class toggle)",
+						fileInfo.visible && fileInfo.accent === "#ff5a8c",
+						JSON.stringify(fileInfo),
+					);
+					await page.screenshot({ path: path.join(outDir, "file-animation.png") });
+					await api("POST", "/api/titles/hide", {});
+					await sleep(400);
+				}
+			} finally {
+				fs.rmSync(fixture, { force: true });
+			}
+			// The file is gone: the animation leaves the library with it.
+			const cleanup = await api("POST", "/api/animations/sync", {});
+			const left = (await api("GET", "/api/animations")).animations ?? [];
 			check(
-				"file animation got {{...}} substitution and data-bind values",
-				fileInfo.name === "ACME",
-				JSON.stringify(fileInfo),
+				"a deleted animation file takes its template out of the library",
+				!left.some((entry) => entry.id === "file-e2e-file-animation"),
+				JSON.stringify(cleanup),
 			);
-			check(
-				"file animation ran its onData (vars + class toggle)",
-				fileInfo.visible && fileInfo.accent === "#ff3b30",
-				JSON.stringify(fileInfo),
-			);
-			await page.screenshot({ path: path.join(outDir, "file-animation.png") });
-			await api("POST", "/api/titles/hide", {});
-			await sleep(400);
+			await api("DELETE", "/api/data/e2eFile").catch(() => {});
 		}
 
 		// --- 4c. placement math (x/y/scale) is exactly what the editor mirrors ---

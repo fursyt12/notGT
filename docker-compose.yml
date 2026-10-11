@@ -54,6 +54,10 @@ services:
       # (and tweak the other keys) without rebuilding the image.
       # The bundle reads it at boot -> restart the container after editing.
       - ./bundles/notGT/cfg:/opt/nodecg/bundles/notGT/cfg
+      # Excel workbooks to track from the Data panel ("Track a file on the
+      # server") must be visible inside the container. Uncomment, put the
+      # workbooks in ./data, and give the path as /data/<file>.xlsx.
+      # - ./data:/data
 
     # The point of the default setup: reach the dashboard and the graphics on a
     # port. The OBS Browser Source URL is

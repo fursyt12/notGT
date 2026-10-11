@@ -40,13 +40,16 @@ export function syncFileAnimations(
 	let total = 0;
 	let removed = 0;
 
+	// No directory is the same as an empty one: there is nothing to register,
+	// and the templates that pointed into it are cleaned up below.
 	let files: string[] = [];
 	try {
-		if (!fs.existsSync(dir)) return { added, total, removed };
-		files = fs
-			.readdirSync(dir)
-			.filter((file) => file.toLowerCase().endsWith(".html"))
-			.sort();
+		if (fs.existsSync(dir)) {
+			files = fs
+				.readdirSync(dir)
+				.filter((file) => file.toLowerCase().endsWith(".html"))
+				.sort();
+		}
 	} catch (error) {
 		store.nodecg.log.warn("Could not scan %s: %s", dir, String(error));
 		return { added, total, removed };

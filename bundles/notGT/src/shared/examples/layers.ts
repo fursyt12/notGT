@@ -7,7 +7,7 @@
  */
 import { defaultPlayback, type Layer, type LayerStyle, type Transition } from "../types";
 import type { GalleryExample } from "./gallery";
-import { FONT, INK, MIST, RED, lowerThirdPlate, svgImage } from "./style";
+import { AMBER, CREAM, DISPLAY, FONT, LEMON, MARK, SAGE, SIGNAL, STUDIO, lowerThirdPlate, svgImage } from "./style";
 
 let seq = 0;
 function layerId(): string {
@@ -70,7 +70,7 @@ function text(
 		style: {
 			fontFamily: FONT,
 			fontWeight: 700,
-			color: "#ffffff",
+			color: CREAM,
 			align: "left",
 			verticalAlign: box.h === undefined ? "top" : "middle",
 			lineHeight: 1.08,
@@ -96,7 +96,7 @@ const OUT_QUINT = "cubic-bezier(.16,1,.3,1)";
 
 /** Name and role on the two-storey plate; `variant` picks the colourway. */
 export function lowerThirdLayers(
-	variant: "ink" | "paper",
+	variant: "studio" | "cream",
 	bind: { name: string; role: string },
 	fallback: { name: string; role: string },
 ): Layer[] {
@@ -106,13 +106,15 @@ export function lowerThirdLayers(
 			fontSize: 62,
 			fontWeight: 800,
 			letterSpacing: -0.6,
-			color: variant === "ink" ? "#ffffff" : INK,
+			color: variant === "studio" ? CREAM : STUDIO,
 		}),
 		text("Role", { x: 4.2, y: 67.4, w: 54, h: 32.6 }, bind.role, fallback.role, {
 			fontSize: 25,
 			fontWeight: 700,
 			textTransform: "uppercase",
 			letterSpacing: 2.4,
+			// The tab under the plate is the opposite colour of the plate.
+			color: variant === "studio" ? STUDIO : CREAM,
 		}),
 	]);
 }
@@ -122,8 +124,8 @@ export function lowerThirdLayers(
 const SCORE_PLATE = svgImage(
 	860,
 	100,
-	"<rect width='860' height='100' fill='url(#ink)' fill-opacity='.97'/>" +
-		"<polygon points='364,0 496,0 484,100 376,100' fill='#243140'/>" +
+	"<rect width='860' height='100' fill='url(#studio)' fill-opacity='.97'/>" +
+		"<polygon points='364,0 496,0 484,100 376,100' fill='#1a443c'/>" +
 		"<rect width='860' height='3' fill='#ffffff' fill-opacity='.10'/>",
 );
 
@@ -143,8 +145,8 @@ const scoreBug: GalleryExample = {
 		layers: stack([
 			image("Plate", { x: 0, y: 0, w: 100, h: 100 }, SCORE_PLATE),
 			// The team colours are plain shapes, so they can be recoloured in the inspector.
-			rect("Home colour", { x: 0, y: 0, w: 1.3, h: 100 }, { fill: "#2f7df6" }),
-			rect("Away colour", { x: 98.7, y: 0, w: 1.3, h: 100 }, { fill: "#ff9f1c" }),
+			rect("Home colour", { x: 0, y: 0, w: 1.3, h: 100 }, { fill: SIGNAL }),
+			rect("Away colour", { x: 98.7, y: 0, w: 1.3, h: 100 }, { fill: AMBER }),
 			text("Home", { x: 4.2, y: 0, w: 27, h: 100 }, "match.home.name", lang === "ru" ? "ХОЗЯЕВА" : "HOME", {
 				fontSize: 31,
 				fontWeight: 800,
@@ -152,24 +154,28 @@ const scoreBug: GalleryExample = {
 				letterSpacing: 1.2,
 			}),
 			text("Home score", { x: 31.5, y: 0, w: 10.5, h: 100 }, "match.home.score", "0", {
-				fontSize: 56,
+				fontFamily: DISPLAY,
+				fontSize: 84,
 				fontWeight: 800,
 				align: "center",
 			}),
 			text("Period", { x: 42.5, y: 15, w: 15 }, "match.period", lang === "ru" ? "1 тайм" : "1st", {
 				fontSize: 16,
 				align: "center",
-				color: MIST,
+				color: SAGE,
 				textTransform: "uppercase",
 				letterSpacing: 1.6,
 			}),
-			text("Clock", { x: 42.5, y: 42, w: 15 }, "match.clock", "00:00", {
-				fontSize: 32,
-				fontWeight: 800,
+			text("Clock", { x: 42.5, y: 38, w: 15 }, "match.clock", "00:00", {
+				fontFamily: DISPLAY,
+				fontSize: 46,
+				fontWeight: 700,
 				align: "center",
+				color: LEMON,
 			}),
 			text("Away score", { x: 58, y: 0, w: 10.5, h: 100 }, "match.away.score", "0", {
-				fontSize: 56,
+				fontFamily: DISPLAY,
+				fontSize: 84,
 				fontWeight: 800,
 				align: "center",
 			}),
@@ -220,7 +226,7 @@ const guest: GalleryExample = {
 		width: 1040,
 		height: 184,
 		layers: lowerThirdLayers(
-			"paper",
+			"cream",
 			{ name: "guests.name", role: "guests.role" },
 			lang === "ru"
 				? { name: "Имя гостя", role: "Кто это" }
@@ -253,12 +259,12 @@ const TOPIC_SCRIM = svgImage(
 	1920,
 	1080,
 	"<defs><linearGradient id='scrim' x1='0' y1='0' x2='1' y2='0'>" +
-		`<stop offset='0' stop-color='${INK}' stop-opacity='.95'/>` +
-		`<stop offset='.5' stop-color='${INK}' stop-opacity='.72'/>` +
-		`<stop offset='1' stop-color='${INK}' stop-opacity='0'/>` +
+		`<stop offset='0' stop-color='${STUDIO}' stop-opacity='.96'/>` +
+		`<stop offset='.5' stop-color='${STUDIO}' stop-opacity='.76'/>` +
+		`<stop offset='1' stop-color='${STUDIO}' stop-opacity='0'/>` +
 		"</linearGradient></defs>" +
 		"<rect width='1920' height='1080' fill='url(#scrim)'/>" +
-		"<polygon points='124,404 300,404 296,416 124,416' fill='url(#red)'/>",
+		"<polygon points='124,404 300,404 296,416 124,416' fill='url(#signal)'/>",
 );
 
 const topic: GalleryExample = {
@@ -277,20 +283,20 @@ const topic: GalleryExample = {
 			image("Scrim", { x: 0, y: 0, w: 100, h: 100 }, TOPIC_SCRIM),
 			text("Kicker", { x: 6.45, y: 41, w: 60 }, "topic.kicker", lang === "ru" ? "Далее" : "Coming up", {
 				fontSize: 30,
-				color: "#ff7a70",
+				color: SIGNAL,
 				textTransform: "uppercase",
 				letterSpacing: 7,
 			}),
 			text("Title", { x: 6.3, y: 46.2, w: 86 }, "topic.title", lang === "ru" ? "Заголовок темы" : "Topic headline", {
-				fontSize: 118,
-				fontWeight: 800,
-				letterSpacing: -3,
-				lineHeight: 1,
+				fontFamily: DISPLAY,
+				fontSize: 168,
+				fontWeight: 700,
+				lineHeight: 0.9,
 			}),
-			text("Subtitle", { x: 6.45, y: 60.4, w: 60 }, "topic.subtitle", lang === "ru" ? "Одна строка подробностей" : "One line of detail", {
+			text("Subtitle", { x: 6.45, y: 63, w: 60 }, "topic.subtitle", lang === "ru" ? "Одна строка подробностей" : "One line of detail", {
 				fontSize: 40,
 				fontWeight: 400,
-				color: "#c9d3de",
+				color: "#d9d3c0",
 			}),
 		]),
 		inTransition: ease("fade", 600, "ease-out"),
@@ -307,14 +313,13 @@ const topic: GalleryExample = {
 
 // ------------------------------------------------------------------- logo bug
 
-/** A placeholder mark and the pill behind the tag, in one image. */
+/** The notGT mark as a stand-in logo and the Lemon pill behind the tag, in one image. */
 const BUG_ART = svgImage(
 	296,
 	108,
-	"<rect width='108' height='108' rx='24' fill='url(#paper)'/>" +
-		`<path transform='translate(0 0) scale(.9)' d='M32 88V32h15l26 36V32h15v56H73L47 52v36z' fill='${INK}'/>` +
-		"<rect x='128' y='27' width='168' height='54' rx='27' fill='url(#ink)' fill-opacity='.97'/>" +
-		`<circle cx='159' cy='54' r='9' fill='${RED}'/>`,
+	`<g transform='scale(.84375)'>${MARK}</g>` +
+		`<rect x='128' y='27' width='168' height='54' rx='27' fill='${LEMON}'/>` +
+		`<circle cx='159' cy='54' r='9' fill='${STUDIO}'/>`,
 );
 
 const logoBug: GalleryExample = {
@@ -337,6 +342,7 @@ const logoBug: GalleryExample = {
 				fontWeight: 800,
 				textTransform: "uppercase",
 				letterSpacing: 3.5,
+				color: STUDIO,
 			}),
 		]),
 		inTransition: ease("fade", 400, "ease-out"),

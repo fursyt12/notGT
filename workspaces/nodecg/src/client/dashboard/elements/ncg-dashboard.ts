@@ -42,13 +42,19 @@ class NcgDashboard extends Polymer.PolymerElement {
 				@apply --layout-fullbleed;
 				overflow: hidden;
 
-				/* notGT fork palette — mirrors bundles/notGT/dashboard/ui.css */
-				--notgt-bg: #1b2430;
-				--notgt-bg-2: #222e3c;
-				--notgt-line: #3a4a5c;
-				--notgt-fg: #e6edf3;
-				--notgt-muted: #93a4b5;
-				--notgt-accent: #4aa8ff;
+				/* The notGT palette (--notgt-bg and the rest) is set on <html> by
+				   the dashboard template, once per theme, and inherited here. */
+				--notgt-font: "Montserrat", "Segoe UI", Roboto, system-ui, sans-serif;
+
+				font-family: var(--notgt-font);
+			}
+
+			/* The Polymer elements set Roboto on themselves; a rule from this
+			   scope outranks their own. */
+			paper-tab,
+			paper-toast,
+			paper-icon-item {
+				font-family: var(--notgt-font);
 			}
 
 			app-drawer-layout,
@@ -113,25 +119,39 @@ class NcgDashboard extends Polymer.PolymerElement {
 				color: var(--notgt-fg);
 			}
 
-			#mainLogo {
-				color: var(--notgt-fg);
-				font-size: 20px;
-				font-weight: 800;
-				letter-spacing: -0.02em;
-				padding: 0 8px 0 20px;
+			/* The full logo is never shown narrower than 120 px (brandbook). It
+			   comes in two drawings, for a dark ground and for a light one; the
+			   theme shows one of them. */
+			#mainLogo,
+			#drawerLogo {
+				width: 120px;
 				user-select: none;
+			}
+
+			#mainLogo {
+				padding: 0 12px 0 20px;
+			}
+
+			#drawerLogo {
+				padding-left: 16px;
+			}
+
+			.logo {
+				width: 100%;
+				height: auto;
+			}
+
+			.logo--on-dark {
+				display: var(--notgt-logo-on-dark, block);
+			}
+
+			.logo--on-light {
+				display: var(--notgt-logo-on-light, none);
 			}
 
 			#drawerToolbar {
 				@apply --layout-horizontal;
 				@apply --layout-center;
-			}
-
-			#drawerLogo {
-				color: var(--notgt-fg);
-				font-size: 16px;
-				font-weight: 800;
-				padding-left: 16px;
 			}
 
 			.button-label {
@@ -178,10 +198,13 @@ class NcgDashboard extends Polymer.PolymerElement {
 				box-sizing: border-box;
 			}
 
+			/* The core NodeCG pages are drawn in white on dark; they keep a dark
+			   ground whatever the theme. */
 			section:not(.section-workspace) {
 				@apply --layout-center;
 				@apply --layout-vertical;
 				padding: 32px;
+				background-color: #0c2b25;
 			}
 
 			section.section-workspace {
@@ -258,7 +281,10 @@ class NcgDashboard extends Polymer.PolymerElement {
 				<template is="dom-if" if="[[smallScreen]]">
 					<app-toolbar id="drawerToolbar">
 						<paper-icon-button icon="close" aria-label="Close" drawer-toggle=""></paper-icon-button>
-						<span id="drawerLogo">notGT</span>
+						<span id="drawerLogo">
+							<img class="logo logo--on-dark" src="/dashboard/img/notgt-logo-on-dark.svg" alt="notGT">
+							<img class="logo logo--on-light" src="/dashboard/img/notgt-logo.svg" alt="notGT">
+						</span>
 					</app-toolbar>
 
 					<iron-selector class="list" selected="[[routeData.page]]" attr-for-selected="data-route">
@@ -289,7 +315,10 @@ class NcgDashboard extends Polymer.PolymerElement {
 					<app-toolbar id="mainToolbar">
 						<paper-icon-button icon="menu" drawer-toggle="" alt="Toogle navigation menu" hidden="[[!smallScreen]]"></paper-icon-button>
 
-						<span id="mainLogo">notGT</span>
+						<span id="mainLogo">
+							<img class="logo logo--on-dark" src="/dashboard/img/notgt-logo-on-dark.svg" alt="notGT">
+							<img class="logo logo--on-light" src="/dashboard/img/notgt-logo.svg" alt="notGT">
+						</span>
 
 						<template is="dom-if" if="[[!smallScreen]]">
 							<paper-tabs class="spacer" scrollable="" selected="[[routeData.page]]" attr-for-selected="route">

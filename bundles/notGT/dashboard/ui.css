@@ -1,33 +1,126 @@
 /* notGT dashboard UI — shared by all three panels.
  *
- * One rule runs through the whole dashboard: red means "on air" and nothing
- * else (`--ng-live`, the tally light). Destructive actions stay quiet until
- * they are hovered, so the only thing that ever shouts is a live title.
+ * The colours and the type are the brand's (media/brand/notgt-brandbook.png):
+ * Studio and Cream as ground and type, Signal pink as the accent, Amber as the
+ * second accent, and Lemon for LIVE. That last one is the rule that runs
+ * through the whole dashboard: Lemon means "on air" and nothing else
+ * (`--ng-live`, the tally light). Destructive actions stay quiet until they
+ * are hovered, so the only thing that ever shouts is a live title.
+ *
+ * There are two themes, picked in any panel (src/dashboard/theme.ts) and set
+ * on `<html data-theme>`: dark is Cream on Studio, light is Studio on Cream.
+ * An element can carry `data-theme` itself to keep one theme whatever the
+ * page uses — the Editor's stage does, because a title is drawn for video.
  *
  * Element defaults are wrapped in `:where()` so they carry no specificity and
  * any component class can restyle a button or an input without a fight.
  */
 
+@import url("../graphics/fonts/fonts.css");
+
 :root {
-	/* Surfaces — the dashboard shell mirrors these values. */
-	--ng-bg: #1b2430;
-	--ng-bg-2: #222e3c;
-	--ng-bg-3: #2b3947;
-	--ng-bg-4: #35465a;
-	--ng-well: #151d27;
-	--ng-line: #3a4a5c;
-	--ng-line-soft: #2a3746;
+	/* Brand: Studio, Cream, Signal, Amber, Lemon. The same in both themes. */
+	--ng-studio: #0c2b25;
+	--ng-cream: #f5ecda;
+	--ng-signal: #ff5a8c;
+	--ng-amber: #ff8a3c;
+	--ng-lemon: #ffd23f;
 
-	--ng-fg: #e6edf3;
-	--ng-muted: #93a4b5;
-	--ng-faint: #6f8194;
+	/* What sits on a Signal or Lemon fill is always Studio, as in the logo. */
+	--ng-on-accent: var(--ng-studio);
+}
 
-	--ng-accent: #4aa8ff;
-	--ng-accent-2: #1f6feb;
-	--ng-live: #ff3b30;
-	--ng-danger: #ff7b72;
-	--ng-ok: #4ade80;
-	--ng-warn: #fbbf24;
+/* Dark: Studio is the ground, Cream the type — the brandbook's 55 / 25. */
+:root,
+[data-theme="dark"] {
+	color-scheme: dark;
+
+	/* Surfaces are steps of Studio — the dashboard shell mirrors these values. */
+	--ng-bg: var(--ng-studio);
+	--ng-bg-2: #123630;
+	--ng-bg-3: #1a443c;
+	--ng-bg-4: #235348;
+	--ng-well: #082019;
+	--ng-line: #2c5a4f;
+	--ng-line-soft: #173d35;
+
+	--ng-fg: var(--ng-cream);
+	--ng-muted: #a9b8a8;
+	--ng-faint: #6f8a7e;
+
+	/* Signal as a fill or an edge, and as text. On Studio they are the same. */
+	--ng-accent: var(--ng-signal);
+	--ng-accent-2: var(--ng-signal);
+	--ng-accent-ink: var(--ng-signal);
+	--ng-danger: var(--ng-amber);
+	--ng-ok: #7fd6a8;
+	--ng-warn: var(--ng-amber);
+
+	/* On air: the Lemon fill, its edge, the halo of the tally light, the bar
+	   of Control and the wash of a live row. */
+	--ng-live: var(--ng-lemon);
+	--ng-live-edge: var(--ng-lemon);
+	--ng-live-halo: 0 0 0 3px rgba(255, 210, 63, 0.22);
+	--ng-live-bar: var(--ng-bg);
+	--ng-live-wash: transparent;
+
+	--ng-shadow: rgba(0, 0, 0, 0.45);
+	--ng-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a9b8a8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* Light: the brandbook's own page — Cream is the ground, Studio the type.
+   Signal and Amber are too pale to read as text on Cream, and Lemon all but
+   vanishes on it. So here the accents stay fills and edges; text in an accent
+   colour takes that colour mixed towards Studio; and whatever is on air keeps
+   its Lemon inside a Studio edge. */
+[data-theme="light"] {
+	color-scheme: light;
+
+	--ng-bg: var(--ng-cream);
+	--ng-bg-2: #ecdfc7;
+	--ng-bg-3: #e1d3b8;
+	--ng-bg-4: #d2c3a5;
+	--ng-well: #fbf6ea;
+	--ng-line: #c9ba9a;
+	--ng-line-soft: #ddcfb2;
+
+	--ng-fg: var(--ng-studio);
+	--ng-muted: #55695f;
+	--ng-faint: #86907f;
+
+	--ng-accent: var(--ng-signal);
+	--ng-accent-2: var(--ng-signal);
+	--ng-accent-ink: #aa4a68;
+	--ng-danger: #925f32;
+	--ng-ok: #2c7a58;
+	--ng-warn: #925f32;
+
+	--ng-live: var(--ng-lemon);
+	--ng-live-edge: var(--ng-studio);
+	--ng-live-halo: 0 0 0 2px var(--ng-studio);
+	--ng-live-bar: var(--ng-lemon);
+	--ng-live-wash: rgba(255, 210, 63, 0.34);
+
+	--ng-shadow: rgba(12, 43, 37, 0.22);
+	--ng-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2355695f' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* An element that carries a theme of its own takes that theme's type colour. */
+[data-theme] {
+	color: var(--ng-fg);
+}
+
+/* A framed title is a transparent page with no colour scheme of its own. A
+   browser paints an opaque ground behind a frame whose scheme differs from the
+   element embedding it, so frames always state the default one. */
+iframe {
+	color-scheme: light;
+}
+
+:root {
+	/* Montserrat for text and interface; Handjet for headings and timecodes. */
+	--ng-text: "Montserrat", "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+	--ng-display: "Handjet", "Montserrat", "Segoe UI", sans-serif;
 
 	--ng-radius: 10px;
 	--ng-radius-s: 6px;
@@ -43,8 +136,14 @@ body {
 	margin: 0;
 	background: var(--ng-bg);
 	color: var(--ng-fg);
-	font: 13px/1.45 "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+	font: 13px/1.45 var(--ng-text);
 	-webkit-font-smoothing: antialiased;
+}
+
+/* NodeCG adds its own `body { font-family: Roboto }` to every panel, after
+   this sheet. One more step of specificity keeps the brand font in place. */
+html body {
+	font-family: var(--ng-text);
 }
 
 h1,
@@ -56,7 +155,11 @@ h3 {
 }
 
 h2 {
-	font-size: 15px;
+	font-family: var(--ng-display);
+	font-size: 24px;
+	font-weight: 700;
+	line-height: 1;
+	letter-spacing: 0.01em;
 }
 
 h3 {
@@ -68,7 +171,7 @@ p {
 }
 
 a {
-	color: var(--ng-accent);
+	color: var(--ng-accent-ink);
 }
 
 code,
@@ -111,12 +214,13 @@ code,
 }
 
 button.primary {
-	background: var(--ng-accent-2);
-	color: #fff;
+	background: var(--ng-signal);
+	color: var(--ng-on-accent);
+	font-weight: 700;
 }
 
 button.primary:hover:not(:disabled) {
-	background: #3381f0;
+	background: #ff7aa2;
 }
 
 button.ghost,
@@ -131,7 +235,7 @@ button.ghost:hover:not(:disabled) {
 }
 
 button.danger:hover:not(:disabled) {
-	background: rgba(255, 123, 114, 0.12);
+	background: rgba(255, 138, 60, 0.12);
 	color: var(--ng-danger);
 }
 
@@ -154,8 +258,8 @@ button.icon.small {
 }
 
 button.is-on {
-	background: rgba(74, 168, 255, 0.16);
-	color: var(--ng-accent);
+	background: rgba(255, 90, 140, 0.16);
+	color: var(--ng-accent-ink);
 }
 
 .ico {
@@ -206,7 +310,7 @@ button.is-on {
 :where(select) {
 	appearance: none;
 	padding-right: 26px;
-	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2393a4b5' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+	background-image: var(--ng-chevron);
 	background-repeat: no-repeat;
 	background-position: right 8px center;
 	cursor: pointer;
@@ -383,8 +487,9 @@ button.is-on {
 
 .tag--live {
 	background: var(--ng-live);
-	color: #fff;
-	font-weight: 600;
+	box-shadow: inset 0 0 0 1px var(--ng-live-edge);
+	color: var(--ng-on-accent);
+	font-weight: 700;
 }
 
 /* The tally light: dark until its title is on air. */
@@ -401,7 +506,7 @@ button.is-on {
 
 .tally.is-live {
 	background: var(--ng-live);
-	box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.22);
+	box-shadow: var(--ng-live-halo);
 }
 
 /* ------------------------------------------------------------------- switch */
@@ -458,6 +563,11 @@ button.is-on {
 
 .switch--live.is-on .switch__track {
 	background: var(--ng-live);
+	box-shadow: inset 0 0 0 1px var(--ng-live-edge);
+}
+
+.switch--live.is-on .switch__thumb {
+	background: var(--ng-on-accent);
 }
 
 .switch.is-on .switch__thumb {
@@ -510,7 +620,7 @@ button.is-on {
 	border: 1px solid var(--ng-line);
 	border-radius: 8px;
 	background: var(--ng-bg-2);
-	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+	box-shadow: 0 12px 32px var(--ng-shadow);
 }
 
 .menu__item {

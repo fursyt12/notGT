@@ -21,6 +21,7 @@ import {
 	BUNDLE_NAME,
 	MESSAGES,
 	type ActiveTitleState,
+	type DataSource,
 	type Out,
 	type OutItem,
 	type PlaybackConfig,
@@ -44,6 +45,7 @@ export interface Db {
 	activeTitle: ClientReplicant<ActiveTitleState>;
 	runtime: ClientReplicant<RuntimeState>;
 	selection: ClientReplicant<VariableSelection>;
+	sources: ClientReplicant<DataSource[]>;
 }
 
 let db: Db | undefined;
@@ -88,6 +90,9 @@ export function getDb(): Db {
 			BUNDLE_NAME,
 			{ defaultValue: {} },
 		) as ClientReplicant<VariableSelection>,
+		sources: nodecg.Replicant<DataSource[]>(REPLICANTS.sources, BUNDLE_NAME, {
+			defaultValue: [],
+		}) as ClientReplicant<DataSource[]>,
 	};
 	return db;
 }
@@ -490,6 +495,21 @@ export function setArrayItem(path: string, index: number, value: unknown): void 
 	writeArray(path, list);
 }
 
+/**
+ * Gives every row of a list of records a new field, empty. Rows that are not
+ * records are left alone.
+ */
+export function addArrayColumn(path: string, name: string): void {
+	const field = name.trim();
+	if (!field) return;
+	const list = readArray(path).map((row) =>
+		row !== null && typeof row === "object" && !Array.isArray(row) && !(field in row)
+			? { ...(row as Record<string, unknown>), [field]: "" }
+			: row,
+	);
+	writeArray(path, list.length > 0 ? list : [{ [field]: "" }]);
+}
+
 /** Appends a value; defaults to a copy of the last element (or an empty object). */
 export function appendArrayItem(path: string, value?: unknown): number {
 	const list = [...readArray(path)];
@@ -600,6 +620,11 @@ export function useRuntime(): RuntimeState {
 }
 export function useSelection(): VariableSelection {
 	return useReplicantValue(() => getDb().selection, EMPTY_SELECTION);
+}
+const EMPTY_SOURCES: DataSource[] = [];
+/** The workbooks connected to the variable store. */
+export function useSources(): DataSource[] {
+	return useReplicantValue(() => getDb().sources, EMPTY_SOURCES);
 }
 
 /** Re-renders the caller whenever any notGT replicant changes. */

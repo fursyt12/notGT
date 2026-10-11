@@ -14,6 +14,7 @@ import {
 import { GALLERY, type GalleryExample } from "../shared/examples/gallery";
 import type { OutItem, PlaybackConfig, TitleTemplate } from "../shared/types";
 import { LANGS, N_, getLang, localNumber, setLang, t, useLang, type Phrase } from "./i18n";
+import { THEMES, setThemeChoice, useTheme, useThemeChoice } from "./theme";
 import {
 	copyText,
 	effectivePlayback,
@@ -106,6 +107,16 @@ const ICONS = {
 	layers: <path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8zM3.5 12.5l8.5 4.5 8.5-4.5M3.5 16.5L12 21l8.5-4.5" />,
 	list: <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />,
 	spark: <path d="M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9zM19 16v4M17 18h4" />,
+	table: <path d="M4 5h16v14H4zM4 10h16M4 15h16M10 5v14" />,
+	expand: <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" />,
+	collapse: <path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5" />,
+	sun: (
+		<>
+			<circle cx="12" cy="12" r="4" />
+			<path d="M12 2.5V5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" />
+		</>
+	),
+	moon: <path d="M20 14.6A8.2 8.2 0 0 1 9.4 4a8.2 8.2 0 1 0 10.6 10.6z" />,
 	/** Empty: keeps the labels of a menu aligned next to items that have an icon. */
 	blank: null,
 } as const;
@@ -356,6 +367,25 @@ export function LangSwitch() {
 			}))}
 		>
 			{lang.toUpperCase()}
+		</Menu>
+	);
+}
+
+/** The colour theme of the dashboard; the choice is shared by the panels and the shell. */
+export function ThemeSwitch() {
+	const choice = useThemeChoice();
+	const theme = useTheme();
+	return (
+		<Menu
+			className="ghost small"
+			label={t("Interface theme")}
+			items={THEMES.map((item) => ({
+				label: t(item.label),
+				icon: item.id === choice ? "check" : "blank",
+				onSelect: () => setThemeChoice(item.id),
+			}))}
+		>
+			<Icon name={theme === "light" ? "sun" : "moon"} size={14} />
 		</Menu>
 	);
 }

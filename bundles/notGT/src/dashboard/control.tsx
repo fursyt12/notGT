@@ -7,11 +7,19 @@
  * is the Editor's job.
  */
 import { createRoot } from "react-dom/client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
-import type { Out, OutItem, TitleData, TitleTemplate, VariableSelection } from "../shared/types";
+import type {
+	DataSource,
+	Out,
+	OutItem,
+	TitleData,
+	TitleTemplate,
+	VariableSelection,
+} from "../shared/types";
 import {
 	absoluteOutUrl,
+	addArrayColumn,
 	appendArrayItem,
 	coerce,
 	duplicateArrayItem,
@@ -40,15 +48,25 @@ import {
 	useOuts,
 	useRuntime,
 	useSelection,
+	useSources,
 	useTemplates,
 	useTitleData,
 } from "./shared";
 import { t, tr, useLang } from "./i18n";
 import {
+	ExcelTool,
+	SourceList,
+	boundVariables,
+	isWorkbook,
+	loadWorkbook,
+	trackWorkbook,
+} from "./sources";
+import {
 	CopyButton,
 	Disclosure,
 	Icon,
 	LangSwitch,
+	ThemeSwitch,
 	Menu,
 	PlaybackFields,
 	Switch,
@@ -191,6 +209,7 @@ function AirBar() {
 			>
 				{t("Take everything off air")}
 			</button>
+			<ThemeSwitch />
 			<LangSwitch />
 		</header>
 	);
@@ -496,6 +515,9 @@ function ScalarRow({ row }: { row: VarRow }) {
  * Columns for a list whose elements are flat objects of a few fields — such a
  * list reads best as a small table. Anything else is edited field by field.
  */
+/** A list of records with up to this many fields is shown as a table. */
+const MAX_TABLE_COLUMNS = 6;
+
 function tableColumns(list: unknown[]): string[] | null {
 	if (list.length === 0 || !list.every(isPlainObject)) return null;
 	const columns: string[] = [];
@@ -505,7 +527,7 @@ function tableColumns(list: unknown[]): string[] | null {
 			if (!columns.includes(leaf.path)) columns.push(leaf.path);
 		}
 	}
-	return columns.length > 0 && columns.length <= 4 ? columns : null;
+	return columns.length > 0 && columns.length <= MAX_TABLE_COLUMNS ? columns : null;
 }
 
 function ListRow({
@@ -620,16 +642,34 @@ function ListRow({
 	);
 }
 
-function ListBlock({ row, selection }: { row: VarRow; selection: VariableSelection }) {
+function ListBlock({
+	row,
+	selection,
+	bound,
+}: {
+	row: VarRow;
+	selection: VariableSelection;
+	/** The sheet this list mirrors, when it comes from a workbook. */
+	bound?: { source: DataSource; sheet: string };
+}) {
 	const list = row.value as unknown[];
 	const current = chosenIndex(list.length, selection[row.path]);
 	const columns = useMemo(() => tableColumns(list), [list]);
 
 	const menu: MenuItem[] = [
 		{
+			label: t("Add a column"),
+			icon: "plus",
+			onSelect: () => {
+				const name = window.prompt(t("Name of the new column"));
+				if (name) addArrayColumn(row.path, name);
+			},
+		},
+		{
 			label: t("Delete list"),
 			icon: "trash",
 			danger: true,
+			separated: true,
 			onSelect: () => removeDataValue(row.path),
 		},
 	];
@@ -643,6 +683,18 @@ function ListBlock({ row, selection }: { row: VarRow; selection: VariableSelecti
 				<span className="tag" title={t("{{{path}.field}} inserts the chosen row", { path: row.path })}>
 					{t("list")}
 				</span>
+				{bound ? (
+					<span
+						className="tag"
+						data-excel-tag
+						title={t("Mirrors the sheet “{sheet}” of {file}", {
+							sheet: bound.sheet,
+							file: bound.source.name,
+						})}
+					>
+						Excel
+					</span>
+				) : null}
 				<span className="spacer" />
 				<button
 					type="button"
@@ -812,15 +864,73 @@ function DataPanel() {
 	const selection = useSelection();
 	const rows = useMemo(() => flattenData(data), [data]);
 	const groups = useMemo(() => groupRows(rows), [rows]);
-	const [tool, setTool] = useState<"add" | "json" | null>(null);
+	const sources = useSources();
+	const bound = useMemo(() => boundVariables(sources), [sources]);
+	const [tool, setTool] = useState<"add" | "json" | "excel" | null>(null);
+	const [excelBusy, setExcelBusy] = useState(false);
+	const [excelError, setExcelError] = useState("");
+	const [dropping, setDropping] = useState(false);
 
-	const toggle = (next: "add" | "json") => setTool((value) => (value === next ? null : next));
+	const toggle = (next: "add" | "json" | "excel") =>
+		setTool((value) => (value === next ? null : next));
+
+	// A failure opens the Excel form, which is where it is explained.
+	const connectWorkbook = async (run: () => Promise<string | null>) => {
+		setExcelBusy(true);
+		setExcelError("");
+		const failure = await run();
+		setExcelBusy(false);
+		if (failure) {
+			setExcelError(failure);
+			setTool("excel");
+		} else {
+			setTool((value) => (value === "excel" ? null : value));
+		}
+	};
+
+	const carriesFiles = (event: DragEvent<HTMLElement>) =>
+		Array.from(event.dataTransfer.types).includes("Files");
 
 	return (
-		<section className="panel ctl-data">
+		<section
+			className={`panel ctl-data${dropping ? " is-dropping" : ""}`}
+			onDragOver={(event) => {
+				if (!carriesFiles(event)) return;
+				event.preventDefault();
+				setDropping(true);
+			}}
+			onDragLeave={(event) => {
+				if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false);
+			}}
+			onDrop={(event) => {
+				if (!carriesFiles(event)) return;
+				event.preventDefault();
+				setDropping(false);
+				// Dropping is the load mode: the file comes from this machine.
+				const file =
+					Array.from(event.dataTransfer.files).find(isWorkbook) ?? event.dataTransfer.files[0];
+				if (file) void connectWorkbook(() => loadWorkbook(file));
+			}}
+		>
+			{dropping ? (
+				<div className="ctl-drop" aria-hidden="true">
+					<Icon name="table" size={22} />
+					{t("Drop the workbook to load it")}
+				</div>
+			) : null}
 			<header className="panel__head">
 				<h2>{t("Data")}</h2>
 				<span className="spacer" />
+				<button
+					type="button"
+					className={`ghost${tool === "excel" ? " is-on" : ""}`}
+					aria-expanded={tool === "excel"}
+					data-excel-toggle
+					onClick={() => toggle("excel")}
+				>
+					<Icon name="table" size={14} />
+					Excel
+				</button>
 				<button
 					type="button"
 					className={`ghost${tool === "json" ? " is-on" : ""}`}
@@ -843,6 +953,16 @@ function DataPanel() {
 
 			{tool === "add" ? <AddVariable rows={rows} /> : null}
 			{tool === "json" ? <BulkJson /> : null}
+			{tool === "excel" ? (
+				<ExcelTool
+					busy={excelBusy}
+					error={excelError}
+					onLoad={(file) => void connectWorkbook(() => loadWorkbook(file))}
+					onTrack={(path) => void connectWorkbook(() => trackWorkbook(path))}
+				/>
+			) : null}
+
+			<SourceList sources={sources} />
 
 			{rows.length === 0 ? (
 				<div className="empty">
@@ -857,7 +977,12 @@ function DataPanel() {
 						{group.name ? <h3 className="vgroup__name mono">{group.name}</h3> : null}
 						{group.rows.map((row) =>
 							Array.isArray(row.value) ? (
-								<ListBlock key={row.path} row={row} selection={selection} />
+								<ListBlock
+									key={row.path}
+									row={row}
+									selection={selection}
+									bound={bound.get(row.path)}
+								/>
 							) : (
 								<ScalarRow key={row.path} row={row} />
 							),

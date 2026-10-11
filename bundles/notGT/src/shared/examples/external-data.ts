@@ -130,11 +130,11 @@ export const externalDataExample: ExampleCode = {
 }
 
 :root {
-	--accent: #ff3b30;
-	--ink: #ffffff;
-	--muted: #aab6c4;
-	--warn: #ffb020;
-	--plate: linear-gradient(180deg, rgba(24, 33, 45, 0.97), rgba(10, 14, 20, 0.97));
+	--accent: #ff5a8c;
+	--ink: #f5ecda;
+	--muted: #a9b8a8;
+	--warn: #ff8a3c;
+	--plate: linear-gradient(180deg, rgba(18, 54, 48, 0.97), rgba(10, 37, 31, 0.97));
 }
 
 html,
@@ -153,7 +153,7 @@ body {
 	width: 430px;
 	padding: 28px 34px 24px;
 	background: var(--plate);
-	font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+	font-family: Montserrat, "Segoe UI", Roboto, Arial, sans-serif;
 	color: var(--ink);
 	overflow: hidden;
 	animation: wx-in 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -319,10 +319,10 @@ body {
 }
 
 .wx__temp-value {
-	font-size: 86px;
-	font-weight: 800;
+	font-family: Handjet, Montserrat, sans-serif;
+	font-size: 118px;
+	font-weight: 700;
 	font-variant-numeric: tabular-nums;
-	letter-spacing: -0.03em;
 }
 
 .wx__temp-unit {
@@ -395,7 +395,7 @@ body {
 	height: 12px;
 	margin: 5px;
 	border-radius: 50%;
-	background: #10161f;
+	background: #0a231e;
 }
 
 /* --- состояния --------------------------------------------------- */
@@ -620,7 +620,7 @@ body {
 
 	async function refresh() {
 		var cfg = config();
-		el.card.style.setProperty("--accent", vars("weather.accent", "#ff3b30"));
+		el.card.style.setProperty("--accent", vars("weather.accent", "#ff5a8c"));
 		// Подпись ставим из JS с фолбэком: у [data-bind] фолбэка нет.
 		el.city.textContent = cfg.city;
 		if (!lastGood) showLoading();

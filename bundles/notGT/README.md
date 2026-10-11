@@ -2,6 +2,11 @@
 
 **English** · [Русский](README_RU.md)
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../media/brand/notgt-logo-on-dark.svg">
+  <img src="../../media/brand/notgt-logo.svg" alt="notGT" width="260">
+</picture>
+
 **notGT** is a web titling and broadcast-animation system that runs as a NodeCG bundle.
 It gives you several independent outputs (outs), each opened in OBS as a Browser Source
 by its own URL; a set of animations, either assembled from primitives (text, image, gif,
@@ -191,7 +196,7 @@ The tabs at the top are the bundle's three panels, each taking the whole screen
 | **Titles & Outs** | setup: outs, the animation library, what sits on which out    |
 | **Editor**        | look: the out's canvas, layers, code, position and crop       |
 
-In every panel red means one thing: **this is on air right now**. Deleting and other rare
+In every panel yellow — the brand's Lemon — means one thing: **this is on air right now**. Deleting and other rare
 actions live in the `⋯` menu at the end of a row.
 
 The dashboard's **language** — English or Russian — is switched with the `EN` / `RU`
@@ -202,6 +207,17 @@ remembered in the browser. By default the browser's language is used, and `?lang
 file, translate the values and add the language to `LANGS` and `DICTS` in
 `src/dashboard/i18n.tsx`; a phrase without a translation is a type error, so
 `npm run typecheck` checks completeness. The labels below are the English ones.
+
+The dashboard's **theme** is switched with the sun / moon button next to it: **Dark**
+(Cream on Studio, the default), **Light** (Studio on Cream, the brandbook's own page) or
+**As in the system**. The choice is shared by the three panels and the shell around them
+and remembered in the browser; `?theme=light` or `?theme=dark` in a panel's address sets
+it for that one page. The colours of both themes are the tokens at the top of
+`dashboard/ui.css`. Signal and Amber are too pale to read as text on Cream, and Lemon
+nearly vanishes on it, so in the light theme accents are fills and edges, accent-coloured
+text is a shade mixed towards Studio, and whatever is on air keeps its Lemon inside a
+Studio edge. The Editor's stage stays dark in both themes: a title is drawn for video.
+The theme never touches what goes on air.
 
 ### Control (`control.html`)
 
@@ -234,7 +250,56 @@ and the data.
   `name`, `role`). A value is edited right in its row and goes on air as you type. A list
   variable is shown as a table: the mark on the left picks the row that goes into
   `{{...}}`. **`+ Variable`** adds a value by path, **`JSON`** is bulk input (“Add to
-  current” = merge, “Replace all” = replace).
+  current” = merge, “Replace all” = replace). **`Excel`** connects a workbook — see below.
+  A list's `⋯` menu has “Add a column”, which gives every row a new field.
+
+#### Excel as a data source
+
+An `.xlsx` workbook can be the source of list variables. **Every sheet is a list**: the
+first filled row names the columns, every row under it is a row of the list. The sheet
+gives the variable its name (`Guests` → `{{Guests.Name}}`), spaces becoming `_`; a sheet
+still called `Sheet1` takes the file's name instead. Field names are the column headers
+as written, so what you see in the spreadsheet is what you bind.
+
+There are two ways to connect a workbook, chosen in **`Excel`** on the Data panel:
+
+- **Load a file** — the file comes from your machine: pick it in the form, or simply
+  **drop the `.xlsx` anywhere on the Data panel**. The server keeps a working copy.
+  “Download the workbook” in the workbook's `⋯` menu gives the copy back, with your edits
+  in it. Loading a file of the same name again replaces the copy.
+- **Track a file on the server** — you give the path of a workbook on the machine notGT
+  runs on (`/data/titles.xlsx`, `C:\Titles\guests.xlsx`). The file stays where it is and
+  is read again whenever it is saved there — the list follows by itself, usually within a
+  second or two. In Docker the path is a path inside the container: mount the folder
+  first (there is a commented-out example in `docker-compose.yml`).
+
+In both modes the list is an ordinary list in Data — the row mark, the cells, `+ Row`,
+moving and deleting rows all work — and **an edit is written into the workbook**: a
+changed value goes into its cell, a new row under the last one, a new column after the
+last one, and a removed row or column is emptied. Only cells whose value changed are
+touched, so formats, column widths, formulas and the other sheets stay as they were.
+The same holds for a change made through the REST API.
+
+What to know before pointing it at a workbook that matters:
+
+- **A tracked file is the master.** When it is saved on disk, it replaces the list, an
+  unsaved edit in Data included.
+- **A workbook open in Excel cannot be written.** Excel locks the file; the workbook's
+  line in Data says so, and the edit is written the next time you change a value after
+  closing it. Reading keeps working.
+- **Overwriting a formula.** A cell with a formula shows its calculated value; editing
+  that value in Data replaces the formula with the value.
+- **Keep it a table.** notGT rewrites the file with a spreadsheet library. Values,
+  formulas, formats and widths survive that; charts, pivot tables and macros are not
+  guaranteed to. Use a plain workbook for titles, and only `.xlsx` is read.
+- **Connecting never overwrites silently.** If a sheet would replace a variable that
+  already exists, you are asked first.
+- **Tracking uses the server's rights.** Whoever can open the dashboard can have the
+  server read and rewrite an `.xlsx` at any path it can reach. Only `.xlsx` paths are
+  accepted; keep the dashboard behind a login or on a trusted network, as for the API.
+- “Disconnect” lets go of the workbook and leaves its lists as ordinary variables;
+  deleting a list lets go of its sheet. The file itself is never deleted, except the
+  working copy of a loaded one.
 
 ### Titles & Outs (`titles.html`)
 
@@ -267,6 +332,10 @@ draw it.
   none is selected (or a code animation is), a new animation the size of the out is
   created, placed on it and made active.
 - **`Crop`** turns on the crop tool for the active placement (see below).
+- The **full-screen** button next to it gives the whole screen to the desk — the canvas
+  and its status bar, without the bars around it. The same button sits at the end of the
+  status bar, so it is there in full screen too; `Esc` also leaves. Where the browser does
+  not allow a page full screen, the desk fills the panel instead.
 - **`Play`** and **`Go on air`** act on the selected placement: the same one-shot and the
   same “On air” switch Control has (the button turns into **`Take off air`**). Unsaved
   edits are saved first. For an animation that is not on this out, the manual show is
@@ -275,7 +344,7 @@ draw it.
   “Unsaved” is shown next to it. Placements apply at once, without saving: a drag must
   never be lost.
 
-**On the left** are three lists: **“On the out”** (placements: order, play, remove; a red
+**On the left** are three lists: **“On the out”** (placements: order, play, remove; a yellow
 dot means on air), **“Layers”** of the active animation (order, hide, lock, delete;
 double-click to rename) and the **“Library”** of all animations (place, duplicate, delete;
 “+” for a new one). A row's actions appear on hover and on the selected row.
@@ -286,7 +355,7 @@ double-click to rename) and the **“Library”** of all animations (place, dupl
   under the canvas by the out page itself — the same one OBS has open — so entrances,
   holds and exits play here exactly as they go out: press `Play` or turn the switch on
   (here, in Control or through the API) and the animation plays on the canvas. A placement
-  that is on air has a red frame with an “On air” tag. While the active animation has
+  that is on air has a yellow frame with an “On air” tag. While the active animation has
   unsaved edits or a selected layer, the canvas shows the draft and the on-air picture
   under it is faded: what is on air is the saved version.
 - A **placement** is edited with the mouse: drag the active animation's frame (changes
@@ -312,6 +381,11 @@ double-click to rename) and the **“Library”** of all animations (place, dupl
 - **Layers** inside an animation are selected with a click, dragged and resized on the
   canvas; the empty part of the box, its frame and the handle in its top-left corner move
   the whole placement.
+
+**The bars are resizable.** Drag the inner edge of the left bar, of the right bar or the
+top edge of the code dock to give the desk more or less room; the arrow keys move a
+focused edge, and a double click gives the bar its own size back. The sizes are
+remembered in the browser.
 
 **On the right is the inspector**, with a tab for each thing being edited:
 
@@ -565,7 +639,7 @@ curl -sS -X POST http://<host>/api/templates \
             "type": "text",
             "x": 6, "y": 78, "width": 60,
             "binding": "speaker.name",
-            "style": { "fontFamily": "Inter", "fontSize": 64, "color": "#ffffff" },
+            "style": { "fontFamily": "Montserrat", "fontSize": 64, "color": "#ffffff" },
             "z": 1
           }
         ],
@@ -1006,9 +1080,28 @@ the background) starts, `onHide` the only place everything stops.
 An animation can be written as a file instead of in the Editor panel. Put an `.html` into
 `bundles/notGT/graphics/animations/` — on start the extension registers every file as a
 `kind: "code"` template with the id `file-<file-name>` and a `code.src` pointing at that
-file. The file example is `graphics/animations/example-file-animation.html`; for the
-built-in example templates, whose code lives inside them, see
-[“Ready-made examples”](#ready-made-examples).
+file. The folder ships empty; for the built-in example templates, whose code lives inside
+them, see [“Ready-made examples”](#ready-made-examples). A file animation is an ordinary
+page:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="notgt:name" content="Partner" />  <!-- the name in the library -->
+    <style>
+      .bug { position: absolute; right: 4%; bottom: 9%; font: 700 40px Montserrat, sans-serif; }
+    </style>
+  </head>
+  <body>
+    <div class="bug" data-bind="partner.name">{{partner.name ?? ACME}}</div>
+    <script>
+      onData(() => document.body.classList.toggle("has-partner", vars("partner.name", "") !== ""));
+    </script>
+  </body>
+</html>
+```
 
 ```bash
 cp my-animation.html bundles/notGT/graphics/animations/
@@ -1025,6 +1118,10 @@ Rules for file animations:
   `onData()`).
 - Relative paths to images and fonts work: the page is built with a `<base>` pointing at
   the file's directory.
+- Two fonts ship with the bundle and need no `@font-face`: **Montserrat** for text and
+  **Handjet** for numerals and headlines (`font-family: Montserrat, sans-serif`). They are
+  declared in every code animation, inline or file, and offered first in the layer
+  inspector's font list. The files and their OFL licences are in `graphics/fonts/`.
 - The file is re-read whenever the iframe is rebuilt, that is, when the animation is shown
   or after the template is edited. No NodeCG restart is needed after editing the file —
   showing the animation again (or refreshing the Browser Source in OBS) is enough.
@@ -1053,7 +1150,7 @@ Rules for file animations:
   padding: 24px 40px;
   background: {{panel.color ?? #1d2b3a}};
   border-radius: 12px;
-  font-family: Inter, system-ui, sans-serif;
+  font-family: Montserrat, system-ui, sans-serif;
   color: #fff;
 }
 .name {
@@ -1089,12 +1186,13 @@ need to touch it.
 
 ### Ready-made examples
 
-The examples are a ready-made graphics package in one style: dark plates, a single red
-accent, white type and a slanted cut on the edge. **All of them are in the library from
+The examples are a ready-made graphics package in the notGT brand style (the brandbook
+and logos are in `media/brand/`): Studio-green plates, the Signal pink accent, cream
+type, Lemon for LIVE, Handjet numerals and a slanted cut on the edge. **All of them are in the library from
 the first run**, under the stable ids in the table below, so they can be shown right
 away — from Control or through the API (`POST /api/titles/example-poll/show`). On an
 existing installation the missing examples and sample values for their variables are
-added once, by a schema migration, and the built-in code examples that nobody edited are
+added once, by a schema migration, and the built-in examples that nobody edited are
 brought up to their current look; an example the operator deleted does not come back, and
 one they changed is left alone. The language of the names, captions and sample data is
 set by the `language` key in the [bundle configuration](#bundle-configuration).
@@ -1162,7 +1260,7 @@ the template to an out as a placement with `held: true` (in the Control panel th
 “On air” switch).
 
 Separately from the examples there is the **animations from files** mechanism (see
-above) — `graphics/animations/example-file-animation.html` demonstrates it.
+above).
 
 #### `example-countdown` — countdown
 
@@ -1172,7 +1270,7 @@ above) — `graphics/animations/example-file-animation.html` demonstrates it.
 | `countdown.target`  | now + 10 min  | the target: ISO 8601 (`2027-01-01T00:00:00+03:00`) or Unix time in ms |
 | `countdown.from`    | the moment it is shown | the start of the count, for the ring (ISO 8601)          |
 | `countdown.urgent`  | `10`          | how many seconds before zero the “panic” turns on                 |
-| `countdown.accent`  | `#ff3b30`     | accent colour                                                     |
+| `countdown.accent`  | `#FF5A8C`     | accent colour                                                     |
 
 What to look at in the code: the remainder is always computed from `Date.now()`, so the
 count neither slips nor accumulates drift; the ring is a single `conic-gradient` eased by
@@ -1188,7 +1286,7 @@ much time is **left** (full at the start, empty at zero). A changing digit trigg
 | `clock.timeZone`    | `Europe/Moscow`   | IANA time zone                                               |
 | `clock.api`         | built-in list     | your own source URL; by default timeapi.io → worldtimeapi.org |
 | `clock.syncMinutes` | `15`              | resync period                                                |
-| `clock.accent`      | `#ff3b30`         | accent colour                                                |
+| `clock.accent`      | `#FF5A8C`         | accent colour                                                |
 
 What to look at in the code: the time comes from the network, and a **correction** to the
 local clock of the OBS machine is computed from the response; from then on the hands move
@@ -1207,7 +1305,7 @@ indicator (yellow instead of green) — the picture does not disappear.
 | `weather.units`          | `celsius`         | `celsius` or `fahrenheit`                           |
 | `weather.refreshMinutes` | `10`              | refresh period                                      |
 | `weather.api`            | open-meteo        | your own URL; supports `{lat}`, `{lon}`, `{units}`  |
-| `weather.accent`         | `#ff3b30`         | accent colour                                       |
+| `weather.accent`         | `#FF5A8C`         | accent colour                                       |
 
 What to look at in the code: the card's three states — a loading skeleton, data, and
 “connection lost”. The last one matters most: on a network error the last known values

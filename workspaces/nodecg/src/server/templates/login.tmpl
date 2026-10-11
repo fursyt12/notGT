@@ -6,43 +6,152 @@
 
 		<title>notGT — Sign in</title>
 
-		<style is="custom-style" include="iron-flex iron-flex-alignment">
+		<link rel="icon" href="/favicon.ico" sizes="any">
+		<link rel="icon" type="image/svg+xml" href="/dashboard/img/notgt-mark.svg">
+		<link rel="stylesheet" href="/dashboard/fonts/fonts.css">
+
+		<script type="text/javascript">
+			// notGT theme: picked in any panel of the notGT bundle and kept in
+			// localStorage("notgt.theme") as dark | light | system. Set before the
+			// first paint and followed live — a panel's change arrives as a
+			// `storage` event.
+			(function () {
+				var system = window.matchMedia("(prefers-color-scheme: light)");
+				function apply() {
+					var theme = "dark";
+					try {
+						theme = localStorage.getItem("notgt.theme") || "dark";
+					} catch (error) {}
+					if (theme === "system") theme = system.matches ? "light" : "dark";
+					theme = theme === "light" ? "light" : "dark";
+					document.documentElement.dataset.theme = theme;
+					var meta = document.querySelector('meta[name="theme-color"]');
+					if (meta) meta.content = theme === "light" ? "#f5ecda" : "#0c2b25";
+				}
+				apply();
+				window.addEventListener("storage", function (event) {
+					if (event.key === "notgt.theme") apply();
+				});
+				system.addEventListener("change", apply);
+			})();
+		</script>
+
+		<style>
+			/* notGT palette — mirrors bundles/notGT/dashboard/ui.css. Dark is Cream
+			   on Studio, light is Studio on Cream; Signal is the accent in both. */
+			html {
+				--notgt-bg: #0c2b25;
+				--notgt-bg-2: #123630;
+				--notgt-line: #2c5a4f;
+				--notgt-fg: #f5ecda;
+				--notgt-muted: #a9b8a8;
+				--notgt-accent: #ff5a8c;
+				--notgt-well: #082019;
+				--notgt-logo-on-dark: block;
+				--notgt-logo-on-light: none;
+			}
+
+			html[data-theme="light"] {
+				--notgt-bg: #f5ecda;
+				--notgt-bg-2: #ecdfc7;
+				--notgt-line: #c9ba9a;
+				--notgt-fg: #0c2b25;
+				--notgt-muted: #55695f;
+				--notgt-well: #fbf6ea;
+				--notgt-logo-on-dark: none;
+				--notgt-logo-on-light: block;
+			}
+
 			body {
 				display: flex;
 				flex-direction: column;
 				align-items: center;
+				justify-content: center;
+				gap: 14px;
+				min-height: 100vh;
+				margin: 0;
 				padding: 40px;
-				background-color: #1b2430;
-				color: #e6edf3;
-				font-family: 'Inter', 'Segoe UI', Roboto, system-ui, sans-serif;
+				box-sizing: border-box;
+				background-color: var(--notgt-bg);
+				color: var(--notgt-fg);
+				font: 14px/1.45 "Montserrat", "Segoe UI", Roboto, system-ui, sans-serif;
+				-webkit-font-smoothing: antialiased;
 			}
 
-			h1 {
-				font-size: 24px;
-				font-weight: 800;
-				letter-spacing: -0.02em;
-				margin: 0 0 24px;
+			.logo {
+				width: 220px;
+				height: auto;
+				margin-bottom: 10px;
+			}
+
+			.logo--on-dark {
+				display: var(--notgt-logo-on-dark);
+			}
+
+			.logo--on-light {
+				display: var(--notgt-logo-on-light);
 			}
 
 			h2 {
-        		-webkit-font-smoothing: antialiased;
-				font-size: 20px;
-				font-weight: 400;
-				letter-spacing: -.012em;
-				line-height: 32px;
+				margin: 0 0 6px;
+				font-size: 16px;
+				font-weight: 500;
+				color: var(--notgt-muted);
+			}
+
+			form {
+				display: flex;
+				flex-direction: column;
+				gap: 12px;
+				width: 280px;
 			}
 
 			label {
 				display: block;
+				margin-bottom: 4px;
+				font-size: 12px;
+				font-weight: 600;
+				color: var(--notgt-muted);
+			}
+
+			input {
+				width: 100%;
+				height: 36px;
+				padding: 0 10px;
+				box-sizing: border-box;
+				border: 1px solid var(--notgt-line);
+				border-radius: 6px;
+				background: var(--notgt-well);
+				color: var(--notgt-fg);
+				font: inherit;
+			}
+
+			input:focus-visible,
+			button:focus-visible {
+				outline: 2px solid #ff5a8c;
+				outline-offset: 1px;
 			}
 
 			button {
-				margin-top: 2px;
+				height: 36px;
+				margin-top: 4px;
+				border: 0;
+				border-radius: 6px;
+				background: #ff5a8c;
+				color: #0c2b25;
+				font: inherit;
+				font-weight: 700;
+				cursor: pointer;
+			}
+
+			button:hover {
+				background: #ff7aa2;
 			}
 		</style>
 	</head>
 	<body>
-		<h1>notGT</h1>
+		<img class="logo logo--on-dark" src="/dashboard/img/notgt-logo-on-dark.svg" alt="notGT">
+		<img class="logo logo--on-light" src="/dashboard/img/notgt-logo.svg" alt="notGT">
 		<h2>Please sign in</h2>
 
 		<% if (config.login.steam && config.login.steam.enabled) { %>

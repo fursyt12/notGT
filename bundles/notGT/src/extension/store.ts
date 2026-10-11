@@ -12,10 +12,12 @@ import {
 } from "../shared/defaults";
 import {
 	missingLibrary,
+	rebrandedVariables,
 	redrawnExamples,
 	seedLanguage,
 	seedLibrary,
 	seedVariables,
+	withoutRetiredSamples,
 } from "../shared/seed";
 import {
 	BUNDLE_NAME,
@@ -35,6 +37,8 @@ export interface BundleConfig {
 	allowUnauthenticatedApi?: boolean;
 	hideApiState?: boolean;
 	defaultOutId?: string;
+	/** Language the example library is seeded in: "en" or "ru". Empty = the server's locale. */
+	language?: string;
 	/** Where uploaded/converted media is stored. Default: <runtimeRoot>/assets/notGT/media */
 	mediaDir?: string;
 }
@@ -419,11 +423,15 @@ export function createStore(nodecg: ServerAPI): Store {
 	} else if ((meta.value.schemaVersion ?? 1) < SCHEMA_VERSION) {
 		// The library an installation starts with has grown: v2 turned the
 		// file examples into code templates, v3 made the whole examples
-		// gallery part of it, v4 redrew the older code examples. Add what this
+		// gallery part of it, v4 redrew the older code examples, v5 redrew
+		// all of them in the brand colours and fonts, v6 dropped the file
+		// example (its template goes with its file, in `syncFileAnimations`;
+		// its untouched sample variables go here). Add what this
 		// installation is missing, with sample values for the variables it
 		// does not have, and bring the examples nobody edited up to date. An
 		// example the operator deleted on purpose is not resurrected, and one
 		// they changed is left alone.
+		const from = meta.value.schemaVersion ?? 1;
 		const redrawn = redrawnExamples(listTemplates(), lang);
 		if (redrawn.length > 0) {
 			// Written as they are, not through `upsertTemplate`: that would move
@@ -431,9 +439,11 @@ export function createStore(nodecg: ServerAPI): Store {
 			const byId = new Map(redrawn.map((template) => [template.id, template]));
 			templates.value = listTemplates().map((template) => byId.get(template.id) ?? template);
 		}
-		const added = missingLibrary(listTemplates(), lang);
+		// Since v3 the whole gallery is seeded, so past that point a missing
+		// example is one the operator deleted.
+		const added = from < 3 ? missingLibrary(listTemplates(), lang) : [];
 		for (const template of added) upsertTemplate(template);
-		titleData.value = seedVariables(lang, readData());
+		titleData.value = seedVariables(lang, withoutRetiredSamples(rebrandedVariables(readData())));
 		meta.value = { ...meta.value, schemaVersion: SCHEMA_VERSION };
 		log.info(
 			"Library updated: %d example(s) added, %d redrawn",

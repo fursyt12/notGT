@@ -38,6 +38,7 @@ import {
 	Icon,
 	IconButton,
 	LangSwitch,
+	ThemeSwitch,
 	Menu,
 	NameInput,
 	exampleMenuItem,
@@ -363,6 +364,7 @@ function Library() {
 					<Icon name="plus" size={14} />
 					{t("New animation")}
 				</Menu>
+				<ThemeSwitch />
 				<LangSwitch />
 			</header>
 			<section className="panel tt-lib">

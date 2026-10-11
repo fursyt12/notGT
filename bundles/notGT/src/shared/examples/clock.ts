@@ -58,12 +58,12 @@ export const clockExample: ExampleCode = {
  */
 
 :root {
-	--accent: #ff3b30;
-	--ink: #ffffff;
-	--muted: #aab6c4;
+	--accent: #ff5a8c;
+	--ink: #f5ecda;
+	--muted: #a9b8a8;
 	--ok: #38d39f;
-	--warn: #ffb020;
-	--plate: linear-gradient(180deg, rgba(24, 33, 45, 0.97), rgba(10, 14, 20, 0.97));
+	--warn: #ff8a3c;
+	--plate: linear-gradient(180deg, rgba(18, 54, 48, 0.97), rgba(10, 37, 31, 0.97));
 }
 
 html,
@@ -84,7 +84,7 @@ body {
 	gap: 30px;
 	padding: 26px 56px 26px 40px;
 	background: var(--plate);
-	font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+	font-family: Montserrat, "Segoe UI", Roboto, Arial, sans-serif;
 	color: var(--ink);
 	animation: clock-in 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 	clip-path: polygon(0 0, calc(100% - 34px) 0, 100% 34px, 100% 100%, 0 100%);
@@ -119,7 +119,7 @@ body {
 	width: 190px;
 	height: 190px;
 	border-radius: 50%;
-	background: radial-gradient(circle at 50% 35%, #223041 0%, #0b1017 72%);
+	background: radial-gradient(circle at 50% 35%, #1a443c 0%, #07201a 72%);
 	box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
 }
 
@@ -211,7 +211,7 @@ body {
 	margin: -7px 0 0 -7px;
 	border-radius: 50%;
 	background: var(--accent);
-	box-shadow: 0 0 0 4px #0b1017;
+	box-shadow: 0 0 0 4px #07201a;
 	z-index: 3;
 }
 
@@ -233,11 +233,11 @@ body {
 .readout__time {
 	display: flex;
 	align-items: baseline;
-	font-size: 76px;
-	font-weight: 800;
-	line-height: 1;
+	font-family: Handjet, Montserrat, sans-serif;
+	font-size: 104px;
+	font-weight: 700;
+	line-height: 0.74;
 	font-variant-numeric: tabular-nums;
-	letter-spacing: -0.02em;
 }
 
 /* Двоеточие мигает — классическая CSS-анимация. */
@@ -257,7 +257,7 @@ body {
 }
 
 .readout__seconds {
-	font-size: 40px;
+	font-size: 56px;
 	font-weight: 700;
 	color: var(--muted);
 	margin-left: 6px;
@@ -522,7 +522,7 @@ body {
 	async function sync() {
 		var zone = vars("clock.timeZone", DEFAULT_ZONE) || DEFAULT_ZONE;
 		currentZone = zone;
-		el.clock.style.setProperty("--accent", vars("clock.accent", "#ff3b30"));
+		el.clock.style.setProperty("--accent", vars("clock.accent", "#ff5a8c"));
 		// Подпись ставим из JS с фолбэком: у [data-bind] фолбэка нет.
 		el.title.textContent = vars("clock.title", cityFromZone(zone));
 

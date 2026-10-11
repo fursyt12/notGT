@@ -28,6 +28,8 @@ export const REPLICANTS = {
 	selection: "selection",
 	/** Bookkeeping (first-run seeding, schema version). Persistent. */
 	meta: "meta",
+	/** Spreadsheets whose sheets are list variables (`DataSource[]`). Persistent. */
+	sources: "sources",
 } as const;
 
 /**
@@ -36,9 +38,59 @@ export const REPLICANTS = {
  *   1 — initial layout;
  *   2 — built-in example animations shipped as bundled code templates;
  *   3 — the whole examples gallery is part of the default library;
- *   4 — the older built-in code examples were redrawn.
+ *   4 — the older built-in code examples were redrawn;
+ *   5 — the whole library was redrawn in the brand colours and fonts;
+ *   6 — the file example is gone, and so are its sample variables.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 6;
+
+/**
+ * How a spreadsheet is connected.
+ *   load  — the file came from the operator's machine; the server keeps a
+ *           working copy, which can be downloaded back;
+ *   track — the file stays where it is on the server and is re-read whenever
+ *           it changes there.
+ * Either way an edit in the dashboard is written into the workbook.
+ */
+export type DataSourceMode = "load" | "track";
+
+/**
+ *   missing    — the file is not where it was;
+ *   locked     — it cannot be written: open in a spreadsheet, or read-only;
+ *   unreadable — it is not a workbook that can be read;
+ *   failed     — anything else.
+ */
+export type DataSourceProblem = "missing" | "locked" | "unreadable" | "failed";
+
+/** One sheet of a workbook and the list variable that mirrors it. */
+export interface DataSourceSheet {
+	sheet: string;
+	/** Top-level variable: `guests` for `{{guests.name}}`. */
+	variable: string;
+}
+
+/**
+ * A workbook connected to the variable store. A sheet is a table: its first
+ * filled row names the columns, and every row under it is a row of the list.
+ */
+export interface DataSource {
+	id: string;
+	kind: "excel";
+	mode: DataSourceMode;
+	/** File name, for display and for the download. */
+	name: string;
+	/** Where the workbook is on the server. */
+	path: string;
+	sheets: DataSourceSheet[];
+	/** How the last read or write went. */
+	state: "ok" | "error";
+	/** What went wrong, for the dashboard to put into words. */
+	problem?: DataSourceProblem;
+	/** The error as the system reported it. */
+	detail?: string;
+	/** When the workbook and the variables last agreed, ms since epoch. */
+	syncedAt: number;
+}
 
 export interface MetaState {
 	initialized: boolean;

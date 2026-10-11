@@ -41,6 +41,7 @@ const PANELS = [
 		expectText: ["Nothing is on air", "Data"],
 		expectRu: ["В эфире ничего нет", "Данные"],
 		heldToggle: true,
+		excelData: true,
 		shot: "panel-control.png",
 	},
 	{
@@ -57,6 +58,7 @@ const PANELS = [
 		clickPreview: true,
 		outSwitch: true,
 		dragAndCrop: true,
+		layoutTools: true,
 		shot: "panel-editor.png",
 	},
 ];
@@ -161,6 +163,57 @@ async function main() {
 					fullPage: false,
 				});
 				await ruPage.close();
+			}
+
+			{
+				// The light theme: `?theme=` picks it for one page view, and the
+				// switch in the panel changes it and saves the choice.
+				const themePage = await browser.newPage();
+				await themePage.setViewport({ width: 1600, height: 950 });
+				await themePage.goto(
+					`${BASE}/bundles/notGT/dashboard/${panel.file}?standalone=1&lang=en&theme=light`,
+					{ waitUntil: "networkidle2", timeout: 30_000 },
+				);
+				await sleep(800);
+				const ground = () =>
+					themePage.evaluate(() => ({
+						theme: document.documentElement.dataset.theme,
+						bg: getComputedStyle(document.body).backgroundColor,
+						fg: getComputedStyle(document.body).color,
+						saved: localStorage.getItem("notgt.theme"),
+					}));
+				const light = await ground();
+				check(
+					`${panel.file}: the light theme is Studio on Cream`,
+					light.theme === "light" &&
+						light.bg === "rgb(245, 236, 218)" &&
+						light.fg === "rgb(12, 43, 37)",
+					JSON.stringify(light),
+				);
+				await themePage.screenshot({
+					path: path.join(outDir, panel.shot.replace(".png", "-light.png")),
+					fullPage: false,
+				});
+				await themePage.click('button[aria-label="Interface theme"]');
+				await sleep(200);
+				await themePage.evaluate(() => {
+					const item = [...document.querySelectorAll(".menu__item")].find(
+						(node) => node.textContent?.trim() === "Dark",
+					);
+					item?.click();
+				});
+				await sleep(300);
+				const dark = await ground();
+				check(
+					`${panel.file}: the theme switch turns it to Cream on Studio and saves the choice`,
+					dark.theme === "dark" &&
+						dark.bg === "rgb(12, 43, 37)" &&
+						dark.fg === "rgb(245, 236, 218)" &&
+						dark.saved === "dark",
+					JSON.stringify(dark),
+				);
+				await themePage.evaluate(() => localStorage.removeItem("notgt.theme"));
+				await themePage.close();
 			}
 
 			if (panel.clickPreview) {
@@ -555,6 +608,219 @@ async function main() {
 				await fetch(`${BASE}/api/templates/${templateId}`, {
 					method: "DELETE",
 				});
+			}
+
+			if (panel.layoutTools) {
+				// The bars are dragged by their inner edges, and the desk takes
+				// what they give up.
+				const sizes = () =>
+					page.evaluate(() => {
+						const width = (selector) =>
+							Math.round(document.querySelector(selector).getBoundingClientRect().width);
+						return {
+							left: width(".ed-side"),
+							right: width(".ed-side--right"),
+							desk: width(".ed-center"),
+							saved: localStorage.getItem("notgt.editor.layout") ?? "",
+						};
+					});
+				const grab = async (edge) => {
+					const box = await (await page.$(`[data-split="${edge}"]`)).boundingBox();
+					return { x: box.x + box.width / 2, y: box.y + 240 };
+				};
+				const dragEdge = async (edge, dx) => {
+					const at = await grab(edge);
+					await page.mouse.move(at.x, at.y);
+					await page.mouse.down();
+					await page.mouse.move(at.x + dx, at.y, { steps: 6 });
+					await page.mouse.up();
+					await sleep(250);
+				};
+				const resetEdge = async (edge) => {
+					const at = await grab(edge);
+					await page.mouse.click(at.x, at.y);
+					await page.mouse.click(at.x, at.y);
+					await sleep(250);
+				};
+
+				const before = await sizes();
+				await dragEdge("left", 90);
+				const wider = await sizes();
+				check(
+					"editor.html: dragging the left bar's edge widens it and the desk gives way",
+					wider.left === before.left + 90 &&
+						wider.desk === before.desk - 90 &&
+						wider.saved.includes('"left"'),
+					JSON.stringify({ before, wider }),
+				);
+				await dragEdge("right", -70);
+				const both = await sizes();
+				check(
+					"editor.html: dragging the right bar's edge widens it",
+					both.right === before.right + 70 && both.desk === wider.desk - 70,
+					JSON.stringify(both),
+				);
+				await resetEdge("left");
+				await resetEdge("right");
+				const reset = await sizes();
+				check(
+					"editor.html: a double click gives a bar its own width back",
+					reset.left === before.left && reset.right === before.right && reset.desk === before.desk,
+					JSON.stringify(reset),
+				);
+
+				// Full screen: the desk alone, with the canvas still on it.
+				const desk = () =>
+					page.evaluate(() => {
+						const element = document.querySelector(".ed-center");
+						const rect = element.getBoundingClientRect();
+						return {
+							native: document.fullscreenElement === element,
+							filled: element.classList.contains("is-filled"),
+							covers:
+								Math.round(rect.width) === window.innerWidth &&
+								Math.round(rect.height) === window.innerHeight,
+							canvas: Boolean(element.querySelector("canvas")),
+						};
+					});
+				await page.click("[data-desk-toggle]");
+				await sleep(700);
+				const full = await desk();
+				check(
+					"editor.html: the full-screen button gives the desk the whole screen",
+					(full.native || full.filled) && full.covers && full.canvas,
+					JSON.stringify(full),
+				);
+				await page.screenshot({
+					path: path.join(outDir, "editor-desk-full.png"),
+					fullPage: false,
+				});
+				await page.click("[data-desk-toggle]");
+				await sleep(700);
+				const windowed = await desk();
+				const after = await sizes();
+				check(
+					"editor.html: the same button brings the bars back",
+					!windowed.native && !windowed.filled && after.desk === before.desk,
+					JSON.stringify({ windowed, after }),
+				);
+			}
+
+			if (panel.excelData) {
+				// An Excel workbook as a data source: chosen in the form, then
+				// dropped on the panel; its sheet is a list like any other, and an
+				// edit of the list goes back into the workbook.
+				const { createRequire } = await import("node:module");
+				const ExcelJS = createRequire(import.meta.url)("exceljs");
+				const SOURCES = `${BASE}/bundles/notGT/sources`;
+				const workbook = (rows) => {
+					const book = new ExcelJS.Workbook();
+					book.addWorksheet("Panel Guests").addRows([["Name", "Role"], ...rows]);
+					return book;
+				};
+				const file = path.join(outDir, "e2e-panel.xlsx");
+				await workbook([
+					["Anna Reed", "Expert"],
+					["Peter Holt", "Studio guest"],
+				]).xlsx.writeFile(file);
+
+				const state = () =>
+					page.evaluate(() => {
+						const source = document.querySelector('[data-source="e2e-panel.xlsx"]');
+						return {
+							source: source?.textContent ?? "",
+							mode: source?.getAttribute("data-source-mode") ?? "",
+							tag: Boolean(
+								document.querySelector('.vlist[data-path="Panel_Guests"] [data-excel-tag]'),
+							),
+							cells: [...document.querySelectorAll('input[data-array="Panel_Guests"]')]
+								.filter((input) => input.type !== "radio")
+								.map((input) => input.value),
+							error: document.querySelector("[data-excel-error]")?.textContent ?? "",
+						};
+					});
+
+				await page.click("[data-excel-toggle]");
+				await sleep(200);
+				await (await page.$("input[data-excel-file]")).uploadFile(file);
+				await sleep(1500);
+				const loaded = await state();
+				check(
+					"control.html: a workbook chosen in the Excel form becomes a list, marked as Excel",
+					loaded.mode === "load" &&
+						loaded.source.includes("Panel_Guests") &&
+						loaded.tag &&
+						loaded.cells.join("|") === "Anna Reed|Expert|Peter Holt|Studio guest",
+					JSON.stringify(loaded),
+				);
+				await page.screenshot({
+					path: path.join(outDir, "control-excel.png"),
+					fullPage: false,
+				});
+
+				// Edit a cell the way an operator does.
+				const cell = 'input[data-array="Panel_Guests"][data-index="1"][data-leaf="Role"]';
+				await page.focus(cell);
+				await page.$eval(cell, (input) => input.select());
+				await page.keyboard.type("Host");
+				// A cell that has the focus keeps what is being typed in it.
+				await page.$eval(cell, (input) => input.blur());
+				await sleep(1800);
+				const listed = (await (await fetch(`${SOURCES}/`)).json()).sources ?? [];
+				const sourceId = listed.find((entry) => entry.name === "e2e-panel.xlsx")?.id;
+				const saved = new ExcelJS.Workbook();
+				await saved.xlsx.load(
+					Buffer.from(await (await fetch(`${SOURCES}/${sourceId}/download`)).arrayBuffer()),
+				);
+				check(
+					"control.html: an edit of that list is written into the workbook",
+					saved.getWorksheet("Panel Guests").getCell("B3").value === "Host",
+					String(saved.getWorksheet("Panel Guests").getCell("B3").value),
+				);
+
+				// Dropping a file on the panel is the load mode too.
+				const second = await workbook([
+					["Maria Kim", "Analyst"],
+					["Ivan Petrov", "Reporter"],
+					["Olga Berg", "Producer"],
+				]).xlsx.writeBuffer();
+				const drop = (name, base64) =>
+					page.evaluate(
+						(name, base64) => {
+							const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+							const transfer = new DataTransfer();
+							transfer.items.add(new File([bytes], name));
+							const target = document.querySelector(".ctl-data");
+							for (const type of ["dragover", "drop"]) {
+								target.dispatchEvent(
+									new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer }),
+								);
+							}
+						},
+						name,
+						base64,
+					);
+				await drop("e2e-panel.xlsx", Buffer.from(second).toString("base64"));
+				await sleep(1500);
+				const afterDrop = await state();
+				check(
+					"control.html: a workbook dropped on the Data panel is loaded",
+					afterDrop.cells.join("|") ===
+						"Maria Kim|Analyst|Ivan Petrov|Reporter|Olga Berg|Producer",
+					JSON.stringify(afterDrop),
+				);
+				await drop("e2e-notes.txt", Buffer.from("not a workbook").toString("base64"));
+				await sleep(800);
+				const refused = await state();
+				check(
+					"control.html: a dropped file that is not a workbook is explained, not swallowed",
+					refused.error.includes(".xlsx"),
+					JSON.stringify(refused.error),
+				);
+
+				await fetch(`${SOURCES}/${sourceId}`, { method: "DELETE" });
+				await fetch(`${BASE}/api/data/Panel_Guests`, { method: "DELETE" });
+				await sleep(400);
 			}
 
 			if (panel.heldToggle) {

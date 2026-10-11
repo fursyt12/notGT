@@ -25,7 +25,7 @@ export function createDefaultTemplate(): TitleTemplate {
 		width: 1040,
 		height: 184,
 		layers: lowerThirdLayers(
-			"ink",
+			"studio",
 			{ name: "speaker.name", role: "speaker.role" },
 			{ name: "Имя Фамилия", role: "Должность" },
 		),
@@ -56,15 +56,15 @@ export function createCodeSampleTemplate(): TitleTemplate {
 .ticker {
   position: absolute; left: 4%; right: 4%; bottom: 8%;
   display: flex; align-items: stretch;
-  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif; color: #fff;
-  background: linear-gradient(180deg, rgba(24,33,45,.97), rgba(10,14,20,.97));
+  font-family: Montserrat, "Segoe UI", Roboto, Arial, sans-serif; color: #f5ecda;
+  background: linear-gradient(180deg, rgba(18,54,48,.97), rgba(10,37,31,.97));
   clip-path: polygon(0 0, 100% 0, calc(100% - 26px) 100%, 0 100%);
 }
 .badge {
   position: relative; z-index: 1;
   display: flex; align-items: center;
   padding: 0 48px 0 28px;
-  background: linear-gradient(135deg, #ff5245, #dc2a20);
+  background: #ffd23f; color: #0c2b25;
   clip-path: polygon(0 0, 100% 0, calc(100% - 24px) 100%, 0 100%);
   font-size: 27px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
 }
