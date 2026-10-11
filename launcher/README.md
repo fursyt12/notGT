@@ -4,6 +4,13 @@ A small, **dependency-free** (Node builtins only) local control panel for the no
 (NodeCG) server. It lets a Windows user pick a network interface and a port, start the
 server, and open the GUI — in the spirit of the Bitfocus Companion launcher.
 
+It has two faces. On Windows the user sees **a window**: `notGT Launcher.exe`
+([`win/notGT-launcher.c`](win/notGT-launcher.c), described in
+[docs/windows-build.md](../docs/windows-build.md#the-native-launcher)) starts this
+script hidden with `--no-open` and drives it through the control API below. Run by
+itself — `notGT.cmd`, or `node launcher/index.mjs` on any system — the script serves
+the same controls as **a page** (`ui.html`) and opens it in the browser.
+
 No `package.json`, no `node_modules`: run it with a bare `node`.
 
 ```sh
@@ -25,8 +32,21 @@ On startup it prints exactly one line to stdout:
 notGT launcher on http://127.0.0.1:<port>
 ```
 
-The last chosen host/port is remembered in `launcher/launcher-config.json` (write failures
-are ignored) and pre-selected on the next run. Explicit CLI flags win over the saved values.
+The last chosen host/port — and the language — is remembered in
+`launcher/launcher-config.json` (write failures are ignored) and pre-selected on the next
+run. Explicit CLI flags win over the saved values. `--settings <file>` keeps it somewhere
+else, which is what the tests do so as not to rewrite yours.
+
+## Languages
+
+The launcher speaks **Russian and English**; both faces have an RU / EN switch. Until
+someone uses it the language is the system's (`--lang ru|en` pins it). The choice is one
+setting for the window, the page and everything the launcher says: `GET /api/state`
+carries `lang`, and `POST /api/lang` `{ "lang": "en" }` changes it — including the status
+text already on screen, which is kept in both languages and only becomes one when it is
+sent. In the source a text is written in both, side by side: `tr(ru, en)` / `T(ru, en)`
+in `index.mjs`, `tx(ru, en)` and `data-en="…"` in `ui.html`, `T(L"…", L"…")` in the
+window's C. A third language would turn those pairs into tables.
 
 ## How the server is started
 
@@ -67,9 +87,45 @@ including a warning when a **system proxy** is enabled and the chosen address is
 `ProxyOverride` — loopback is normally on the browser bypass list, which is the other
 classic reason for "everything except 127.0.0.1 hangs".
 
+## Sign-in («Вход по паролю»)
+
+The sign-in is on unless `cfg/nodecg.json` switches it off. With no `login` block there —
+the state of a fresh install — the users are the ones kept in the dashboard's Team tab,
+starting with `admin` / `admin`; the card says so, and says it for as long as
+`db/notGT-team.json` still marks that account as having the default password.
+
+An administrator set in the launcher is NodeCG's own local login, which lives in the
+`login` block of the same `cfg/nodecg.json`. `POST /api/login` merges that block in,
+preserving every other key: it generates a `sessionSecret` on first use and stores the
+password as `sha256:<HMAC keyed with sessionSecret>` — never as text. `GET /api/state`
+reports `login: { enabled, source, username, defaultPassword }` and nothing more — `source`
+is `team` (no block), `launcher` (an administrator set here) or `off`. `POST
+/api/login/disable` writes `login.enabled: false`; `POST /api/login/default` removes the
+block, which is how a switched-off sign-in is turned back on without naming an
+administrator. NodeCG reads its config at boot,
+so a change applies after «Остановить» → «Запустить»; the response says so while the
+server is running.
+
+All three endpoints insist on `Content-Type: application/json`. The control API has no
+password of its own, and a page of another origin can post a form to `127.0.0.1` without
+asking — but not a JSON request.
+
 `POST /api/stop` kills the child **tree** — `taskkill /PID <pid> /T /F` on Windows,
 `SIGTERM` then `SIGKILL` after a grace period elsewhere. The child is always stopped when
 the launcher exits (`SIGINT`, `SIGTERM`, `exit`).
+
+## Outliving the window
+
+Closing the Windows window does not stop the server. The window starts this script with
+`--background` and, when it closes, sends `POST /api/quit` `{ "stop": false }`: with a
+server running the script **stays** to look after it; with none it exits. `{ "stop": true }`
+stops the server first. While it runs the script keeps a note of how to reach it —
+`launcher/launcher-runtime.json`, `{ pid, port }` (`--runtime <file>` puts it elsewhere) —
+and the next window reads the note, asks that launcher for its state and attaches to it
+instead of starting another: that is how a server left running shows up as running.
+In `--background` a script with no server and no window asking for the state for 20 s
+ends by itself. Run by hand (the page), none of this applies: it lives until it is
+killed, and takes the server with it.
 
 ## Two different HTTP APIs — do not confuse them
 
@@ -101,18 +157,23 @@ section above («Разрешить порт»).
 
 ## Launcher HTTP API (127.0.0.1 only, JSON)
 
-| method | path                   | notes                                                                             |
-| ------ | ---------------------- | --------------------------------------------------------------------------------- |
-| `GET`  | `/`                    | the launcher UI (`ui.html`)                                                       |
-| `GET`  | `/api/state`           | full state: version, appDir, interfaces, status, guiUrl, warning, reach, firewall |
-| `POST` | `/api/start`           | body `{ host, port }`; `409` while running, `400` on bad port, `409` if port busy |
-| `POST` | `/api/stop`            | safe no-op `200` when already stopped                                             |
-| `POST` | `/api/open`            | optional body `{ url }` (defaults to the _usable_ GUI url)                        |
-| `GET`  | `/api/logs?since=<n>`  | `{ lines, next }` for incremental log appends                                     |
-| `POST` | `/api/reach`           | re-probes both addresses; returns `{ reach, warning }`                            |
-| `GET`  | `/api/diagnostics`     | fresh probe + `verdict[]`, firewall rule state, Windows proxy settings            |
-| `POST` | `/api/firewall/allow`  | body `{ port? }`; adds the inbound rule (UAC), then re-probes                     |
-| `POST` | `/api/firewall/remove` | body `{ port? }`; deletes the rule                                                |
+| method | path                   | notes                                                                              |
+| ------ | ---------------------- | ---------------------------------------------------------------------------------- |
+| `GET`  | `/`                    | the launcher UI (`ui.html`)                                                        |
+| `GET`  | `/api/state`           | full state: version, appDir, interfaces, status, guiUrl, warning, reach, firewall  |
+| `POST` | `/api/start`           | body `{ host, port }`; `409` while running, `400` on bad port, `409` if port busy  |
+| `POST` | `/api/stop`            | safe no-op `200` when already stopped                                              |
+| `POST` | `/api/open`            | optional body `{ url }` (defaults to the _usable_ GUI url)                         |
+| `GET`  | `/api/logs?since=<n>`  | `{ lines, next }` for incremental log appends                                      |
+| `POST` | `/api/reach`           | re-probes both addresses; returns `{ reach, warning }`                             |
+| `GET`  | `/api/diagnostics`     | fresh probe + `verdict[]`, firewall rule state, Windows proxy settings             |
+| `POST` | `/api/firewall/allow`  | body `{ port? }`; adds the inbound rule (UAC), then re-probes                      |
+| `POST` | `/api/firewall/remove` | body `{ port? }`; deletes the rule                                                 |
+| `POST` | `/api/login`           | body `{ username, password }`; switches the dashboard sign-in on for that operator |
+| `POST` | `/api/login/disable`   | switches the sign-in off; the stored operator is kept                              |
+| `POST` | `/api/login/default`   | removes the `login` block: sign-in on, users kept in the dashboard's Team tab      |
+| `POST` | `/api/lang`            | body `{ lang }` — `ru` or `en`; answers with the state, in that language           |
+| `POST` | `/api/quit`            | body `{ stop? }`; the window is closing — see "Outliving the window"               |
 
 `status` ∈ `stopped | starting | running | stopping | error`.
 `guiUrl` is `http://<openHost>:<port>/dashboard/`, where `0.0.0.0` is dialled as `127.0.0.1`;

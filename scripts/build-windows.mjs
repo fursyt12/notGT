@@ -698,13 +698,83 @@ function buildLauncherExe() {
 	candidates.push("x86_64-w64-mingw32-gcc");
 	if (IS_WINDOWS) candidates.push("gcc"); // MSYS2/Strawberry mingw if present
 
+	// The icon, the logo, the manifest and the file's version are resources,
+	// compiled by windres — the one that comes with the same toolchain.
+	const winDir = path.dirname(LAUNCHER_C_SRC);
+	const version = JSON.parse(
+		fs.readFileSync(path.join(BUNDLE_DIR, "package.json"), "utf8"),
+	).version;
+	const versionNumbers = [...String(version).split(/[.+-]/), 0, 0, 0, 0]
+		.slice(0, 4)
+		.map((part) => Number.parseInt(part, 10) || 0)
+		.join(",");
+	const resObject = path.join(CACHE_DIR, "launcher-res.o");
+	fs.mkdirSync(CACHE_DIR, { recursive: true });
+	// The version goes in through a header rather than through -D: a quoted
+	// string does not survive cmd.exe, windres and the preprocessor it calls.
+	fs.writeFileSync(
+		path.join(CACHE_DIR, "notgt-version.h"),
+		`#define NOTGT_VERSION ${versionNumbers}\n#define NOTGT_VERSION_TEXT "${version}"\n`,
+		"utf8",
+	);
+
 	const outExe = path.join(PACKAGE_DIR, LAUNCHER_EXE_NAME);
 	for (const cc of candidates) {
 		if (!commandExists(cc)) continue;
+		// windres under the compiler's own name; a native Windows toolchain
+		// often has it only as plain `windres`.
+		const windres = [
+			process.env.MINGW_WINDRES,
+			cc.replace(/gcc(\.exe)?$/i, "windres$1"),
+			IS_WINDOWS ? "windres" : null,
+		].find((candidate) => candidate && commandExists(candidate));
+		fs.rmSync(resObject, { force: true });
+		const hasResources =
+			Boolean(windres) &&
+			run(
+				windres,
+				[
+					path.join(winDir, "notGT-launcher.rc"),
+					"-I",
+					winDir,
+					"-I",
+					CACHE_DIR,
+					"-DNOTGT_HAVE_VERSION_H",
+					"-O",
+					"coff",
+					"-o",
+					resObject,
+				],
+				{ optional: true, label: windres },
+			) &&
+			exists(resObject);
+		if (!hasResources) {
+			// Without them the program has no icon, no logo and no manifest
+			// (themed controls, DPI awareness): not something to ship quietly.
+			warn(
+				`windres is unavailable or failed for ${cc}: ${LAUNCHER_EXE_NAME} is not ` +
+					"built with this compiler.",
+			);
+			continue;
+		}
 		log(`Compiling ${LAUNCHER_EXE_NAME} with ${cc}…`);
 		const ok = run(
 			cc,
-			["-O2", "-municode", "-mwindows", "-o", outExe, LAUNCHER_C_SRC],
+			[
+				"-O2",
+				"-municode",
+				"-mwindows",
+				"-o",
+				outExe,
+				LAUNCHER_C_SRC,
+				resObject,
+				"-lwinhttp",
+				"-lgdiplus",
+				"-lole32",
+				"-lshell32",
+				"-lgdi32",
+				"-lcomctl32",
+			],
 			{ optional: true, label: cc },
 		);
 		if (ok && exists(outExe)) return true;
@@ -771,39 +841,48 @@ function readmeText() {
 		"   программу прямо из окна архиватора).",
 		"2. Дважды щёлкните «notGT Launcher.exe».",
 		"   Если файла .exe нет (сборка без mingw-w64) — запустите notGT.cmd.",
-		"3. Откроется страница управления лаунчера. Выберите сетевой интерфейс",
-		"   и порт и нажмите «Запустить».",
+		"3. Откроется окно лаунчера. Выберите сетевой интерфейс и порт и",
+		"   нажмите «Запустить», затем «Открыть панель».",
+		"4. Панель спросит имя и пароль. На новом сервере это admin / admin —",
+		"   войдите и сразу смените пароль во вкладке «Команда».",
 		"",
-		"Лаунчер сам подбирает свободный порт, записывает выбранные host/port в",
-		"app\\cfg\\nodecg.json, запускает сервер NodeCG и открывает дашборд.",
-		"Пока лаунчер запущен, сервер живёт вместе с ним; закрытие лаунчера",
-		"останавливает сервер.",
+		"Лаунчер записывает выбранные host/port в app\\cfg\\nodecg.json и запускает",
+		"сервер NodeCG. Значок лаунчера есть в области уведомлений.",
+		"",
+		"Закрытие лаунчера сервер НЕ останавливает: сервер продолжает работать в",
+		"фоне, и при следующем запуске лаунчер покажет, что он запущен. Чтобы",
+		"остановить сервер, нажмите «Остановить» (или в меню значка — «Остановить",
+		"сервер и выйти»). Язык лаунчера переключается кнопками RU / EN.",
 		"",
 		"Дашборд: http://<выбранный-интерфейс>:<порт>/dashboard/",
+		"",
+		"Запуск через notGT.cmd вместо окна открывает ту же панель управления",
+		"страницей в браузере.",
 		"",
 		"Если дашборд не открывается на другом устройстве",
 		"-----------------------------------------------",
 		"Сервер слушает все интерфейсы, а выбранный адрес подставляется в ссылки.",
 		"Если с другого компьютера страница «грузится бесконечно», почти всегда",
 		"виноват брандмауэр Windows: он не пускает входящие подключения к node.exe.",
-		"Откройте лаунчер и нажмите «Разрешить порт» (нужны права администратора) —",
-		"будет создано правило для выбранного порта во всех профилях сети. Кнопка",
-		"«Проверить доступность» показывает, какие адреса реально отвечают.",
+		"В лаунчере откройте «Сеть и брандмауэр…» и нажмите «Разрешить порт»",
+		"(нужны права администратора) — будет создано правило для выбранного",
+		"порта во всех профилях сети. Кнопка «Проверить» показывает, какие адреса",
+		"реально отвечают.",
 		"Если дашборд не нужен с других устройств, выберите интерфейс",
 		"«Только этот компьютер (127.0.0.1)» — тогда сервер слушает только loopback.",
 		"",
 		"OBS Studio",
 		"----------",
-		"Добавьте Browser Source с адресом:",
+		"Добавьте Browser Source с адресом, который копируется в панели кнопкой",
+		"«Ссылка для OBS». Он выглядит так (ключ у каждого out'а свой):",
 		"",
-		"  http://<выбранный-интерфейс>:<порт>/bundles/notGT/graphics/out.html?out=main",
+		"  http://<выбранный-интерфейс>:<порт>/bundles/notGT/graphics/out.html?out=main&key=out_…",
 		"",
 		"Размер: 1920x1080. Включите «Прозрачный фон» (Custom CSS не нужен).",
 		"Сервер слушает все интерфейсы, поэтому локально можно писать 127.0.0.1,",
 		"а для других машин — IP этого компьютера (он показан в лаунчере).",
 		"",
-		"Другие выходы (outs) открываются так же, с другим ?out=<id>: например",
-		"  http://<выбранный-интерфейс>:<порт>/bundles/notGT/graphics/out.html?out=interview",
+		"У каждого выхода (out) своя ссылка — её тоже берут в панели.",
 		"",
 		"Где что лежит",
 		"-------------",

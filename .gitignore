@@ -14,6 +14,8 @@ yarn-error.log
 
 # The launcher remembers the last interface/port per machine.
 /launcher/launcher-config.json
+# …and, while it runs, how to reach it.
+/launcher/launcher-runtime.json
 
 # Local bundles
 /bundles/*

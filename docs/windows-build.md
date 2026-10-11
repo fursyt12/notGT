@@ -7,17 +7,17 @@ assembled and how a release is cut.
 
 - Packager: [`scripts/build-windows.mjs`](../scripts/build-windows.mjs), with what goes
   into `app/` in [`scripts/windows-app.mjs`](../scripts/windows-app.mjs)
-- Native bootstrap: [`launcher/win/notGT-launcher.c`](../launcher/win/notGT-launcher.c)
+- The launcher's window: [`launcher/win/notGT-launcher.c`](../launcher/win/notGT-launcher.c)
 - CI: [`.github/workflows/release.yml`](../.github/workflows/release.yml)
 
 ## Package layout
 
 ```
 notGT-win-x64/
-  notGT Launcher.exe      native bootstrap (mingw-w64; absent if not available)
+  notGT Launcher.exe      the launcher's window (mingw-w64; absent if not available)
   notGT.cmd               fallback bootstrap, always present
   launcher/
-    index.mjs             launcher UI + NodeCG supervisor (spawns app/index.js)
+    index.mjs             what the window drives: NodeCG supervisor (spawns app/index.js)
     ui.html
   node/                   official Windows Node runtime: node.exe and its licence
   app/                    NodeCG runtime root
@@ -79,11 +79,13 @@ single top-level entry.
    caches the zip under `<out>/.cache/`, extracts it (`tar -xf` on Windows,
    `unzip` on Linux — GNU tar cannot read zip) and takes **only `node.exe`**
    and its licence into `node/`: nothing in the package runs npm or corepack.
-5. **Native launcher** — compiles `notGT Launcher.exe` with
+5. **Native launcher** — compiles the resources (icon, logo, manifest, version) with
+   `x86_64-w64-mingw32-windres` and `notGT Launcher.exe` with
    `x86_64-w64-mingw32-gcc -O2 -municode -mwindows`. If mingw-w64 is missing
    (typical on `windows-latest`) the `.exe` is skipped with a warning and
-   `notGT.cmd` is the entry point — it is fully functional on its own and only
-   differs by showing a console window.
+   `notGT.cmd` is the entry point — it is fully functional on its own, but shows a
+   console window and opens the control page in the browser instead of a window of
+   its own. `MINGW_GCC` / `MINGW_WINDRES` name another compiler.
 6. **`README.txt`** and `notGT.cmd`.
 7. **Smoke test** (with `--smoke`) — a copy of `app/` is started and checked:
    the dashboard shell, a notGT panel, the out page, the API, a file from
@@ -149,19 +151,69 @@ Flags:
 
 ## The native launcher
 
-`notGT Launcher.exe` is a GUI-subsystem Win32 program (no console window). It:
+`notGT Launcher.exe` is the program the user double-clicks: a compact window in the
+brand's colours, in the spirit of the Bitfocus Companion launcher. It is a
+GUI-subsystem Win32 program in C (no console window, no runtime to install — it links
+only what Windows ships), about 250 KB.
 
-1. finds its own directory with `GetModuleFileNameW`,
-2. builds `"<dir>\node\node.exe" "<dir>\launcher\index.mjs" --app "<dir>\app"`,
-3. starts it with `CreateProcessW` + `CREATE_NO_WINDOW` and exits immediately
-   (the launcher keeps running as the application),
-4. shows a Russian `MessageBoxW` naming the missing path if `node\node.exe`,
-   `launcher\index.mjs` or `app\` is absent.
+- **The main window**: the status, the network interface and the port, «Запустить» /
+  «Остановить» / «Открыть панель», and the dashboard's address with «Копировать».
+  **RU / EN** in the header switches the language — Russian and English, the system's
+  until someone chooses; the names here are the Russian ones.
+- **Three small windows** behind the links at the bottom: «Вход по паролю…» (name the
+  administrator, or switch the sign-in off and on), «Сеть и брандмауэр…» (the firewall
+  rule and the reachability check) and «Журнал сервера…».
+- **The notification area**: an icon with «Открыть панель», «Показать лончер» and
+  «Выйти». A second double click on the `.exe` brings the first window forward instead
+  of starting another.
 
-`launcher/index.mjs` then serves the control page on `127.0.0.1`, and when the
-user presses «Запустить» it writes `host`/`port` into `<appDir>/cfg/nodecg.json`
-and spawns `node index.js` with `cwd = app`. The packager itself never starts
-NodeCG.
+**Closing the launcher does not stop the server.** The close box and «Выйти» end the
+window; a server that is running keeps running, and the next time the program is started
+its window shows that server — running, with its address — and can stop it. To stop the
+server, press «Остановить»; while it runs the tray menu also offers «Остановить сервер и
+выйти» next to «Выйти — сервер продолжит работать».
+
+The window is only a face. On start it
+
+1. finds its own directory with `GetModuleFileNameW` and shows a Russian `MessageBoxW`
+   naming the missing path if `node\node.exe`, `launcher\index.mjs` or `app\` is absent,
+2. starts `"<dir>\node\node.exe" "<dir>\launcher\index.mjs" --app "<dir>\app" --no-open`
+   hidden (`CREATE_NO_WINDOW`) with `--background`. That process is **not** tied to the
+   window's life: it is what keeps looking after the server once the window is closed.
+   It leaves a note of how to reach it (`launcher\launcher-runtime.json`), and step 2 is
+   skipped when the note leads to a launcher that answers — the window attaches to it,
+3. reads the one line that process prints — `notGT launcher on http://127.0.0.1:<port>` —
+   and from then on talks to its control API over WinHTTP: `GET /api/state` once a
+   second, and a request for every button.
+
+So there is one implementation of "start NodeCG", "add a firewall rule" and the rest —
+[`launcher/index.mjs`](../launcher/README.md) — shared with the browser page that
+`notGT.cmd` (or `node launcher/index.mjs` on another system) opens. When the user
+presses «Запустить» it writes `host`/`port` into `<appDir>/cfg/nodecg.json` and spawns
+`node index.js` with `cwd = app`. The packager itself never starts NodeCG.
+
+The sources are in `launcher/win/`:
+
+| File                      | What it is                                                              |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `notGT-launcher.c`        | the windows, their painting and what the buttons do                     |
+| `backend.h`               | starting the Node process and the requests to it                        |
+| `json.h`                  | a small JSON reader for the answers                                     |
+| `notGT-launcher.rc`, `.manifest` | icon, logo, version, DPI awareness, themed controls              |
+| `assets/`                 | `notgt.ico` and `logo.png`, made from `media/brand` by `make-assets.mjs` |
+| `test/`                   | stand-ins used by `scripts/e2e-launcher-window.mjs`                     |
+
+`scripts/e2e-launcher-window.mjs` cross-compiles the program and runs it under wine in a
+virtual display against the real `launcher/index.mjs`: it checks that the windows are
+drawn, that clicks and typed text reach the backend, and that quitting takes the Node
+process down. It needs mingw-w64, wine, Xvfb and xdotool, and skips itself without them.
+When the window closes it says so (`POST /api/quit`): with a server running the process
+stays, otherwise it ends; a process that has neither a server nor a window asking for its
+state for 20 seconds ends by itself, so a window that crashed leaves nothing behind.
+
+Two switches exist for it and for development: `--control-url http://127.0.0.1:<port>`
+attaches the window to a `launcher/index.mjs` that is already running, and
+`--snapshot <dir>` saves a picture of every window as `.bmp` and exits.
 
 ## The chosen interface, and why it is not the bind address
 
@@ -240,6 +292,7 @@ git push origin v1.2.3
 ```bash
 node scripts/build-windows.mjs --skip-build --out /tmp/notgt-win
 file "/tmp/notgt-win/notGT-win-x64/notGT Launcher.exe"   # PE32+ executable (GUI) x86-64
+node scripts/e2e-launcher-window.mjs                      # the window itself, under wine
 ls -R /tmp/notgt-win/notGT-win-x64 | head
 unzip -l /tmp/notgt-win/notGT-win-x64.zip | head          # notGT-win-x64/ is top-level
 ```
@@ -247,5 +300,8 @@ unzip -l /tmp/notgt-win/notGT-win-x64.zip | head          # notGT-win-x64/ is to
 The OBS Browser Source URL for the shipped `main` out is:
 
 ```
-http://<host>:<port>/bundles/notGT/graphics/out.html?out=main
+http://<host>:<port>/bundles/notGT/graphics/out.html?out=main&key=out_…
 ```
+
+The key is the out's own and is copied with the address in the dashboard («Ссылка для
+OBS»); with the sign-in switched off the address needs none.

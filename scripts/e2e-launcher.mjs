@@ -23,6 +23,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +35,15 @@ const launcherPath = path.join(repoRoot, "launcher", "index.mjs");
 const cfgDir = path.join(repoRoot, "cfg");
 const cfgPath = path.join(cfgDir, "nodecg.json");
 const READY_TIMEOUT_MS = 30_000;
+
+// The launcher remembers the last interface, port and language in a file next
+// to itself. A test keeps its own, so that a run never rewrites the user's;
+// and it pins the language, which otherwise follows the system's.
+const settingsPath = path.join(
+	os.tmpdir(),
+	`notgt-launcher-settings-${process.pid}.json`,
+);
+process.on("exit", () => fs.rmSync(settingsPath, { force: true }));
 const CONTROL_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
@@ -161,7 +171,20 @@ function startLauncher() {
 	return new Promise((resolve, reject) => {
 		launcher = spawn(
 			process.execPath,
-			[launcherPath, "--app", repoRoot, "--control-port", "0", "--no-open"],
+			[
+				launcherPath,
+				"--app",
+				repoRoot,
+				"--control-port",
+				"0",
+				"--no-open",
+				"--runtime",
+				settingsPath.replace(/\.json$/, "-runtime.json"),
+				"--settings",
+				settingsPath,
+				"--lang",
+				"ru",
+			],
 			{ cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
 		);
 		launcher.stdout.setEncoding("utf8");
@@ -319,8 +342,127 @@ async function main() {
 				"Копировать",
 				"Интерфейс",
 				"Порт",
+				"Вход по паролю",
 			].every((s) => uiHtml.includes(s)),
 		);
+
+		// -- 2b'. the language: Russian or English, the launcher's and the page's --
+		check(
+			"state names the language in use",
+			st.lang === "ru" && st.statusText === "Сервер не запущен.",
+			`${st.lang}: ${st.statusText}`,
+		);
+		const toEnglish = await postJson(`${control.url}/api/lang`, { lang: "en" });
+		check(
+			"POST /api/lang switches what the launcher says, texts already on screen included",
+			toEnglish.status === 200 &&
+				toEnglish.json?.lang === "en" &&
+				toEnglish.json?.statusText === "The server is not running." &&
+				toEnglish.json?.interfaces?.some((i) => /All interfaces/.test(i.label)),
+			JSON.stringify({
+				lang: toEnglish.json?.lang,
+				text: toEnglish.json?.statusText,
+			}),
+		);
+		check(
+			"…and the choice is remembered",
+			JSON.parse(fs.readFileSync(settingsPath, "utf8")).lang === "en",
+		);
+		const noSuchLang = await postJson(`${control.url}/api/lang`, {
+			lang: "tlh",
+		});
+		check(
+			"POST /api/lang refuses a language it does not speak",
+			noSuchLang.status === 400,
+		);
+		check(
+			"the page carries its English next to its Russian, and the RU / EN switch",
+			uiHtml.includes('id="langRu"') &&
+				uiHtml.includes('id="langEn"') &&
+				uiHtml.includes('data-en="Start"'),
+		);
+		// The rest of this test reads the launcher's Russian.
+		await postJson(`${control.url}/api/lang`, { lang: "ru" });
+
+		// -- 2c. sign-in: written to cfg/nodecg.json, never as plain text --------
+		check(
+			"state reports the sign-in as on by default, with the users kept in the Team tab",
+			st.login?.enabled === true &&
+				st.login?.source === "team" &&
+				st.login?.username === null &&
+				typeof st.login?.defaultPassword === "boolean",
+			JSON.stringify(st.login),
+		);
+		const formPost = await httpReq(`${control.url}/api/login`, {
+			method: "POST",
+			headers: { "Content-Type": "text/plain" },
+			body: JSON.stringify({ username: "operator", password: "s3cret" }),
+		});
+		check(
+			"POST /api/login refuses a body that is not sent as JSON (cross-site form)",
+			formPost.status === 415,
+			`status=${formPost.status}`,
+		);
+		const emptyLogin = await postJson(`${control.url}/api/login`, {
+			username: "operator",
+			password: "",
+		});
+		check(
+			"POST /api/login refuses an empty password",
+			emptyLogin.status === 400,
+			`status=${emptyLogin.status}`,
+		);
+		const loginRes = await postJson(`${control.url}/api/login`, {
+			username: "operator",
+			password: "s3cret",
+		});
+		const loginCfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+		const savedUser = loginCfg.login?.local?.allowedUsers?.[0] ?? {};
+		check(
+			"POST /api/login switches the sign-in on for that operator",
+			loginRes.status === 200 &&
+				loginRes.json?.login?.enabled === true &&
+				loginRes.json?.login?.username === "operator" &&
+				loginCfg.login?.enabled === true &&
+				loginCfg.login?.local?.enabled === true &&
+				savedUser.username === "operator",
+			JSON.stringify(loginRes.json),
+		);
+		check(
+			"the password is stored as an HMAC keyed with a generated sessionSecret",
+			/^[0-9a-f]{64}$/.test(loginCfg.login?.sessionSecret ?? "") &&
+				/^sha256:[0-9a-f]{64}$/.test(savedUser.password ?? "") &&
+				!fs.readFileSync(cfgPath, "utf8").includes("s3cret"),
+		);
+		check(
+			"cfg/nodecg.json keeps the unrelated keys when the sign-in is written",
+			preservedKeys.every(
+				(key) => JSON.stringify(loginCfg[key]) === JSON.stringify(seed[key]),
+			),
+		);
+		const offRes = await postJson(`${control.url}/api/login/disable`, {});
+		check(
+			"POST /api/login/disable switches it off again",
+			offRes.status === 200 &&
+				offRes.json?.login?.enabled === false &&
+				JSON.parse(fs.readFileSync(cfgPath, "utf8")).login?.enabled === false,
+			JSON.stringify(offRes.json),
+		);
+		const backRes = await postJson(`${control.url}/api/login/default`, {});
+		const backCfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+		check(
+			"POST /api/login/default returns to the default: on, no operator in the config",
+			backRes.status === 200 &&
+				backRes.json?.login?.enabled === true &&
+				backRes.json?.login?.source === "team" &&
+				!("login" in backCfg) &&
+				preservedKeys.every(
+					(key) => JSON.stringify(backCfg[key]) === JSON.stringify(seed[key]),
+				),
+			JSON.stringify(backRes.json),
+		);
+		// The rest of this test fetches pages without signing in.
+		await postJson(`${control.url}/api/login/disable`, {});
 
 		// -- 3. POST /api/start -------------------------------------------------
 		serverPort = await findFreePort(9095, 9199);

@@ -29,8 +29,18 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+// The launcher remembers the last interface, port and language in a file next
+// to itself. A test keeps its own, so that a run never rewrites the user's;
+// and it pins the language, which otherwise follows the system's.
+const settingsPath = path.join(
+	os.tmpdir(),
+	`notgt-launcher-settings-${process.pid}.json`,
+);
+process.on("exit", () => fs.rmSync(settingsPath, { force: true }));
 
 const HERE = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(HERE), "..");
@@ -117,6 +127,12 @@ function startLauncher() {
 			"--control-port",
 			"0",
 			"--no-open",
+			"--runtime",
+			settingsPath.replace(/\.json$/, "-runtime.json"),
+			"--settings",
+			settingsPath,
+			"--lang",
+			"ru",
 			"--host",
 			BLOCKED_IP,
 			"--port",

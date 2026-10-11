@@ -17,6 +17,7 @@
 *.jpg binary
 *.mp4 binary
 *.png binary
+*.ico binary
 *.webm binary
 *.woff binary
 

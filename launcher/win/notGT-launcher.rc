@@ -1,0 +1,49 @@
+// Resources of "notGT Launcher.exe": the icon, the logo of the window's header,
+// the manifest and the version shown in the file's properties.
+//
+// scripts/build-windows.mjs writes the version of the package into a header
+// (notgt-version.h: NOTGT_VERSION 0,8,0,0 and NOTGT_VERSION_TEXT "0.8.0") and
+// says so with -DNOTGT_HAVE_VERSION_H; without it this is a development build.
+#include <winver.h>
+
+#ifdef NOTGT_HAVE_VERSION_H
+#include "notgt-version.h"
+#endif
+
+#ifndef NOTGT_VERSION
+#define NOTGT_VERSION 0,0,0,0
+#endif
+#ifndef NOTGT_VERSION_TEXT
+#define NOTGT_VERSION_TEXT "dev"
+#endif
+
+#pragma code_page(65001)
+
+1 ICON "assets/notgt.ico"
+LOGO RCDATA "assets/logo.png"
+1 24 "notGT-launcher.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION NOTGT_VERSION
+PRODUCTVERSION NOTGT_VERSION
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+	BLOCK "StringFileInfo"
+	BEGIN
+		BLOCK "040904b0"
+		BEGIN
+			VALUE "CompanyName", "notGT"
+			VALUE "FileDescription", "notGT Launcher"
+			VALUE "FileVersion", NOTGT_VERSION_TEXT
+			VALUE "InternalName", "notGT Launcher"
+			VALUE "OriginalFilename", "notGT Launcher.exe"
+			VALUE "ProductName", "notGT"
+			VALUE "ProductVersion", NOTGT_VERSION_TEXT
+		END
+	END
+	BLOCK "VarFileInfo"
+	BEGIN
+		VALUE "Translation", 0x409, 1200
+	END
+END

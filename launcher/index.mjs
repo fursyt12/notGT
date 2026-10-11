@@ -18,6 +18,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import http from "node:http";
@@ -28,7 +29,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const VERSION = "1.1.0";
+const VERSION = "2.0.0";
 const LOG_BUFFER_MAX = 400; // keep the last ~400 log lines
 // The first launch on Windows can be slow: Defender scans the ~44k extracted
 // files, SQLite initialises and chokidar walks the tree. 30 s proved too tight,
@@ -44,7 +45,6 @@ const UNREACHABLE_NOTICE_MS = 8_000;
 const FIREWALL_CACHE_MS = 10_000; // how long a `netsh` answer is reused
 const KILL_GRACE_MS = 5_000; // SIGTERM -> wait -> SIGKILL grace period
 const DEFAULT_PORT = 9090;
-const PERSIST_PATH = path.join(__dirname, "launcher-config.json");
 
 // ---------------------------------------------------------------------------
 // CLI parsing
@@ -58,6 +58,10 @@ function parseArgs(argv) {
 		host: null,
 		port: null,
 		readyTimeout: null,
+		lang: null,
+		settings: null,
+		background: false,
+		runtime: null,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -67,11 +71,27 @@ function parseArgs(argv) {
 		else if (arg === "--host") out.host = argv[++i];
 		else if (arg === "--port") out.port = Number(argv[++i]);
 		else if (arg === "--ready-timeout") out.readyTimeout = Number(argv[++i]);
+		else if (arg === "--lang") out.lang = argv[++i];
+		else if (arg === "--settings") out.settings = argv[++i];
+		else if (arg === "--background") out.background = true;
+		else if (arg === "--runtime") out.runtime = argv[++i];
 	}
 	return out;
 }
 
 const args = parseArgs(process.argv.slice(2));
+/**
+ * Where a running launcher says how to reach it (`{ pid, port }`). The window
+ * reads it on start: a server that was left running when the window was
+ * closed is found again through the launcher that still looks after it.
+ */
+const RUNTIME_PATH = args.runtime
+	? path.resolve(args.runtime)
+	: path.join(__dirname, "launcher-runtime.json");
+/** Where the last interface, port and language are remembered. */
+const PERSIST_PATH = args.settings
+	? path.resolve(args.settings)
+	: path.join(__dirname, "launcher-config.json");
 
 if (Number.isFinite(args.readyTimeout) && args.readyTimeout > 0) {
 	READY_TIMEOUT_MS = args.readyTimeout * 1000;
@@ -177,34 +197,98 @@ function delay(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ---------------------------------------------------------------------------
+// Languages
+// ---------------------------------------------------------------------------
+
+/**
+ * The launcher speaks Russian and English. Which one is chosen in its window
+ * (or on its page), kept in launcher-config.json, and until someone chooses it
+ * is the language of the system.
+ *
+ * A text that is shown later than it is made — the status, a warning — is
+ * kept in both languages (`tr`) and only becomes one of them when it is sent
+ * (`say`), so switching the language changes what is already on screen. A
+ * text that is the answer to a request is made in the current language at
+ * once (`T`).
+ */
+const LANGS = ["ru", "en"];
+let lang = "en";
+
+function isLang(value) {
+	return LANGS.includes(value);
+}
+
+function systemLang() {
+	const locale =
+		Intl.DateTimeFormat().resolvedOptions().locale ||
+		process.env.LC_ALL ||
+		process.env.LANG ||
+		"";
+	return locale.toLowerCase().startsWith("ru") ? "ru" : "en";
+}
+
+function tr(ru, en) {
+	return { ru, en };
+}
+
+function say(text, to = lang) {
+	if (text === null || text === undefined) return "";
+	return typeof text === "string" ? text : (text[to] ?? text.en ?? "");
+}
+
+function T(ru, en) {
+	return lang === "ru" ? ru : en;
+}
+
+/** Several texts as one, in both languages. */
+function joined(parts, separator = " ") {
+	return tr(
+		parts.map((part) => say(part, "ru")).join(separator),
+		parts.map((part) => say(part, "en")).join(separator),
+	);
+}
+
 /** Turns a log tail into a concrete, actionable hint when we can recognise it. */
 function hintForLogTail(tail) {
 	const text = tail || "";
 	if (/EADDRINUSE/i.test(text)) {
-		return "Похоже, порт уже занят другим процессом — выберите другой порт.";
+		return tr(
+			"Похоже, порт уже занят другим процессом — выберите другой порт.",
+			"The port seems to be taken by another process — choose another port.",
+		);
 	}
 	if (/NODE_MODULE_VERSION|compiled against a different Node/i.test(text)) {
-		return (
+		return tr(
 			"Нативный модуль собран под другую версию Node. Пересоберите пакет тем же " +
-			"Node.js, который лежит в папке node\\."
+				"Node.js, который лежит в папке node\\.",
+			"A native module was built for another version of Node. Rebuild the package " +
+				"with the same Node.js that is in the node\\ folder.",
 		);
 	}
 	if (/Cannot find module/i.test(text)) {
-		return (
+		return tr(
 			"Сервер не нашёл модуль: скорее всего архив распакован не полностью. " +
-			"Распакуйте ZIP целиком в пустую папку."
+				"Распакуйте ZIP целиком в пустую папку.",
+			"The server could not find a module: most likely the archive was not unpacked " +
+				"completely. Unpack the whole ZIP into an empty folder.",
 		);
 	}
 	if (/EACCES|EPERM/i.test(text)) {
-		return (
+		return tr(
 			"Нет прав на запись. Не запускайте из Program Files и не распаковывайте " +
-			"в системные папки."
+				"в системные папки.",
+			"No permission to write. Do not run it from Program Files or unpack it " +
+				"into system folders.",
 		);
 	}
 	if (/ENOENT/i.test(text) && /(cfg|nodecg\.json|SQLITE|sqlite)/i.test(text)) {
-		return "Не читается app\\cfg или app\\db — проверьте, что папки распакованы.";
+		return tr(
+			"Не читается app\\cfg или app\\db — проверьте, что папки распакованы.",
+			"app\\cfg or app\\db cannot be read — check that the folders were unpacked.",
+		);
 	}
-	return "";
+	return null;
 }
 
 /**
@@ -215,9 +299,12 @@ function hintForLogTail(tail) {
  */
 async function startFailureReport(host, port, bindHost, tail) {
 	const dialHost = openHostFor(host);
+	const seconds = Math.round(READY_TIMEOUT_MS / 1000);
 	const parts = [
-		`Сервер не ответил за ${Math.round(READY_TIMEOUT_MS / 1000)} с ` +
-			`(проверяли ${dialHost}:${port} и 127.0.0.1:${port}).`,
+		tr(
+			`Сервер не ответил за ${seconds} с (проверяли ${dialHost}:${port} и 127.0.0.1:${port}).`,
+			`The server did not answer within ${seconds} s (tried ${dialHost}:${port} and 127.0.0.1:${port}).`,
+		),
 	];
 
 	const onChosen =
@@ -225,32 +312,53 @@ async function startFailureReport(host, port, bindHost, tail) {
 	const onLoopback = await probeHttp("127.0.0.1", port);
 	if (onChosen && !onLoopback) {
 		parts.push(
-			`При этом ${dialHost}:${port} отвечает — похоже, сервер слушает только этот ` +
-				`адрес (так было в старых сборках). Перезапустите лончер.`,
+			tr(
+				`При этом ${dialHost}:${port} отвечает — похоже, сервер слушает только этот ` +
+					`адрес (так было в старых сборках). Перезапустите лончер.`,
+				`Yet ${dialHost}:${port} answers — the server seems to listen on that address ` +
+					`only (as older builds did). Restart the launcher.`,
+			),
 		);
 	}
 	if (onLoopback && !onChosen) {
 		parts.push(
-			`При этом на 127.0.0.1:${port} он отвечает, а на ${dialHost}:${port} — нет: ` +
-				`обычно это брандмауэр. Нажмите «Проверить доступность» / «Разрешить порт».`,
+			tr(
+				`При этом на 127.0.0.1:${port} он отвечает, а на ${dialHost}:${port} — нет: ` +
+					`обычно это брандмауэр. Нажмите «Проверить доступность» / «Разрешить порт».`,
+				`Yet it answers on 127.0.0.1:${port} and not on ${dialHost}:${port}: usually ` +
+					`that is the firewall. Press “Check” / “Allow the port”.`,
+			),
 		);
 	}
 	if (bindHost && bindHost !== dialHost) {
-		parts.push(`Сервер должен был слушать ${bindHost}:${port}.`);
+		parts.push(
+			tr(
+				`Сервер должен был слушать ${bindHost}:${port}.`,
+				`The server was to listen on ${bindHost}:${port}.`,
+			),
+		);
 	}
 
 	if (port !== DEFAULT_PORT && (await probeHttp("127.0.0.1", DEFAULT_PORT))) {
 		parts.push(
-			`Порт ${DEFAULT_PORT} при этом отвечает: возможно, сервер поднялся на нём, а не ` +
-				`на выбранном ${port} (тогда проверьте app\\cfg\\nodecg.json), либо на ` +
-				`${DEFAULT_PORT} уже запущен другой экземпляр NodeCG.`,
+			tr(
+				`Порт ${DEFAULT_PORT} при этом отвечает: возможно, сервер поднялся на нём, а не ` +
+					`на выбранном ${port} (тогда проверьте app\\cfg\\nodecg.json), либо на ` +
+					`${DEFAULT_PORT} уже запущен другой экземпляр NodeCG.`,
+				`Port ${DEFAULT_PORT} answers meanwhile: the server may have come up on it ` +
+					`instead of the chosen ${port} (then check app\\cfg\\nodecg.json), or another ` +
+					`NodeCG is already running on ${DEFAULT_PORT}.`,
+			),
 		);
 	}
 
 	const hint = hintForLogTail(tail);
 	if (hint) parts.push(hint);
-	parts.push("Последние строки журнала:", tail || "(журнал пуст)");
-	return parts.join("\n");
+	parts.push(
+		tr("Последние строки журнала:", "The last lines of the log:"),
+		tail || tr("(журнал пуст)", "(the log is empty)"),
+	);
+	return joined(parts, "\n");
 }
 
 function isValidPort(value) {
@@ -271,14 +379,17 @@ function listInterfaces() {
 	const list = [
 		{
 			id: "0.0.0.0",
-			label: "Все интерфейсы (0.0.0.0)",
+			label: T("Все интерфейсы (0.0.0.0)", "All interfaces (0.0.0.0)"),
 			address: "0.0.0.0",
 			family: "IPv4",
 			internal: false,
 		},
 		{
 			id: "127.0.0.1",
-			label: "Только этот компьютер (127.0.0.1)",
+			label: T(
+				"Только этот компьютер (127.0.0.1)",
+				"This computer only (127.0.0.1)",
+			),
 			address: "127.0.0.1",
 			family: "IPv4",
 			internal: true,
@@ -305,7 +416,7 @@ function listInterfaces() {
 				internal: false,
 			};
 			if (ifaceIsVirtual(name)) {
-				entry.label += " (виртуальный)";
+				entry.label += T(" (виртуальный)", " (virtual)");
 				entry.virtual = true;
 				virtual.push(entry);
 			} else {
@@ -338,19 +449,20 @@ function readPersisted() {
 			return {
 				host: typeof parsed.host === "string" ? parsed.host : null,
 				port: isValidPort(parsed.port) ? parsed.port : null,
+				lang: isLang(parsed.lang) ? parsed.lang : null,
 			};
 		}
 	} catch {
 		/* missing or corrupt -> ignore */
 	}
-	return { host: null, port: null };
+	return { host: null, port: null, lang: null };
 }
 
 function persistSettings(host, port) {
 	try {
 		fs.writeFileSync(
 			PERSIST_PATH,
-			JSON.stringify({ host, port }, null, 2) + "\n",
+			JSON.stringify({ host, port, lang }, null, 2) + "\n",
 			"utf8",
 		);
 	} catch {
@@ -363,12 +475,13 @@ function persistSettings(host, port) {
 // ---------------------------------------------------------------------------
 
 const persisted = readPersisted();
+lang = isLang(args.lang) ? args.lang : (persisted.lang ?? systemLang());
 
 const state = {
 	host: args.host ?? persisted.host ?? defaultHost(),
 	port: isValidPort(args.port) ? args.port : (persisted.port ?? DEFAULT_PORT),
 	status: "stopped", // stopped | starting | running | stopping | error
-	statusText: "Сервер не запущен.",
+	statusText: tr("Сервер не запущен.", "The server is not running."),
 	warning: "", // set when the server is up but unreachable on the chosen address
 	reach: null, // last { dialHost, port, chosenOk, loopbackOk }
 	child: null,
@@ -429,13 +542,15 @@ function statePayload() {
 		advertiseHost: currentAdvertiseHost(),
 		port: state.port,
 		status: state.status,
-		statusText: state.statusText,
+		lang,
+		statusText: say(state.statusText),
 		running: state.status === "running",
-		warning: state.warning,
+		warning: say(state.warning),
 		reach: state.reach,
 		firewall: firewallInfo(state.port),
 		...urls,
 		configPath: path.join(appDir, "cfg", "nodecg.json"),
+		login: loginInfo(),
 		interfaces: listInterfaces(),
 		logs: state.logs.slice(),
 		logCount: state.logCount,
@@ -657,14 +772,21 @@ function addFirewallRule(port) {
 	if (!firewallSupported()) {
 		return {
 			ok: false,
-			message:
+			message: T(
 				"Управление брандмауэром доступно только в Windows. Проверьте " +
-				"брандмауэр системы вручную.",
+					"брандмауэр системы вручную.",
+				"The firewall can only be managed on Windows. Check the system's " +
+					"firewall by hand.",
+			),
 		};
 	}
 	const name = firewallRuleName(port);
 	if (firewallRuleExists(port, { force: true })) {
-		return { ok: true, existed: true, message: "Правило уже существует." };
+		return {
+			ok: true,
+			existed: true,
+			message: T("Правило уже существует.", "The rule already exists."),
+		};
 	}
 	const direct = runSync("netsh", [
 		"advfirewall",
@@ -679,7 +801,11 @@ function addFirewallRule(port) {
 		"profile=any",
 	]);
 	if (firewallRuleExists(port, { force: true })) {
-		return { ok: true, existed: false, message: "Правило добавлено." };
+		return {
+			ok: true,
+			existed: false,
+			message: T("Правило добавлено.", "The rule was added."),
+		};
 	}
 	const elevated = runElevated(
 		`netsh advfirewall firewall add rule name=${name} dir=in action=allow protocol=TCP localport=${port} profile=any`,
@@ -688,14 +814,20 @@ function addFirewallRule(port) {
 		return {
 			ok: true,
 			existed: false,
-			message: "Правило добавлено (с правами администратора).",
+			message: T(
+				"Правило добавлено (с правами администратора).",
+				"The rule was added (with administrator rights).",
+			),
 		};
 	}
 	return {
 		ok: false,
-		message:
+		message: T(
 			"Не удалось добавить правило. Если запрос UAC был отклонён — нажмите " +
-			`кнопку ещё раз и подтвердите. Ответ системы: ${(elevated.out || direct.out || direct.error || "нет").trim().slice(0, 300)}`,
+				`кнопку ещё раз и подтвердите. Ответ системы: ${(elevated.out || direct.out || direct.error || "нет").trim().slice(0, 300)}`,
+			"The rule could not be added. If the UAC prompt was declined, press the " +
+				`button again and confirm. The system said: ${(elevated.out || direct.out || direct.error || "nothing").trim().slice(0, 300)}`,
+		),
 	};
 }
 
@@ -703,11 +835,18 @@ function removeFirewallRule(port) {
 	if (!firewallSupported()) {
 		return {
 			ok: false,
-			message: "Управление брандмауэром доступно только в Windows.",
+			message: T(
+				"Управление брандмауэром доступно только в Windows.",
+				"The firewall can only be managed on Windows.",
+			),
 		};
 	}
 	if (!firewallRuleExists(port, { force: true })) {
-		return { ok: true, existed: false, message: "Правила и так нет." };
+		return {
+			ok: true,
+			existed: false,
+			message: T("Правила и так нет.", "There is no rule to remove."),
+		};
 	}
 	const name = firewallRuleName(port);
 	runSync("netsh", [
@@ -718,17 +857,27 @@ function removeFirewallRule(port) {
 		`name=${name}`,
 	]);
 	if (!firewallRuleExists(port, { force: true })) {
-		return { ok: true, existed: true, message: "Правило удалено." };
+		return {
+			ok: true,
+			existed: true,
+			message: T("Правило удалено.", "The rule was removed."),
+		};
 	}
 	runElevated(`netsh advfirewall firewall delete rule name=${name}`);
 	if (!firewallRuleExists(port, { force: true })) {
 		return {
 			ok: true,
 			existed: true,
-			message: "Правило удалено (с правами администратора).",
+			message: T(
+				"Правило удалено (с правами администратора).",
+				"The rule was removed (with administrator rights).",
+			),
 		};
 	}
-	return { ok: false, message: "Не удалось удалить правило." };
+	return {
+		ok: false,
+		message: T("Не удалось удалить правило.", "The rule could not be removed."),
+	};
 }
 
 /**
@@ -765,30 +914,51 @@ async function diagnose() {
 	if (!state.child) {
 		verdict.push({
 			level: "info",
-			text: "Сервер сейчас не запущен — сначала нажмите «Запустить».",
+			text: T(
+				"Сервер сейчас не запущен — сначала нажмите «Запустить».",
+				"The server is not running — press “Start” first.",
+			),
 		});
 	} else if (reach.chosenOk) {
 		verdict.push({
 			level: "ok",
-			text: `Адрес ${reach.dialHost}:${reach.port} отвечает.`,
+			text: T(
+				`Адрес ${reach.dialHost}:${reach.port} отвечает.`,
+				`${reach.dialHost}:${reach.port} answers.`,
+			),
 		});
 	} else if (reach.loopbackOk) {
 		verdict.push({
 			level: "warn",
-			text: `Сервер работает: 127.0.0.1:${reach.port} отвечает, а ${reach.dialHost}:${reach.port} — нет.`,
+			text: T(
+				`Сервер работает: 127.0.0.1:${reach.port} отвечает, а ${reach.dialHost}:${reach.port} — нет.`,
+				`The server is running: 127.0.0.1:${reach.port} answers, ${reach.dialHost}:${reach.port} does not.`,
+			),
 		});
 		verdict.push({
 			level: "warn",
 			text: firewall.supported
 				? firewall.ruleExists
-					? `Правило «${firewall.ruleName}» есть, но пакеты всё равно не проходят: проверьте, что сеть в Windows помечена как «Частная», и разрешите node.exe входящие подключения.`
-					: "Входящие подключения режет брандмауэр Windows. Нажмите «Разрешить порт» — лончер добавит правило для всех профилей сети (потребуются права администратора)."
-				: "Проверьте брандмауэр и маршрутизацию до этого адреса.",
+					? T(
+							`Правило «${firewall.ruleName}» есть, но пакеты всё равно не проходят: проверьте, что сеть в Windows помечена как «Частная», и разрешите node.exe входящие подключения.`,
+							`The rule “${firewall.ruleName}” exists, yet nothing gets through: check that the network is marked “Private” in Windows, and allow node.exe incoming connections.`,
+						)
+					: T(
+							"Входящие подключения режет брандмауэр Windows. Нажмите «Разрешить порт» — лончер добавит правило для всех профилей сети (потребуются права администратора).",
+							"Windows Firewall is dropping incoming connections. Press “Allow the port” — the launcher adds a rule for every network profile (administrator rights are needed).",
+						)
+				: T(
+						"Проверьте брандмауэр и маршрутизацию до этого адреса.",
+						"Check the firewall and the route to this address.",
+					),
 		});
 	} else {
 		verdict.push({
 			level: "error",
-			text: `Сервер не отвечает ни на ${reach.dialHost}:${reach.port}, ни на 127.0.0.1:${reach.port}.`,
+			text: T(
+				`Сервер не отвечает ни на ${reach.dialHost}:${reach.port}, ни на 127.0.0.1:${reach.port}.`,
+				`The server answers neither on ${reach.dialHost}:${reach.port} nor on 127.0.0.1:${reach.port}.`,
+			),
 		});
 	}
 
@@ -799,7 +969,10 @@ async function diagnose() {
 		if (!bypassed) {
 			verdict.push({
 				level: "warn",
-				text: `В Windows включён прокси-сервер (${proxy.server || "адрес не указан"}). Браузер может отправлять запросы к ${reach.dialHost} через прокси — тогда страница грузится бесконечно. Добавьте адрес в исключения прокси или отключите прокси.`,
+				text: T(
+					`В Windows включён прокси-сервер (${proxy.server || "адрес не указан"}). Браузер может отправлять запросы к ${reach.dialHost} через прокси — тогда страница грузится бесконечно. Добавьте адрес в исключения прокси или отключите прокси.`,
+					`A proxy server is switched on in Windows (${proxy.server || "no address given"}). The browser may send requests to ${reach.dialHost} through it, and the page then never loads. Add the address to the proxy's exceptions or switch the proxy off.`,
+				),
 			});
 		}
 	}
@@ -816,11 +989,16 @@ async function diagnose() {
 	) {
 		verdict.push({
 			level: "info",
-			text:
+			text: T(
 				`Правила брандмауэра для порта ${state.port} нет. С этого компьютера всё ` +
-				`открывается, но другие устройства (OBS на второй машине, Bitfocus Companion, ` +
-				`телефон) могут не подключиться. Нажмите «Разрешить порт» — правило будет ` +
-				`создано для всех профилей сети.`,
+					`открывается, но другие устройства (OBS на второй машине, Bitfocus Companion, ` +
+					`телефон) могут не подключиться. Нажмите «Разрешить порт» — правило будет ` +
+					`создано для всех профилей сети.`,
+				`There is no firewall rule for port ${state.port}. Everything opens from this ` +
+					`computer, but other devices (OBS on a second machine, Bitfocus Companion, a ` +
+					`phone) may fail to connect. Press “Allow the port” — the rule is made for ` +
+					`every network profile.`,
+			),
 		});
 	}
 
@@ -901,28 +1079,155 @@ function hardKillChild() {
 	}
 }
 
-/** Read + merge cfg/nodecg.json so every unrelated key is preserved. */
-async function writeNodecgConfig(host, port) {
-	const cfgDir = path.join(appDir, "cfg");
-	const cfgPath = path.join(cfgDir, "nodecg.json");
-
-	let existing = {};
+/** cfg/nodecg.json as an object; a missing or invalid file is an empty one. */
+function readNodecgConfig() {
 	try {
-		const raw = await fsp.readFile(cfgPath, "utf8");
-		try {
-			const parsed = JSON.parse(raw);
-			if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-				existing = parsed;
-		} catch {
-			/* tolerate invalid config; start from scratch */
-		}
+		const parsed = JSON.parse(
+			fs.readFileSync(path.join(appDir, "cfg", "nodecg.json"), "utf8"),
+		);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+			return parsed;
 	} catch {
-		/* missing config is fine */
+		/* missing or invalid config: start from scratch */
 	}
+	return {};
+}
 
-	const merged = { ...existing, host, port };
+/** Read + merge cfg/nodecg.json so every unrelated key is preserved. */
+async function mergeNodecgConfig(patch) {
+	const cfgDir = path.join(appDir, "cfg");
+	const merged = { ...readNodecgConfig(), ...patch };
 	await fsp.mkdir(cfgDir, { recursive: true });
-	await fsp.writeFile(cfgPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+	await fsp.writeFile(
+		path.join(cfgDir, "nodecg.json"),
+		JSON.stringify(merged, null, 2) + "\n",
+		"utf8",
+	);
+}
+
+function writeNodecgConfig(host, port) {
+	return mergeNodecgConfig({ host, port });
+}
+
+// ---------------------------------------------------------------------------
+// Sign-in (NodeCG's local login, kept in cfg/nodecg.json)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether the team's default administrator (admin / admin) is still what gets
+ * someone in: the bundle keeps the team in db/notGT-team.json and marks the
+ * account until it is given a real password. No file yet means a server that
+ * has not run — it will make that account on its first start.
+ */
+function defaultPasswordInUse() {
+	try {
+		const team = JSON.parse(
+			fs.readFileSync(path.join(appDir, "db", "notGT-team.json"), "utf8"),
+		);
+		return (
+			Array.isArray(team?.users) &&
+			team.users.some((user) => user?.defaultPassword === true)
+		);
+	} catch (err) {
+		return err?.code === "ENOENT";
+	}
+}
+
+/**
+ * Whether the dashboard asks for a password, and whose. Never the password.
+ *
+ * The sign-in is on unless cfg/nodecg.json switches it off. Without a `login`
+ * block the users are the ones kept in the dashboard's Team tab (`team`);
+ * with one, the operator written here is the administrator (`launcher`).
+ */
+function loginInfo() {
+	const login = readNodecgConfig().login;
+	if (login === undefined || login === null) {
+		return {
+			enabled: true,
+			source: "team",
+			username: null,
+			defaultPassword: defaultPasswordInUse(),
+		};
+	}
+	const users = login.local?.enabled ? login.local.allowedUsers : undefined;
+	const enabled = Boolean(login.enabled && login.sessionSecret);
+	return {
+		enabled,
+		source: enabled ? "launcher" : "off",
+		username:
+			enabled && Array.isArray(users) && typeof users[0]?.username === "string"
+				? users[0].username
+				: null,
+		defaultPassword: false,
+	};
+}
+
+/**
+ * Switches the sign-in on for one operator. The password is not written down:
+ * NodeCG accepts `sha256:<HMAC keyed with sessionSecret>` in its place.
+ */
+async function enableLogin(username, password) {
+	const login = readNodecgConfig().login ?? {};
+	const sessionSecret =
+		typeof login.sessionSecret === "string" && login.sessionSecret
+			? login.sessionSecret
+			: crypto.randomBytes(32).toString("hex");
+	const hash = crypto
+		.createHmac("sha256", sessionSecret)
+		.update(password, "utf8")
+		.digest("hex");
+	await mergeNodecgConfig({
+		login: {
+			...login,
+			enabled: true,
+			sessionSecret,
+			local: {
+				enabled: true,
+				allowedUsers: [{ username, password: `sha256:${hash}` }],
+			},
+		},
+	});
+}
+
+async function disableLogin() {
+	// Written even when there was no block: its absence means "on".
+	const login = readNodecgConfig().login ?? {};
+	await mergeNodecgConfig({ login: { ...login, enabled: false } });
+}
+
+/** Back to the sign-in nobody configured: on, with the users of the Team tab. */
+async function resetLogin() {
+	const cfgDir = path.join(appDir, "cfg");
+	const { login: _dropped, ...rest } = readNodecgConfig();
+	await fsp.mkdir(cfgDir, { recursive: true });
+	await fsp.writeFile(
+		path.join(cfgDir, "nodecg.json"),
+		JSON.stringify(rest, null, 2) + "\n",
+		"utf8",
+	);
+}
+
+/**
+ * Only a real JSON request may change the sign-in. A web page of another
+ * origin can post a "simple" body to 127.0.0.1 without asking, but not one
+ * with this content type.
+ */
+function isJsonRequest(req) {
+	return /^application\/json\b/i.test(req.headers["content-type"] ?? "");
+}
+
+/** What the UI shows after the sign-in was changed. */
+function loginResult(message) {
+	const running = Boolean(state.child);
+	return {
+		ok: true,
+		login: loginInfo(),
+		restart: running,
+		message: running
+			? `${message} ${T("Изменение вступит в силу после перезапуска сервера: «Остановить», затем «Запустить».", "It takes effect once the server is restarted: “Stop”, then “Start”.")}`
+			: message,
+	};
 }
 
 async function startServer(requestedHost, requestedPort) {
@@ -933,7 +1238,13 @@ async function startServer(requestedHost, requestedPort) {
 	) {
 		return {
 			http: 409,
-			body: { ...statePayload(), error: "Сервер уже запущен или запускается." },
+			body: {
+				...statePayload(),
+				error: T(
+					"Сервер уже запущен или запускается.",
+					"The server is already running or starting.",
+				),
+			},
 		};
 	}
 
@@ -947,7 +1258,10 @@ async function startServer(requestedHost, requestedPort) {
 			http: 400,
 			body: {
 				...statePayload(),
-				error: "Некорректный порт: укажите число от 1 до 65535.",
+				error: T(
+					"Некорректный порт: укажите число от 1 до 65535.",
+					"Not a port: give a number from 1 to 65535.",
+				),
 			},
 		};
 	}
@@ -962,19 +1276,34 @@ async function startServer(requestedHost, requestedPort) {
 		state.status = "error";
 		state.statusText =
 			free.code === "EADDRINUSE"
-				? `Порт ${port} уже занят на ${bindHost}. Выберите другой порт или остановите занявший его процесс.`
-				: `Не удалось занять ${bindHost}:${port} (${free.code ?? "ошибка"}: ${free.message ?? "unknown"}).`;
-		pushLog(`[launcher] ${state.statusText}`);
-		return { http: 409, body: { ...statePayload(), error: state.statusText } };
+				? tr(
+						`Порт ${port} уже занят на ${bindHost}. Выберите другой порт или остановите занявший его процесс.`,
+						`Port ${port} is already taken on ${bindHost}. Choose another port or stop the process that holds it.`,
+					)
+				: tr(
+						`Не удалось занять ${bindHost}:${port} (${free.code ?? "ошибка"}: ${free.message ?? "unknown"}).`,
+						`${bindHost}:${port} could not be taken (${free.code ?? "error"}: ${free.message ?? "unknown"}).`,
+					);
+		pushLog(`[launcher] ${say(state.statusText)}`);
+		return {
+			http: 409,
+			body: { ...statePayload(), error: say(state.statusText) },
+		};
 	}
 
 	try {
 		await writeNodecgConfig(bindHost, port);
 	} catch (err) {
 		state.status = "error";
-		state.statusText = `Не удалось записать cfg/nodecg.json: ${err.message}`;
-		pushLog(`[launcher] ${state.statusText}`);
-		return { http: 500, body: { ...statePayload(), error: state.statusText } };
+		state.statusText = tr(
+			`Не удалось записать cfg/nodecg.json: ${err.message}`,
+			`cfg/nodecg.json could not be written: ${err.message}`,
+		);
+		pushLog(`[launcher] ${say(state.statusText)}`);
+		return {
+			http: 500,
+			body: { ...statePayload(), error: say(state.statusText) },
+		};
 	}
 
 	state.host = host;
@@ -984,13 +1313,19 @@ async function startServer(requestedHost, requestedPort) {
 	persistSettings(host, port);
 
 	state.status = "starting";
-	state.statusText = `Запуск сервера на ${advertiseHost}:${port}…`;
+	state.statusText = tr(
+		`Запуск сервера на ${advertiseHost}:${port}…`,
+		`Starting the server on ${advertiseHost}:${port}…`,
+	);
 	pushLog(
-		`[launcher] Запуск: ${process.execPath} index.js (cwd=${appDir}, ${advertiseHost}:${port})`,
+		`[launcher] ${T("Запуск", "Starting")}: ${process.execPath} index.js (cwd=${appDir}, ${advertiseHost}:${port})`,
 	);
 	if (bindHost !== advertiseHost) {
 		pushLog(
-			`[launcher] Слушаем ${bindHost} (все интерфейсы), в ссылках — ${advertiseHost}.`,
+			T(
+				`[launcher] Слушаем ${bindHost} (все интерфейсы), в ссылках — ${advertiseHost}.`,
+				`[launcher] Listening on ${bindHost} (all interfaces); the links use ${advertiseHost}.`,
+			),
 		);
 	}
 
@@ -1003,9 +1338,15 @@ async function startServer(requestedHost, requestedPort) {
 		});
 	} catch (err) {
 		state.status = "error";
-		state.statusText = `Не удалось запустить node index.js: ${err.message}`;
-		pushLog(`[launcher] ${state.statusText}`);
-		return { http: 500, body: { ...statePayload(), error: state.statusText } };
+		state.statusText = tr(
+			`Не удалось запустить node index.js: ${err.message}`,
+			`node index.js could not be started: ${err.message}`,
+		);
+		pushLog(`[launcher] ${say(state.statusText)}`);
+		return {
+			http: 500,
+			body: { ...statePayload(), error: say(state.statusText) },
+		};
 	}
 
 	state.child = child;
@@ -1023,18 +1364,27 @@ async function startServer(requestedHost, requestedPort) {
 		state.reach = null;
 		if (state.status === "stopping") {
 			state.status = "stopped";
-			state.statusText = "Сервер остановлен.";
+			state.statusText = tr("Сервер остановлен.", "The server is stopped.");
 		} else if (state.status === "running" || state.status === "starting") {
 			if (code === 0) {
 				state.status = "stopped";
-				state.statusText = "Сервер завершил работу.";
+				state.statusText = tr(
+					"Сервер завершил работу.",
+					"The server has finished.",
+				);
 			} else {
 				state.status = "error";
-				state.statusText = `Сервер неожиданно завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}).`;
+				state.statusText = tr(
+					`Сервер неожиданно завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}).`,
+					`The server ended unexpectedly (code ${code}${signal ? `, signal ${signal}` : ""}).`,
+				);
 			}
 		}
 		pushLog(
-			`[launcher] Процесс завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}).`,
+			T(
+				`[launcher] Процесс завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}).`,
+				`[launcher] The process ended (code ${code}${signal ? `, signal ${signal}` : ""}).`,
+			),
 		);
 	});
 
@@ -1051,8 +1401,13 @@ async function startServer(requestedHost, requestedPort) {
 		if (reach.chosenOk) {
 			state.reach = reach;
 			state.status = "running";
-			state.statusText = `Сервер работает на ${reach.dialHost}:${port}.`;
-			pushLog(`[launcher] Сервер отвечает: ${guiUrlFor(reach.dialHost, port)}`);
+			state.statusText = tr(
+				`Сервер работает на ${reach.dialHost}:${port}.`,
+				`The server is running on ${reach.dialHost}:${port}.`,
+			);
+			pushLog(
+				`[launcher] ${T("Сервер отвечает", "The server answers")}: ${guiUrlFor(reach.dialHost, port)}`,
+			);
 			break;
 		}
 		if (reach.loopbackOk) {
@@ -1065,15 +1420,30 @@ async function startServer(requestedHost, requestedPort) {
 			) {
 				state.reach = reach;
 				state.status = "running";
-				state.warning =
-					`Сервер работает: 127.0.0.1:${port} отвечает, а ${reach.dialHost}:${port} — нет. ` +
-					(firewallSupported()
-						? `Обычно это брандмауэр Windows: он не пускает входящие подключения к node.exe. ` +
-							`Нажмите «Разрешить порт ${port}» ниже — лончер создаст правило для всех профилей сети ` +
-							`(нужны права администратора). Панель управления при этом уже доступна по 127.0.0.1.`
-						: `Проверьте брандмауэр и маршрутизацию до ${reach.dialHost}.`);
-				state.statusText = `Сервер работает (127.0.0.1:${port}), но ${reach.dialHost}:${port} недоступен.`;
-				pushLog(`[launcher] ${state.warning}`);
+				state.warning = joined([
+					tr(
+						`Сервер работает: 127.0.0.1:${port} отвечает, а ${reach.dialHost}:${port} — нет.`,
+						`The server is running: 127.0.0.1:${port} answers, ${reach.dialHost}:${port} does not.`,
+					),
+					firewallSupported()
+						? tr(
+								`Обычно это брандмауэр Windows: он не пускает входящие подключения к node.exe. ` +
+									`Нажмите «Разрешить порт» в разделе «Сеть и брандмауэр» — лончер создаст правило для всех профилей сети ` +
+									`(нужны права администратора). Панель управления при этом уже доступна по 127.0.0.1.`,
+								`Usually that is Windows Firewall: it does not let incoming connections reach node.exe. ` +
+									`Press “Allow the port” under “Network and firewall” — the launcher makes a rule for every network profile ` +
+									`(administrator rights are needed). The dashboard is already reachable on 127.0.0.1.`,
+							)
+						: tr(
+								`Проверьте брандмауэр и маршрутизацию до ${reach.dialHost}.`,
+								`Check the firewall and the route to ${reach.dialHost}.`,
+							),
+				]);
+				state.statusText = tr(
+					`Сервер работает (127.0.0.1:${port}), но ${reach.dialHost}:${port} недоступен.`,
+					`The server is running (127.0.0.1:${port}), but ${reach.dialHost}:${port} cannot be reached.`,
+				);
+				pushLog(`[launcher] ${say(state.warning)}`);
 				break;
 			}
 		} else {
@@ -1084,8 +1454,12 @@ async function startServer(requestedHost, requestedPort) {
 		if (Date.now() - lastNoticeAt >= READY_NOTICE_MS) {
 			lastNoticeAt = Date.now();
 			pushLog(
-				`[launcher] Ждём ответа сервера… ${Math.round((Date.now() - waitStartedAt) / 1000)} с ` +
-					`(первый запуск на Windows бывает долгим)`,
+				T(
+					`[launcher] Ждём ответа сервера… ${Math.round((Date.now() - waitStartedAt) / 1000)} с ` +
+						`(первый запуск на Windows бывает долгим)`,
+					`[launcher] Waiting for the server… ${Math.round((Date.now() - waitStartedAt) / 1000)} s ` +
+						`(the first start on Windows can take a while)`,
+				),
 			);
 		}
 		await delay(READY_POLL_MS);
@@ -1099,9 +1473,12 @@ async function startServer(requestedHost, requestedPort) {
 		const tail = state.logs.slice(-12).join("\n");
 		state.status = "error";
 		state.statusText = spawnError
-			? `Не удалось запустить сервер: ${spawnError.message}`
+			? tr(
+					`Не удалось запустить сервер: ${spawnError.message}`,
+					`The server could not be started: ${spawnError.message}`,
+				)
 			: await startFailureReport(advertiseHost, port, bindHost, tail);
-		pushLog(`[launcher] ${state.statusText}`);
+		pushLog(`[launcher] ${say(state.statusText)}`);
 	}
 
 	return { http: 200, body: statePayload() };
@@ -1130,15 +1507,15 @@ async function stopServer() {
 	if (!child || child.exitCode !== null || child.signalCode !== null) {
 		state.child = null;
 		state.status = "stopped";
-		state.statusText = "Сервер не запущен.";
+		state.statusText = tr("Сервер не запущен.", "The server is not running.");
 		return { http: 200, body: statePayload() };
 	}
 
 	state.status = "stopping";
-	state.statusText = "Остановка сервера…";
+	state.statusText = tr("Остановка сервера…", "Stopping the server…");
 	await stopChild(child);
 	state.status = "stopped";
-	state.statusText = "Сервер остановлен.";
+	state.statusText = tr("Сервер остановлен.", "The server is stopped.");
 	return { http: 200, body: statePayload() };
 }
 
@@ -1203,7 +1580,10 @@ async function readJsonBody(req) {
 	let size = 0;
 	for await (const chunk of req) {
 		size += chunk.length;
-		if (size > 1_000_000) throw new Error("Тело запроса слишком большое.");
+		if (size > 1_000_000)
+			throw new Error(
+				T("Тело запроса слишком большое.", "The request body is too large."),
+			);
 		chunks.push(chunk);
 	}
 	if (chunks.length === 0) return {};
@@ -1226,7 +1606,10 @@ async function handleRequest(req, res) {
 			html = await fsp.readFile(path.join(__dirname, "ui.html"), "utf8");
 		} catch (err) {
 			sendJson(res, 500, {
-				error: `Не удалось прочитать ui.html: ${err.message}`,
+				error: T(
+					`Не удалось прочитать ui.html: ${err.message}`,
+					`ui.html could not be read: ${err.message}`,
+				),
 			});
 			return;
 		}
@@ -1239,7 +1622,30 @@ async function handleRequest(req, res) {
 	}
 
 	if (method === "GET" && pathname === "/api/state") {
+		lastSeenAt = Date.now();
 		sendJson(res, 200, statePayload());
+		return;
+	}
+
+	// The window is closing. A server that is running stays up, and this
+	// process with it, unless the window asks for it to be stopped; with no
+	// server to look after there is nothing to stay for.
+	if (method === "POST" && pathname === "/api/quit") {
+		if (!isJsonRequest(req)) {
+			sendJson(res, 415, {
+				ok: false,
+				message: T(
+					"Нужен запрос в формате JSON.",
+					"The request has to be JSON.",
+				),
+			});
+			return;
+		}
+		const body = await readJsonBody(req);
+		const running = Boolean(state.child);
+		const stays = running && body.stop !== true;
+		sendJson(res, 200, { ok: true, running, stays });
+		if (!stays) setTimeout(() => void gracefulShutdown(0), 50);
 		return;
 	}
 
@@ -1280,7 +1686,7 @@ async function handleRequest(req, res) {
 	if (method === "POST" && pathname === "/api/reach") {
 		state.reach = await measureCurrentReach();
 		if (state.reach.chosenOk) state.warning = "";
-		sendJson(res, 200, { reach: state.reach, warning: state.warning });
+		sendJson(res, 200, { reach: state.reach, warning: say(state.warning) });
 		return;
 	}
 
@@ -1314,7 +1720,7 @@ async function handleRequest(req, res) {
 			...result,
 			firewall: firewallInfo(port),
 			reach: state.reach,
-			warning: state.warning,
+			warning: say(state.warning),
 		});
 		return;
 	}
@@ -1326,6 +1732,137 @@ async function handleRequest(req, res) {
 			: state.port;
 		const result = removeFirewallRule(port);
 		sendJson(res, 200, { ...result, firewall: firewallInfo(port) });
+		return;
+	}
+
+	if (method === "POST" && pathname === "/api/login") {
+		if (!isJsonRequest(req)) {
+			sendJson(res, 415, {
+				ok: false,
+				message: T(
+					"Нужен запрос в формате JSON.",
+					"The request has to be JSON.",
+				),
+			});
+			return;
+		}
+		const body = await readJsonBody(req);
+		const username =
+			typeof body.username === "string" ? body.username.trim() : "";
+		const password = typeof body.password === "string" ? body.password : "";
+		if (!username || !password) {
+			sendJson(res, 400, {
+				ok: false,
+				message: T("Укажите имя и пароль.", "Give a name and a password."),
+			});
+			return;
+		}
+		try {
+			await enableLogin(username, password);
+		} catch (err) {
+			sendJson(res, 500, {
+				ok: false,
+				message: T(
+					`Не удалось записать cfg/nodecg.json: ${err.message}`,
+					`cfg/nodecg.json could not be written: ${err.message}`,
+				),
+			});
+			return;
+		}
+		sendJson(
+			res,
+			200,
+			loginResult(
+				T(
+					`Вход включён: панель будет спрашивать пароль у «${username}».`,
+					`The sign-in is on: the dashboard will ask “${username}” for the password.`,
+				),
+			),
+		);
+		return;
+	}
+
+	if (method === "POST" && pathname === "/api/lang") {
+		const body = await readJsonBody(req);
+		if (!isLang(body.lang)) {
+			sendJson(res, 400, { ok: false, message: `lang: ${LANGS.join(" | ")}` });
+			return;
+		}
+		lang = body.lang;
+		persistSettings(state.host, state.port);
+		sendJson(res, 200, statePayload());
+		return;
+	}
+
+	if (method === "POST" && pathname === "/api/login/default") {
+		if (!isJsonRequest(req)) {
+			sendJson(res, 415, {
+				ok: false,
+				message: T(
+					"Нужен запрос в формате JSON.",
+					"The request has to be JSON.",
+				),
+			});
+			return;
+		}
+		try {
+			await resetLogin();
+		} catch (err) {
+			sendJson(res, 500, {
+				ok: false,
+				message: T(
+					`Не удалось записать cfg/nodecg.json: ${err.message}`,
+					`cfg/nodecg.json could not be written: ${err.message}`,
+				),
+			});
+			return;
+		}
+		sendJson(
+			res,
+			200,
+			loginResult(
+				T(
+					"Вход включён: пользователи задаются в панели, во вкладке «Команда».",
+					"The sign-in is on: the users are kept in the dashboard, in the Team tab.",
+				),
+			),
+		);
+		return;
+	}
+
+	if (method === "POST" && pathname === "/api/login/disable") {
+		if (!isJsonRequest(req)) {
+			sendJson(res, 415, {
+				ok: false,
+				message: T(
+					"Нужен запрос в формате JSON.",
+					"The request has to be JSON.",
+				),
+			});
+			return;
+		}
+		try {
+			await disableLogin();
+		} catch (err) {
+			sendJson(res, 500, {
+				ok: false,
+				message: T(
+					`Не удалось записать cfg/nodecg.json: ${err.message}`,
+					`cfg/nodecg.json could not be written: ${err.message}`,
+				),
+			});
+			return;
+		}
+		sendJson(
+			res,
+			200,
+			loginResult(
+				T(
+					"Вход отключён: панель открыта без пароля.",
+					"The sign-in is off: the dashboard opens without a password.",
+				),
+			),
+		);
 		return;
 	}
 
@@ -1370,7 +1907,41 @@ async function gracefulShutdown(code) {
 
 process.on("SIGINT", () => void gracefulShutdown(0));
 process.on("SIGTERM", () => void gracefulShutdown(0));
-process.on("exit", () => hardKillChild());
+process.on("exit", () => {
+	hardKillChild();
+	try {
+		// Only our own note: a newer launcher may have written its own since.
+		const note = JSON.parse(fs.readFileSync(RUNTIME_PATH, "utf8"));
+		if (note.pid === process.pid) fs.rmSync(RUNTIME_PATH, { force: true });
+	} catch {
+		/* no note, or not ours to remove */
+	}
+});
+// Whoever read our banner may be gone by the time something else is printed.
+process.stdout.on("error", () => {});
+
+// ---------------------------------------------------------------------------
+// Living in the background (`--background`, what the window starts us with)
+// ---------------------------------------------------------------------------
+//
+// The window can be closed while the server runs; this process then stays to
+// look after the server, and the next window finds it through RUNTIME_PATH.
+// Without a server and without a window asking for the state there is nobody
+// left to serve — the window crashed, or was closed with the server stopped —
+// and the process ends by itself.
+
+const IDLE_EXIT_MS = 20_000;
+let lastSeenAt = Date.now();
+
+if (args.background) {
+	setInterval(() => {
+		const busy =
+			state.child || state.status === "starting" || state.status === "stopping";
+		if (!busy && Date.now() - lastSeenAt > IDLE_EXIT_MS) {
+			void gracefulShutdown(0);
+		}
+	}, 5_000).unref();
+}
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -1384,6 +1955,16 @@ const listenPort =
 controlServer.listen(listenPort, "127.0.0.1", () => {
 	const actualPort = controlServer.address().port;
 	const controlUrl = `http://127.0.0.1:${actualPort}`;
+
+	try {
+		fs.writeFileSync(
+			RUNTIME_PATH,
+			JSON.stringify({ pid: process.pid, port: actualPort }) + "\n",
+			"utf8",
+		);
+	} catch {
+		/* best effort: without the note a new window starts a launcher of its own */
+	}
 
 	// The one and only stdout line. Everything else (child output) stays in the buffer.
 	process.stdout.write(`notGT launcher on ${controlUrl}\n`);

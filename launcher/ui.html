@@ -49,6 +49,25 @@
 				gap: 10px;
 				margin-bottom: 2px;
 			}
+			/* The two languages; the one in use is the lit one. */
+			.lang {
+				margin-left: auto;
+				display: flex;
+				gap: 4px;
+			}
+			.lang button {
+				padding: 3px 9px;
+				font-size: 11px;
+				font-weight: 700;
+				background: transparent;
+				border-color: transparent;
+				color: var(--muted);
+			}
+			.lang button.on {
+				background: var(--panel-2);
+				border-color: var(--border);
+				color: var(--text);
+			}
 			h1 {
 				font-size: 24px;
 				margin: 0;
@@ -85,6 +104,9 @@
 			.field.port {
 				flex: 0 0 130px;
 			}
+			.field.half {
+				flex: 1 1 200px;
+			}
 			label {
 				color: var(--muted);
 				font-size: 11px;
@@ -93,6 +115,7 @@
 			}
 			select,
 			input[type="number"],
+			input[type="password"],
 			input[type="text"] {
 				background: var(--panel-2);
 				color: var(--text);
@@ -328,6 +351,10 @@
 		<div class="wrap">
 			<header>
 				<h1>not<span>GT</span></h1>
+				<div class="lang" role="group" aria-label="Language">
+					<button id="langRu" type="button">RU</button>
+					<button id="langEn" type="button">EN</button>
+				</div>
 			</header>
 			<div class="sub" id="about">лончер</div>
 
@@ -343,11 +370,11 @@
 			<div class="card">
 				<div class="row">
 					<div class="field iface">
-						<label for="iface">Интерфейс</label>
+						<label for="iface" data-en="Interface">Интерфейс</label>
 						<select id="iface"></select>
 					</div>
 					<div class="field port">
-						<label for="port">Порт</label>
+						<label for="port" data-en="Port">Порт</label>
 						<input
 							id="port"
 							type="number"
@@ -360,43 +387,89 @@
 				</div>
 				<div class="note" id="ifaceHint"></div>
 				<div class="buttons">
-					<button class="primary" id="btnStart">Запустить</button>
-					<button id="btnStop">Остановить</button>
-					<button id="btnOpen">Открыть GUI</button>
-				</div>
-			</div>
-
-			<div class="card">
-				<label for="guiUrl">Адрес GUI</label>
-				<div class="url-row" style="margin-top: 5px">
-					<input id="guiUrl" type="text" readonly value="" />
-					<button id="btnCopy">Копировать</button>
-				</div>
-				<div class="note">
-					Панель управления для оператора — откройте этот адрес в браузере
-					(кнопка «Открыть GUI»). В OBS добавляется <b>другая</b> ссылка:
-					источник «Браузер» с адресом <code id="obsUrl"></code>
-				</div>
-				<div class="link-line">
-					<span>Для других устройств:</span>
-					<code id="networkUrl">—</code>
-					<button data-copy="networkUrl">Копировать</button>
-					<button data-open="networkUrl">Открыть</button>
-				</div>
-				<div class="link-line">
-					<span>Только этот компьютер:</span>
-					<code id="loopbackUrl">—</code>
-					<button data-copy="loopbackUrl">Копировать</button>
-					<button data-open="loopbackUrl">Открыть</button>
+					<button class="primary" id="btnStart" data-en="Start">
+						Запустить
+					</button>
+					<button id="btnStop" data-en="Stop">Остановить</button>
+					<button id="btnOpen" data-en="Open GUI">Открыть GUI</button>
 				</div>
 			</div>
 
 			<div class="card">
 				<div class="status-head">
-					<label style="margin: 0">Сеть и брандмауэр</label>
+					<label style="margin: 0" data-en="Sign-in">Вход по паролю</label>
+					<span class="note" style="margin: 0" id="loginState"></span>
+				</div>
+				<div
+					class="note"
+					style="margin-top: 6px"
+					data-en="The dashboard asks for a name and a password. On a new server it is &lt;code&gt;admin&lt;/code&gt; / &lt;code&gt;admin&lt;/code&gt; — sign in and change the password in the Team tab straight away; the other users, their groups and the keys for Bitfocus Companion are added there too. A name and a password set here replace the default administrator. “Switch off” opens the dashboard to anyone who can reach this computer."
+				>
+					Панель спрашивает имя и пароль. На новом сервере это
+					<code>admin</code> / <code>admin</code> — войдите и сразу смените
+					пароль во вкладке «Команда»; там же добавляются остальные
+					пользователи, их группы и ключи для Bitfocus Companion. Имя и пароль,
+					заданные здесь, заменяют администратора по умолчанию. «Отключить»
+					открывает панель каждому, кто видит этот компьютер в сети.
+				</div>
+				<div class="row" style="margin-top: 10px">
+					<div class="field half">
+						<label for="loginUser" data-en="Name">Имя</label>
+						<input id="loginUser" type="text" autocomplete="off" />
+					</div>
+					<div class="field half">
+						<label for="loginPass" data-en="Password">Пароль</label>
+						<input id="loginPass" type="password" autocomplete="new-password" />
+					</div>
+				</div>
+				<div class="buttons">
+					<button id="btnLoginSave">Включить вход</button>
+					<button id="btnLoginOff" data-en="Switch off">Отключить</button>
+				</div>
+				<div class="note" id="loginHint"></div>
+			</div>
+
+			<div class="card">
+				<label for="guiUrl" data-en="GUI address">Адрес GUI</label>
+				<div class="url-row" style="margin-top: 5px">
+					<input id="guiUrl" type="text" readonly value="" />
+					<button id="btnCopy" data-en="Copy">Копировать</button>
+				</div>
+				<div class="note">
+					<span
+						data-en="The control panel for the operator — open this address in a browser (the “Open GUI” button). OBS gets a &lt;b&gt;different&lt;/b&gt; link: a Browser source with the address"
+						>Панель управления для оператора — откройте этот адрес в браузере
+						(кнопка «Открыть GUI»). В OBS добавляется <b>другая</b> ссылка:
+						источник «Браузер» с адресом</span
+					>
+					<code id="obsUrl"></code>
+				</div>
+				<div class="link-line">
+					<span data-en="For other devices:">Для других устройств:</span>
+					<code id="networkUrl">—</code>
+					<button data-copy="networkUrl" data-en="Copy">Копировать</button>
+					<button data-open="networkUrl" data-en="Open">Открыть</button>
+				</div>
+				<div class="link-line">
+					<span data-en="This computer only:">Только этот компьютер:</span>
+					<code id="loopbackUrl">—</code>
+					<button data-copy="loopbackUrl" data-en="Copy">Копировать</button>
+					<button data-open="loopbackUrl" data-en="Open">Открыть</button>
+				</div>
+			</div>
+
+			<div class="card">
+				<div class="status-head">
+					<label style="margin: 0" data-en="Network and firewall"
+						>Сеть и брандмауэр</label
+					>
 					<span class="note" style="margin: 0" id="fwState"></span>
 				</div>
-				<div class="note" style="margin-top: 6px">
+				<div
+					class="note"
+					style="margin-top: 6px"
+					data-en="If the dashboard opens on this computer but “never loads” from another device or by its network address, it is almost always Windows Firewall: it does not let incoming connections reach &lt;code&gt;node.exe&lt;/code&gt;. The button below adds a rule for the port in &lt;b&gt;every&lt;/b&gt; network profile (administrator rights are needed)."
+				>
 					Если панель открывается на этом компьютере, но «бесконечно грузится» с
 					другого устройства или по сетевому адресу — почти всегда виноват
 					брандмауэр Windows: он не пускает входящие подключения к
@@ -404,20 +477,26 @@
 					<b>всех</b> профилях сети (нужны права администратора).
 				</div>
 				<div class="buttons">
-					<button id="btnDiag">Проверить доступность</button>
-					<button id="btnAllow">Разрешить порт</button>
-					<button id="btnRemoveFw">Удалить правило</button>
+					<button id="btnDiag" data-en="Check">Проверить доступность</button>
+					<button id="btnAllow" data-en="Allow the port">Разрешить порт</button>
+					<button id="btnRemoveFw" data-en="Remove the rule">
+						Удалить правило
+					</button>
 				</div>
 				<ul class="verdict" id="verdict"></ul>
 			</div>
 
 			<details id="logPanel">
-				<summary>Журнал сервера (<span id="logCount">0</span>)</summary>
+				<summary>
+					<span data-en="Server log">Журнал сервера</span> (<span id="logCount"
+						>0</span
+					>)
+				</summary>
 				<pre id="log"></pre>
 			</details>
 		</div>
 
-		<div class="toast" id="toast">Скопировано</div>
+		<div class="toast" id="toast" data-en="Copied">Скопировано</div>
 
 		<script>
 			// ------------------------------------------------------------------
@@ -428,14 +507,56 @@
 			var logSince = 0;
 			var interfacesKey = "";
 			var userTouched = false;
+			var loginTouched = false;
 
-			var STATUS_LABEL = {
-				stopped: "остановлено",
-				starting: "запуск…",
-				running: "работает",
-				stopping: "остановка…",
-				error: "ошибка",
-			};
+			/**
+			 * Russian and English. The page is written in Russian; an element
+			 * that has an English text carries it in `data-en`, and a text made
+			 * in the script is written in both, side by side, with `tx`. Which
+			 * language it is comes from the launcher (GET /api/state `lang`),
+			 * which remembers the choice made with the RU / EN switch.
+			 */
+			var lang = "ru";
+			var langPending = false;
+
+			function tx(ru, en) {
+				return lang === "en" ? en : ru;
+			}
+
+			function applyLang() {
+				document.documentElement.lang = lang;
+				document.title = tx("notGT — лончер", "notGT — launcher");
+				document.querySelectorAll("[data-en]").forEach(function (el) {
+					if (el.dataset.ru === undefined) el.dataset.ru = el.innerHTML;
+					el.innerHTML = lang === "en" ? el.dataset.en : el.dataset.ru;
+				});
+				$("langRu").className = lang === "ru" ? "on" : "";
+				$("langEn").className = lang === "en" ? "on" : "";
+			}
+
+			function setLang(next) {
+				if (next === lang) return;
+				lang = next;
+				langPending = true;
+				applyLang();
+				render();
+				post("/api/lang", { lang: next }).then(function () {
+					langPending = false;
+					refresh();
+				});
+			}
+
+			function statusLabel(status) {
+				return (
+					{
+						stopped: tx("остановлено", "stopped"),
+						starting: tx("запуск…", "starting…"),
+						running: tx("работает", "running"),
+						stopping: tx("остановка…", "stopping…"),
+						error: tx("ошибка", "error"),
+					}[status] || status
+				);
+			}
 
 			function $(id) {
 				return document.getElementById(id);
@@ -506,9 +627,9 @@
 					local: document.createElement("optgroup"),
 					net: document.createElement("optgroup"),
 				};
-				groups.all.label = "Все интерфейсы";
-				groups.local.label = "Только этот компьютер";
-				groups.net.label = "Сетевые адреса";
+				groups.all.label = tx("Все интерфейсы", "All interfaces");
+				groups.local.label = tx("Только этот компьютер", "This computer only");
+				groups.net.label = tx("Сетевые адреса", "Network addresses");
 
 				interfaces.forEach(function (item) {
 					var opt = document.createElement("option");
@@ -539,14 +660,14 @@
 			function setPill(status) {
 				var pill = $("pill");
 				pill.className = "pill " + status;
-				pill.textContent = STATUS_LABEL[status] || status;
+				pill.textContent = statusLabel(status);
 			}
 
 			function render() {
 				if (!state) return;
 
 				$("about").textContent =
-					"лончер v" +
+					tx("лончер v", "launcher v") +
 					state.version +
 					" · Node " +
 					state.nodeVersion +
@@ -609,22 +730,63 @@
 
 				var fw = state.firewall || {};
 				$("fwState").textContent = !fw.supported
-					? "правило создаётся только в Windows"
+					? tx(
+							"правило создаётся только в Windows",
+							"a rule can only be made on Windows",
+						)
 					: fw.ruleExists
-						? "правило «" + fw.ruleName + "» есть"
-						: "правила для порта " + (fw.port || sel.port) + " нет";
+						? tx(
+								"правило «" + fw.ruleName + "» есть",
+								"the rule “" + fw.ruleName + "” exists",
+							)
+						: tx(
+								"правила для порта " + (fw.port || sel.port) + " нет",
+								"there is no rule for port " + (fw.port || sel.port),
+							);
 				$("btnAllow").disabled = !fw.supported || !!fw.ruleExists;
 				$("btnRemoveFw").disabled = !fw.supported || !fw.ruleExists;
 
+				var login = state.login || {};
+				$("loginState").textContent = !login.enabled
+					? tx("выключен", "off")
+					: login.source === "launcher"
+						? tx("включён · администратор ", "on · administrator ") +
+							(login.username || "")
+						: login.defaultPassword
+							? tx(
+									"включён · admin / admin — смените пароль во вкладке «Команда»",
+									"on · admin / admin — change the password in the Team tab",
+								)
+							: tx(
+									"включён · пользователи — во вкладке «Команда»",
+									"on · the users are kept in the Team tab",
+								);
+				$("btnLoginSave").textContent = !login.enabled
+					? tx("Включить вход", "Switch the sign-in on")
+					: login.source === "launcher"
+						? tx("Сменить имя и пароль", "Change the name and password")
+						: tx("Задать администратора здесь", "Set the administrator here");
+				$("btnLoginOff").disabled = !login.enabled;
+				// Filled in once, so that typing a new name is not overwritten by the poll.
+				if (!loginTouched && login.username && !$("loginUser").value) {
+					$("loginUser").value = login.username;
+				}
+
 				var hint =
 					sel.host === "127.0.0.1"
-						? "Сервер будет доступен только с этого компьютера."
-						: "Сервер слушает все интерфейсы (как NodeCG по умолчанию), а выбранный адрес подставляется в ссылки. Нужен доступ только с этого компьютера — выберите «Только этот компьютер».";
+						? tx(
+								"Сервер будет доступен только с этого компьютера.",
+								"The server will be reachable from this computer only.",
+							)
+						: tx(
+								"Сервер слушает все интерфейсы (как NodeCG по умолчанию), а выбранный адрес подставляется в ссылки. Нужен доступ только с этого компьютера — выберите «Только этот компьютер».",
+								"The server listens on every interface (as NodeCG does by default), and the chosen address goes into the links. For access from this computer only, choose “This computer only”.",
+							);
 				if (state.status === "running") {
 					hint +=
-						" Сейчас слушает " +
+						tx(" Сейчас слушает ", " Listening on ") +
 						(state.bindHost || "0.0.0.0") +
-						", в ссылках — " +
+						tx(", в ссылках — ", ", the links use ") +
 						(state.advertiseHost || "-") +
 						".";
 				}
@@ -644,7 +806,7 @@
 
 			function runDiagnostics() {
 				$("btnDiag").disabled = true;
-				renderVerdict([{ level: "info", text: "Проверяем…" }]);
+				renderVerdict([{ level: "info", text: tx("Проверяем…", "Checking…") }]);
 				api("/api/diagnostics")
 					.then(function (r) {
 						var body = r.body || {};
@@ -652,7 +814,15 @@
 						refresh();
 					})
 					.catch(function () {
-						renderVerdict([{ level: "error", text: "Лончер не отвечает." }]);
+						renderVerdict([
+							{
+								level: "error",
+								text: tx(
+									"Лончер не отвечает.",
+									"The launcher does not answer.",
+								),
+							},
+						]);
 					})
 					.then(function () {
 						$("btnDiag").disabled = false;
@@ -665,10 +835,14 @@
 				renderVerdict([
 					{
 						level: "info",
-						text:
+						text: tx(
 							"Добавляем правило для порта " +
-							sel.port +
-							"… Подтвердите запрос UAC, если он появится.",
+								sel.port +
+								"… Подтвердите запрос UAC, если он появится.",
+							"Adding a rule for port " +
+								sel.port +
+								"… Confirm the UAC prompt if one appears.",
+						),
 					},
 				]);
 				post("/api/firewall/allow", { port: sel.port }).then(function (r) {
@@ -679,7 +853,10 @@
 					if (body.reach && body.reach.chosenOk) {
 						items.push({
 							level: "ok",
-							text: "Адрес " + body.reach.dialHost + " теперь отвечает.",
+							text: tx(
+								"Адрес " + body.reach.dialHost + " теперь отвечает.",
+								body.reach.dialHost + " answers now.",
+							),
 						});
 					} else if (body.warning) {
 						items.push({ level: "warn", text: body.warning });
@@ -700,6 +877,48 @@
 				});
 			}
 
+			function saveLogin() {
+				var username = $("loginUser").value.trim();
+				var password = $("loginPass").value;
+				// Switched off, and no name given: back on, with the users of the
+				// Team tab (admin / admin on a server that has none yet).
+				if (
+					!username &&
+					!password &&
+					state &&
+					state.login &&
+					!state.login.enabled
+				) {
+					post("/api/login/default", {}).then(function (r) {
+						$("loginHint").textContent = (r.body || {}).message || "";
+						refresh();
+					});
+					return;
+				}
+				if (!username || !password) {
+					$("loginHint").textContent = tx(
+						"Укажите имя и пароль.",
+						"Give a name and a password.",
+					);
+					return;
+				}
+				post("/api/login", { username: username, password: password }).then(
+					function (r) {
+						var body = r.body || {};
+						$("loginHint").textContent = body.message || "";
+						if (body.ok) $("loginPass").value = "";
+						refresh();
+					},
+				);
+			}
+
+			function disableLogin() {
+				post("/api/login/disable", {}).then(function (r) {
+					$("loginHint").textContent = (r.body || {}).message || "";
+					refresh();
+				});
+			}
+
 			function openLink(id) {
 				post("/api/open", { url: $(id).textContent }).then(function () {
 					/* nothing to report */
@@ -711,6 +930,10 @@
 					.then(function (r) {
 						if (r.body && r.body.status) {
 							state = r.body;
+							if (!langPending && state.lang && state.lang !== lang) {
+								lang = state.lang;
+								applyLang();
+							}
 							render();
 						}
 					})
@@ -751,8 +974,10 @@
 			function start() {
 				var sel = currentSelection();
 				if (sel.port < 1024 || sel.port > 65535) {
-					$("statusText").textContent =
-						"Порт должен быть в диапазоне 1024–65535.";
+					$("statusText").textContent = tx(
+						"Порт должен быть в диапазоне 1024–65535.",
+						"The port has to be between 1024 and 65535.",
+					);
 					return;
 				}
 				$("btnStart").disabled = true;
@@ -835,6 +1060,17 @@
 			$("btnDiag").addEventListener("click", runDiagnostics);
 			$("btnAllow").addEventListener("click", allowPort);
 			$("btnRemoveFw").addEventListener("click", removeFirewallRule);
+			$("btnLoginSave").addEventListener("click", saveLogin);
+			$("langRu").addEventListener("click", function () {
+				setLang("ru");
+			});
+			$("langEn").addEventListener("click", function () {
+				setLang("en");
+			});
+			$("btnLoginOff").addEventListener("click", disableLogin);
+			$("loginUser").addEventListener("input", function () {
+				loginTouched = true;
+			});
 			document.querySelectorAll("[data-copy]").forEach(function (btn) {
 				btn.addEventListener("click", function () {
 					var id = btn.getAttribute("data-copy");
@@ -854,6 +1090,7 @@
 				userTouched = true;
 			});
 
+			applyLang();
 			refresh();
 			pollLogs();
 			setInterval(refresh, 1000);
