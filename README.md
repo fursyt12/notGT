@@ -23,10 +23,10 @@
 </p>
 
 <p align="center">
-  <a href="media/present.mp4">
-    <img src="media/present.jpg" alt="notGT in 22 seconds: the Control panel puts four titles on air on the Main out" width="900">
-  </a>
-  <br>
+  <video src="media/present.mp4" poster="media/present.jpg" controls width="900"></video>
+</p>
+
+<p align="center">
   <a href="media/present.mp4"><b>▶ Watch notGT in 22 seconds</b></a> — the dashboard, the out and the editor, filmed from a running server
 </p>
 
