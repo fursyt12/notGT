@@ -23,6 +23,14 @@
 </p>
 
 <p align="center">
+  <a href="media/present.mp4">
+    <img src="media/present.jpg" alt="notGT in 22 seconds: the Control panel puts four titles on air on the Main out" width="900">
+  </a>
+  <br>
+  <a href="media/present.mp4"><b>▶ Watch notGT in 22 seconds</b></a> — the dashboard, the out and the editor, filmed from a running server
+</p>
+
+<p align="center">
   <img src="media/screenshots/on-air.png" alt="A lower third, a score bug, a live poll and a logo bug on air" width="900">
 </p>
 
