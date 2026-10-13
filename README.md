@@ -17,7 +17,7 @@
   <img alt="notGT 0.8.0" src="https://img.shields.io/badge/notGT-0.8.0-FF5A8C?style=flat-square&labelColor=0C2B25">
   <img alt="NodeCG 2.8" src="https://img.shields.io/badge/NodeCG-2.8-FF5A8C?style=flat-square&labelColor=0C2B25">
   <img alt="Node.js 22" src="https://img.shields.io/badge/Node.js-22-FF5A8C?style=flat-square&labelColor=0C2B25">
-  <img alt="Docker and Windows" src="https://img.shields.io/badge/runs%20on-Docker%20%C2%B7%20Windows-FF8A3C?style=flat-square&labelColor=0C2B25">
+  <img alt="Docker, Windows and macOS" src="https://img.shields.io/badge/runs%20on-Docker%20%C2%B7%20Windows%20%C2%B7%20macOS-FF8A3C?style=flat-square&labelColor=0C2B25">
   <img alt="Interface in English and Russian" src="https://img.shields.io/badge/interface-EN%20%C2%B7%20RU-FF8A3C?style=flat-square&labelColor=0C2B25">
   <img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-FFD23F?style=flat-square&labelColor=0C2B25">
 </p>
@@ -161,6 +161,18 @@ It assembles `dist/notGT-win-x64/` and `dist/notGT-win-x64.zip`; state lives in
 `windows-latest`, and a `v*` tag publishes it as a release. The layout, the flags and the
 release process are in [`docs/windows-build.md`](docs/windows-build.md).
 
+### macOS
+
+The same portable build for a Mac with Apple silicon (M1 and newer) is in
+[Releases](https://github.com/fursyt12/notGT/releases) as `notGT-macos-arm64.zip`: unpack
+it and start `notGT Launcher` from the unpacked folder. It is the same launcher in a
+window of its own, and it also carries its own Node.js.
+
+The build is not signed with an Apple developer certificate, so the first start has to be
+allowed: System Settings → Privacy & Security → “Open Anyway”, or
+`xattr -dr com.apple.quarantine <the unpacked folder>` in Terminal. How the package is
+put together is in [`docs/macos-build.md`](docs/macos-build.md).
+
 ### From source
 
 Node.js 22 is needed. The bundle is **not** an npm workspace of this monorepo, so it has
@@ -228,7 +240,7 @@ flowchart LR
 | Media             | ffmpeg — alpha video to WebM and WebP                                                        |
 | Data              | ExcelJS — `.xlsx` workbooks as list variables, read and written                              |
 | Tests             | Puppeteer end-to-end suites for the out page and the panels · Vitest for the core            |
-| Packaging         | Multi-stage Docker image · portable Windows build with a launcher · GitHub Actions           |
+| Packaging         | Multi-stage Docker image · portable Windows and macOS builds with a launcher · GitHub Actions |
 | Type              | Montserrat and Handjet, self-hosted (SIL Open Font License)                                  |
 
 ## Repository
@@ -243,9 +255,9 @@ bundles/notGT/          the application
   scripts/              build and end-to-end tests
 workspaces/nodecg/      NodeCG core, with the notGT shell
 workspaces/…            the rest of the NodeCG monorepo (CLI, database adapters)
-launcher/               the control panel of the Windows build
+launcher/               the control panel of the Windows and macOS builds
 media/brand/            logo, mark and the brandbook
-docs/                   the Windows build, notes on the core
+docs/                   the Windows and macOS builds, notes on the core
 ```
 
 ## Documentation
@@ -255,7 +267,8 @@ docs/                   the Windows build, notes on the core
 | **[Operator manual](bundles/notGT/README.md)** · [по-русски](bundles/notGT/README_RU.md) | The mental model, the panels, sign-in and the team, the full REST and WebSocket API, OBS and Companion setup, writing a code animation, alpha video, persistence, troubleshooting |
 | **[Generating titles with an LLM](GENERATE_TITLES.md)** · [по-русски](GENERATE_TITLES_RU.md) | A prompt that already knows the runtime contract: fill in what you want, get `html` / `css` / `js` for a code animation |
 | **[Windows build](docs/windows-build.md)** | The layout of the portable package, the build flags, the release process |
-| **[Launcher](launcher/README.md)** | The small control panel that starts the server on Windows |
+| **[macOS build](docs/macos-build.md)** | The same package for a Mac: its layout, the launcher's window, why the first start has to be allowed |
+| **[Launcher](launcher/README.md)** | The small control panel that starts the server on Windows and macOS |
 | **[NodeCG documentation](https://nodecg.dev/)** | The platform underneath: bundles, replicants, the extension API |
 
 ## Brand

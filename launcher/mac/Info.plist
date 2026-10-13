@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The launcher's Info.plist. scripts/build-macos.mjs puts the version in place of __VERSION__. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>notGT Launcher</string>
+	<key>CFBundleDisplayName</key>
+	<string>notGT Launcher</string>
+	<key>CFBundleIdentifier</key>
+	<string>space.huckskee.notgt.launcher</string>
+	<key>CFBundleExecutable</key>
+	<string>notGT-launcher</string>
+	<key>CFBundleIconFile</key>
+	<string>notgt</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__VERSION__</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<!-- The window shows a page served on 127.0.0.1, over plain HTTP. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
+	<key>NSHumanReadableCopyright</key>
+	<string>notGT, MIT licence</string>
+</dict>
+</plist>

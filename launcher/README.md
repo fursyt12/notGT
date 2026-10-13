@@ -7,7 +7,10 @@ server, and open the GUI — in the spirit of the Bitfocus Companion launcher.
 It has two faces. On Windows the user sees **a window**: `notGT Launcher.exe`
 ([`win/notGT-launcher.c`](win/notGT-launcher.c), described in
 [docs/windows-build.md](../docs/windows-build.md#the-native-launcher)) starts this
-script hidden with `--no-open` and drives it through the control API below. Run by
+script hidden with `--no-open` and drives it through the control API below. On macOS
+the window is `notGT Launcher.app` ([`mac/notGT-launcher.m`](mac/notGT-launcher.m),
+described in [docs/macos-build.md](../docs/macos-build.md)): it starts the script the
+same way and shows its page in a web view of its own. Run by
 itself — `notGT.cmd`, or `node launcher/index.mjs` on any system — the script serves
 the same controls as **a page** (`ui.html`) and opens it in the browser.
 

@@ -1,17 +1,18 @@
-# The only CI this fork runs: it builds the portable Windows package and, for a
-# version tag, attaches it to a GitHub Release.
+# The only CI this fork runs: it builds the portable packages — Windows and
+# macOS — and, for a version tag, attaches them to a GitHub Release.
 #
-#   push to main  -> build the package (does it still build?) and upload the artifact
-#   push v* tag   -> build it and publish the Release
+#   push to main  -> build the packages (do they still build?) and upload the artifacts
+#   push v* tag   -> build them and publish the Release
 #   manual run    -> same as a push; fill in `tag` to publish as well
 #
 # The upstream NodeCG checks (lint/types/tests/container) are kept in ci.yaml but
 # are manual-only here, so a red badge never comes from code that notGT does not use.
 #
-# The heavy lifting lives in scripts/build-windows.mjs so that the exact same
-# packaging can be reproduced locally with:
+# The heavy lifting lives in scripts/build-windows.mjs and scripts/build-macos.mjs,
+# so that the exact same packaging can be reproduced locally with:
 #   node scripts/build-windows.mjs --node-version 22.14.0
-name: Windows
+#   node scripts/build-macos.mjs --node-version 22.14.0      (on a Mac)
+name: Packages
 
 on:
   push:
@@ -123,20 +124,118 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # Attach the zip to the GitHub Release. Idempotent: a re-run of the same
-      # tag uploads with --clobber instead of failing. `gh` is preinstalled on
-      # GitHub-hosted runners.
-      - name: Publish the GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+  macos-package:
+    name: Build notGT-macos-arm64
+    # Apple silicon. The database driver in the package is the one of the
+    # machine that builds it, so the runner's architecture is the package's.
+    runs-on: macos-latest
+    timeout-minutes: 40
+
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check that the runner is Apple silicon
+        run: |
+          uname -m
+          test "$(uname -m)" = arm64
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            bundles/notGT/package-lock.json
+
+      - name: Install monorepo dependencies
+        run: npm ci
+
+      - name: Build NodeCG workspaces
+        run: npm run build
+
+      - name: Install bundle dependencies
+        working-directory: bundles/notGT
+        run: npm ci
+
+      - name: Build the notGT bundle
+        working-directory: bundles/notGT
+        run: npm run build
+
+      # Assembles the same app/ as the Windows package, downloads the official
+      # macOS Node runtime (SHA-256 checked against nodejs.org), compiles the
+      # launcher's window with the system clang and writes
+      # dist/notGT-macos-arm64.zip. --smoke starts the packaged server with the
+      # packaged Node, and then the launcher's window itself, which has to show
+      # the launcher's page — so a package that cannot start on a Mac fails
+      # here instead of shipping.
+      - name: Build the macOS package
+        run: node scripts/build-macos.mjs --node-version 22.14.0 --arch arm64 --skip-build --smoke
+
+      - name: Assert the launcher application exists
+        run: |
+          APP="dist/notGT-macos-arm64/notGT Launcher.app"
+          test -x "$APP/Contents/MacOS/notGT-launcher"
+          lipo -archs "$APP/Contents/MacOS/notGT-launcher"
+          codesign --verify --verbose "$APP"
+
+      - name: Upload the package as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: notGT-macos-arm64
+          path: dist/notGT-macos-arm64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      # What the window looked like on the runner, to look at after a build.
+      - name: Upload a picture of the launcher's window
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-launcher-preview
+          path: dist/macos-launcher.png
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # Publishes both packages as one GitHub Release. It waits for both builds: a
+  # release never goes out with one of its packages missing.
+  release:
+    name: Publish the GitHub Release
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    needs: [windows-package, macos-package]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          pattern: notGT-*
+          merge-multiple: true
+
+      # Idempotent: a re-run of the same tag uploads with --clobber instead of
+      # failing. `gh` is preinstalled on GitHub-hosted runners.
+      - name: Publish
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
-          ZIP: dist/notGT-win-x64.zip
         run: |
           set -euo pipefail
+          ls -l packages
 
           cat > release-body.md <<'EOF'
+          Портативные сборки: Node.js устанавливать не нужно — он уже внутри.
+
+          - **Windows (x64)** — `notGT-win-x64.zip`
+          - **macOS (Apple silicon, M1 и новее)** — `notGT-macos-arm64.zip`
+
           ## notGT для Windows (x64)
 
           Портативная сборка: распакуйте ZIP-архив целиком в отдельную папку и
@@ -189,17 +288,48 @@ jobs:
           Настройки и медиа лежат в `app\cfg`, `app\db` и `app\assets`. При
           обновлении распакуйте новую версию в новую папку и перенесите эти
           каталоги — загруженные файлы и база сохранятся.
+
+          ## notGT для macOS (Apple silicon)
+
+          Для Mac на процессорах Apple (M1 и новее), macOS 11 и новее. Распакуйте
+          ZIP-архив целиком и запустите `notGT Launcher` из распакованной папки. Не
+          вынимайте программу из папки: рядом с ней лежат `node`, `launcher` и `app`.
+
+          ### Первый запуск
+
+          Сборка не подписана сертификатом разработчика Apple, поэтому при первом
+          запуске macOS скажет, что не может её проверить. Любой из двух способов:
+
+          - «Системные настройки» → «Конфиденциальность и безопасность» → внизу
+            «Всё равно открыть» (появляется после первой попытки запуска);
+          - или в Терминале, указав свою папку:
+
+            ```
+            xattr -dr com.apple.quarantine ~/Downloads/notGT-macos-arm64
+            ```
+
+          После разрешения программа сама снимает отметку карантина со своей папки:
+          иначе macOS не даст серверу загрузить драйвер базы данных.
+
+          ### Что внутри
+
+          - `notGT Launcher.app` — лаунчер: окно с выбором интерфейса и порта, запуском и остановкой сервера, входом по паролю и журналом; язык — RU / EN;
+          - `notGT.command` — запасной запуск без окна: то же управление страницей в браузере;
+          - `launcher/`, `node/`, `app/` — то же, что в сборке для Windows.
+
+          Закрытие окна сервер не останавливает; остановить его — кнопка
+          «Остановить». Данные лежат в `app/cfg`, `app/db` и `app/assets`.
           EOF
 
           # Substitute the tag at the top of the generated notes.
-          BODY="$(printf '# notGT %s — Windows x64\n\n' "$TAG"; cat release-body.md)"
+          BODY="$(printf '# notGT %s\n\n' "$TAG"; cat release-body.md)"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists — uploading/updating the asset."
-            gh release upload "$TAG" "$ZIP" --clobber
+            echo "Release $TAG already exists — uploading/updating the assets."
+            gh release upload "$TAG" packages/notGT-win-x64.zip packages/notGT-macos-arm64.zip --clobber
           else
             echo "Creating release $TAG."
-            gh release create "$TAG" "$ZIP" \
+            gh release create "$TAG" packages/notGT-win-x64.zip packages/notGT-macos-arm64.zip \
               --title "notGT $TAG" \
               --notes "$BODY"
           fi

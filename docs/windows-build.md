@@ -251,16 +251,16 @@ it spawns processes and can raise an elevated `netsh` prompt. See
 
 ## CI и релиз через GitHub Actions
 
-Единственный автоматический CI в этом форке — Windows-сборка
-(`.github/workflows/release.yml`, имя workflow `Windows`). Апстримные проверки
+Единственный автоматический CI в этом форке — сборка пакетов для Windows и macOS
+(`.github/workflows/release.yml`, имя workflow `Packages`). Апстримные проверки
 NodeCG (`ci.yaml`: lint, типы, тесты, контейнер) переведены на ручной запуск и
 сами не срабатывают: в notGT они не нужны, а `release-please` вдобавок требует
 разрешения репозитория на создание pull request'ов.
 
 | Событие       | Что происходит                                                         |
 | ------------- | ---------------------------------------------------------------------- |
-| push в `main` | собирается Windows-пакет и кладётся в артефакты (релиз не публикуется) |
-| тег `v*`      | то же плюс публикация/обновление GitHub Release                        |
+| push в `main` | собираются оба пакета и кладутся в артефакты (релиз не публикуется)   |
+| тег `v*`      | то же плюс публикация/обновление GitHub Release с обоими пакетами      |
 | ручной запуск | как push; если заполнить `tag` — ещё и релиз                           |
 
 Шаги на `windows-latest`:
@@ -271,10 +271,15 @@ NodeCG (`ci.yaml`: lint, типы, тесты, контейнер) переве�
 3. `npm ci` + `npm run build` in `bundles/notGT`;
 4. `node scripts/build-windows.mjs --node-version 22.14.0 --smoke` — the
    package is started with its own `node.exe` before it is zipped;
-5. uploads `dist/notGT-win-x64.zip` as the `notGT-win-x64` workflow artifact;
-6. creates or updates the GitHub Release for the tag and attaches the zip
-   (`gh release view` → `gh release create` / `gh release upload --clobber`),
-   with a release body listing the contents and the OBS Browser Source URL.
+5. uploads `dist/notGT-win-x64.zip` as the `notGT-win-x64` workflow artifact.
+
+The macOS package is built by the `macos-package` job in the same way, on
+`macos-latest` — see [macos-build.md](macos-build.md). For a tag, a third job,
+`release`, waits for both, downloads the two artifacts and creates or updates
+the GitHub Release with both zips attached (`gh release view` →
+`gh release create` / `gh release upload --clobber`), with a release body
+listing the contents and the OBS Browser Source URL. A release never goes out
+with one of its packages missing.
 
 Релиз запускается тегом:
 

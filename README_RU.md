@@ -17,7 +17,7 @@
   <img alt="notGT 0.8.0" src="https://img.shields.io/badge/notGT-0.8.0-FF5A8C?style=flat-square&labelColor=0C2B25">
   <img alt="NodeCG 2.8" src="https://img.shields.io/badge/NodeCG-2.8-FF5A8C?style=flat-square&labelColor=0C2B25">
   <img alt="Node.js 22" src="https://img.shields.io/badge/Node.js-22-FF5A8C?style=flat-square&labelColor=0C2B25">
-  <img alt="Docker и Windows" src="https://img.shields.io/badge/runs%20on-Docker%20%C2%B7%20Windows-FF8A3C?style=flat-square&labelColor=0C2B25">
+  <img alt="Docker, Windows и macOS" src="https://img.shields.io/badge/runs%20on-Docker%20%C2%B7%20Windows%20%C2%B7%20macOS-FF8A3C?style=flat-square&labelColor=0C2B25">
   <img alt="Интерфейс на английском и русском" src="https://img.shields.io/badge/interface-EN%20%C2%B7%20RU-FF8A3C?style=flat-square&labelColor=0C2B25">
   <img alt="Лицензия MIT" src="https://img.shields.io/badge/licence-MIT-FFD23F?style=flat-square&labelColor=0C2B25">
 </p>
@@ -161,6 +161,18 @@ node scripts/build-windows.mjs --node-version 22.14.0
 `windows-latest`, а тег `v*` публикует его как релиз. Структура пакета, флаги и процесс
 релиза — в [`docs/windows-build.md`](docs/windows-build.md).
 
+### macOS
+
+Такая же портативная сборка для Mac на процессорах Apple (M1 и новее) лежит в
+[Releases](https://github.com/fursyt12/notGT/releases) как `notGT-macos-arm64.zip`:
+распакуйте её и запустите `notGT Launcher` из распакованной папки. Это тот же лаунчер в
+собственном окне, и Node.js тоже идёт в комплекте.
+
+Сборка не подписана сертификатом разработчика Apple, поэтому первый запуск нужно
+разрешить: «Системные настройки» → «Конфиденциальность и безопасность» → «Всё равно
+открыть», либо `xattr -dr com.apple.quarantine <распакованная папка>` в Терминале. Как
+собирается пакет — в [`docs/macos-build.md`](docs/macos-build.md).
+
 ### Из исходников
 
 Нужен Node.js 22. Бандл **не** входит в npm workspace этого монорепозитория, поэтому у
@@ -228,7 +240,7 @@ flowchart LR
 | Медиа             | ffmpeg — видео с альфой в WebM и WebP                                                           |
 | Данные            | ExcelJS — книги `.xlsx` как переменные-списки, чтение и запись                                  |
 | Тесты             | Сквозные тесты на Puppeteer для страницы out'а и панелей · Vitest для ядра                      |
-| Поставка          | Многоэтапный Docker-образ · портативная сборка под Windows с лаунчером · GitHub Actions         |
+| Поставка          | Многоэтапный Docker-образ · портативные сборки под Windows и macOS с лаунчером · GitHub Actions |
 | Шрифты            | Montserrat и Handjet, лежат в репозитории (SIL Open Font License)                               |
 
 ## Репозиторий
@@ -243,9 +255,9 @@ bundles/notGT/          само приложение
   scripts/              сборка и сквозные тесты
 workspaces/nodecg/      ядро NodeCG с оболочкой notGT
 workspaces/…            остальной монорепозиторий NodeCG (CLI, адаптеры БД)
-launcher/               панель управления сборки под Windows
+launcher/               панель управления сборок под Windows и macOS
 media/brand/            логотип, знак и брендбук
-docs/                   сборка под Windows, заметки о ядре
+docs/                   сборки под Windows и macOS, заметки о ядре
 ```
 
 ## Документация
@@ -255,7 +267,8 @@ docs/                   сборка под Windows, заметки о ядре
 | **[Руководство оператора](bundles/notGT/README_RU.md)** · [in English](bundles/notGT/README.md) | Ментальная модель, панели, вход по паролю и команда, полный справочник REST и WebSocket API, настройка OBS и Companion, как писать код-анимацию, видео с альфой, персистентность, траблшутинг |
 | **[Генерация титров через LLM](GENERATE_TITLES_RU.md)** · [in English](GENERATE_TITLES.md) | Промпт, который уже знает контракт рантайма: опишите, что нужно, и получите `html` / `css` / `js` для код-анимации |
 | **[Сборка под Windows](docs/windows-build.md)** | Структура портативного пакета, флаги сборки, процесс релиза |
-| **[Лаунчер](launcher/README.md)** | Небольшая панель, которая запускает сервер под Windows |
+| **[Сборка под macOS](docs/macos-build.md)** | Тот же пакет для Mac: его структура, окно лаунчера, почему первый запуск нужно разрешить |
+| **[Лаунчер](launcher/README.md)** | Небольшая панель, которая запускает сервер под Windows и macOS |
 | **[Документация NodeCG](https://nodecg.dev/)** | Платформа под приложением: бандлы, репликанты, API extension'ов |
 
 ## Бренд
