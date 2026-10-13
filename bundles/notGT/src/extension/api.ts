@@ -478,10 +478,12 @@ export function normalizeTemplate(
 
 function mergeTransition(value: unknown, base: TitleTemplate["inTransition"]) {
 	if (!isPlainObject(value)) return base;
+	const delayMs = pickNumber(value["delayMs"]) ?? base.delayMs;
 	return {
 		type: (pickString(value["type"]) as TitleTemplate["inTransition"]["type"]) ?? base.type,
 		durationMs: pickNumber(value["durationMs"]) ?? base.durationMs,
 		easing: pickString(value["easing"]) ?? base.easing,
+		...(delayMs !== undefined ? { delayMs } : {}),
 	};
 }
 

@@ -22,6 +22,7 @@ import {
 	type VariableSelection,
 } from "../shared/types";
 import { cropBox } from "../shared/crop";
+import { phaseMs } from "../shared/motion";
 import {
 	CODE_HOOKS_TIMEOUT_MS,
 	buildCodeDocument,
@@ -35,7 +36,7 @@ import {
 	restartVideoLayers,
 	updateLayerContent,
 } from "./layers";
-import { enterAnimation, exitAnimation } from "./transitions";
+import { enterAnimation, enterLayer, exitAnimation, exitLayer } from "./transitions";
 
 interface Instance {
 	key: string;
@@ -459,7 +460,20 @@ function finishEnter(slot: Slot, template: TitleTemplate): void {
 	// A code animation owns its transitions: if it did not take the entrance,
 	// nothing animates it. The template's inTransition is for `layers` only.
 	if (template.kind === "code") return;
+	enterLayers(slot, template);
+}
+
+/**
+ * The entrance of a `layers` animation: the whole picture on the wrapper, and
+ * on top of it every layer that has an entrance of its own, each after its own
+ * delay.
+ */
+function enterLayers(slot: Slot, template: TitleTemplate): void {
 	enterAnimation(slot.animator, template.inTransition);
+	for (const layer of template.layers ?? []) {
+		const el = slot.layerEls.get(layer.id);
+		if (el) enterLayer(el, layer);
+	}
 }
 
 /** Replays the entrance of a slot that is already on screen (a re-trigger). */
@@ -469,7 +483,7 @@ function replayEnter(slot: Slot, template: TitleTemplate): void {
 		return;
 	}
 	if (template.kind === "code") return;
-	enterAnimation(slot.animator, template.inTransition);
+	enterLayers(slot, template);
 }
 
 /** Plays the exit, then calls `done` — the caller removes the slot there. */
@@ -499,7 +513,16 @@ function exitSlot(slot: Slot, template: TitleTemplate | undefined, done: () => v
 		done();
 		return;
 	}
-	exitAnimation(slot.animator, template?.outTransition, done);
+	exitAnimation(slot.animator, template?.outTransition);
+	for (const layer of template?.layers ?? []) {
+		const el = slot.layerEls.get(layer.id);
+		if (el) exitLayer(el, layer);
+	}
+	// The slot goes when the last of them is over: the wrapper's own exit, or a
+	// layer that leaves later than that.
+	const total = template ? phaseMs(template, "out") : 0;
+	if (total === 0) done();
+	else window.setTimeout(done, total + 40);
 }
 
 /** Exit animations in flight, by iframe window, so `hideDone()` can end them. */

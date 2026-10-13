@@ -242,6 +242,8 @@ export function Menu({
 		};
 		const onKey = (event: KeyboardEvent) => {
 			if (event.key === "Escape") {
+				// Marked as used: the key closed the menu and nothing behind it.
+				event.preventDefault();
 				close();
 				triggerRef.current?.focus();
 			}

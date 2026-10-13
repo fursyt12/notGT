@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 
 import { getByPath, interpolate } from "../../shared/binding";
 import { N_, localNumber, t, type Phrase } from "../i18n";
-import { Icon, IconButton } from "../ui";
+import { Icon, IconButton, type IconName } from "../ui";
 import {
 	BUNDLE_NAME,
 	type Layer,
@@ -105,6 +105,14 @@ export const LAYER_TYPE_LABEL: Record<LayerType, Phrase> = {
 	image: N_("Image"),
 	gif: N_("GIF"),
 	video: N_("Video"),
+};
+
+export const LAYER_ICON: Record<LayerType, IconName> = {
+	text: "text",
+	shape: "shape",
+	image: "image",
+	gif: "gif",
+	video: "video",
 };
 
 export const TRANSITION_TYPES: TransitionType[] = [

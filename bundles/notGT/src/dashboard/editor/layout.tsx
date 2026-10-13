@@ -222,7 +222,9 @@ export function useDeskFullscreen(): {
 	useEffect(() => {
 		if (!filled) return;
 		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") setFilled(false);
+			// A key that something on the desk has already used — a menu it
+			// closed, a tool it switched off — does not take the desk down too.
+			if (event.key === "Escape" && !event.defaultPrevented) setFilled(false);
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);

@@ -199,6 +199,14 @@ export interface Layer {
 	/** `shape` layers. */
 	shape?: "rect" | "ellipse";
 	style: LayerStyle;
+	/**
+	 * The layer's own entrance and exit, with their own `delayMs`. They play on
+	 * the layer itself, together with the template's `inTransition` /
+	 * `outTransition` on the whole picture. Absent = the layer has none of its
+	 * own and simply comes and goes with the animation.
+	 */
+	inTransition?: Transition;
+	outTransition?: Transition;
 	z: number;
 	locked?: boolean;
 	hidden?: boolean;
@@ -219,6 +227,11 @@ export interface Transition {
 	type: TransitionType;
 	durationMs: number;
 	easing?: string;
+	/**
+	 * How long the transition waits before it starts, ms. The clock starts when
+	 * the animation is shown (an entrance) or taken off (an exit). Absent = 0.
+	 */
+	delayMs?: number;
 }
 
 /** How an animation behaves when it is placed on an out. */

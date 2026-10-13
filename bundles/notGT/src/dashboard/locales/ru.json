@@ -434,5 +434,16 @@
 	"User name": "Имя",
 	"default password": "пароль по умолчанию",
 	"You are signed in with the default password. Until it is changed, anyone who can open this address gets in as {name} / {password}.": "Вы вошли с паролем по умолчанию. Пока он не изменён, любой, кто может открыть этот адрес, войдёт как {name} / {password}.",
-	"Change the password": "Сменить пароль"
+	"Change the password": "Сменить пароль",
+	"With the whole animation": "Вместе со всей анимацией",
+	"Delay": "Задержка",
+	"Whole animation": "Вся анимация",
+	"{name}: {phase}, delay": "{name}: {phase}, задержка",
+	"{phase}: with the whole animation. Drag to give this layer a delay of its own.": "{phase}: вместе со всей анимацией. Потяните, чтобы задать слою свою задержку.",
+	"{phase}: at once, {delay} ms in": "{phase}: сразу, через {delay} мс",
+	"{phase}: starts {delay} ms in, takes {duration} ms": "{phase}: начало через {delay} мс, длится {duration} мс",
+	"Drag a bar to set when it starts, and its right edge to set how long it takes. Both sides count from zero: the entrance from the moment of the show, the exit from the moment it is taken off.": "Потяните полоску, чтобы задать начало, а её правый край — длительность. Обе части считаются от нуля: появление — с момента показа, уход — с момента снятия.",
+	"The whole animation is gone {time} into the exit, so what a layer does after that is not seen. Move the exit of the whole animation later, or set it to “No transition”.": "Вся анимация исчезает через {time} после начала ухода, и то, что слой делает позже, не видно. Сдвиньте уход всей анимации позже или выберите для него «Без перехода».",
+	"A layer's own entrance and exit play together with the animation's. The “Animation” tab shows all of them on one timeline.": "Собственные появление и уход слоя идут вместе с переходами всей анимации. Все они видны на одной шкале на вкладке «Анимация».",
+	"Tools": "Инструменты"
 }

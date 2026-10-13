@@ -215,6 +215,21 @@ body.editor-body {
 	z-index: 40;
 }
 
+/* The tools that come along into full screen: a strip above the canvas, with
+   the height and the manners of the toolbar it stands in for. */
+.ed-desk-tools {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 0 auto;
+	height: 44px;
+	padding: 0 12px;
+	border-bottom: 1px solid var(--ng-line-soft);
+	background: var(--ng-bg);
+	white-space: nowrap;
+	overflow: hidden;
+}
+
 /* The full-screen button keeps to the far end of the status bar, and stays
    there when the desk is narrow: the texts give way instead. */
 .ed-desk-full {
@@ -794,6 +809,246 @@ button.ed-danger:hover:not(:disabled) {
 .ed-facts dd {
 	margin: 0;
 	overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------ entrance and exit */
+
+/* The fields of one transition: the layer inspector and the timeline share
+   them. */
+.ed-motion {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* The timeline of an animation (src/dashboard/editor/motion.tsx): a row for
+   the whole animation and one per layer, the entrance in the left half and
+   the exit in the right. The two halves are two clocks that both start at
+   zero; the gap between them is the time on air, which is not drawn. */
+.ed-tl {
+	--tl-gap: 14px;
+	--tl-in: var(--ng-accent);
+	--tl-out: var(--ng-amber);
+
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.ed-tl__head,
+.ed-tl__track {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	column-gap: var(--tl-gap);
+}
+
+.ed-tl__head {
+	padding: 0 6px;
+}
+
+.ed-tl__cap {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 6px;
+	min-width: 0;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.ed-tl__cap::before {
+	content: "";
+	flex: 0 0 auto;
+	align-self: center;
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+	background: var(--tl-in);
+}
+
+.ed-tl__cap[data-phase="out"]::before {
+	background: var(--tl-out);
+}
+
+.ed-tl__cap > span:first-of-type {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ed-tl__total,
+.ed-tl__ticks {
+	color: var(--ng-muted);
+	font-size: 11px;
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+}
+
+.ed-tl__ticks {
+	display: flex;
+	justify-content: space-between;
+}
+
+.ed-tl__rows {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.ed-tl__row {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	padding: 4px 6px 6px;
+	border-radius: var(--ng-radius-s);
+	cursor: pointer;
+}
+
+.ed-tl__row:hover {
+	background: var(--ng-bg-2);
+}
+
+.ed-tl__row.is-selected {
+	background: var(--ng-bg-3);
+}
+
+.ed-tl__name {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--ng-muted);
+	font-size: 12px;
+}
+
+.ed-tl__row.is-selected .ed-tl__name {
+	color: var(--ng-fg);
+}
+
+.ed-tl__name > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* A hidden layer is listed, but it does not play. */
+.ed-tl__row.is-hidden .ed-tl__name,
+.ed-tl__row.is-hidden .ed-tl__bar {
+	opacity: 0.45;
+}
+
+/* One half of a row. The faint lines are the quarters of the scale. */
+.ed-tl__zone {
+	position: relative;
+	height: 14px;
+	overflow: hidden;
+	border-radius: 3px;
+	background-color: var(--ng-well);
+	background-image: linear-gradient(to right, var(--ng-line-soft) 1px, transparent 1px);
+	background-size: 25% 100%;
+}
+
+.ed-tl__bar {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	min-width: 6px;
+	border-radius: 3px;
+	background: var(--tl-in);
+	cursor: grab;
+	touch-action: none;
+	user-select: none;
+}
+
+.ed-tl__zone[data-phase="out"] .ed-tl__bar {
+	background: var(--tl-out);
+}
+
+.ed-tl__bar:active {
+	cursor: grabbing;
+}
+
+.ed-tl__bar:focus-visible {
+	outline: 2px solid var(--ng-fg);
+	outline-offset: -2px;
+}
+
+/* A layer with no transition of its own: the outline of the one it follows. */
+.ed-tl__bar.is-ghost {
+	border: 1px dashed var(--tl-in);
+	background: transparent;
+	opacity: 0.7;
+}
+
+.ed-tl__zone[data-phase="out"] .ed-tl__bar.is-ghost {
+	border-color: var(--tl-out);
+	background: transparent;
+}
+
+/* A cut takes no time: a mark at its moment. */
+.ed-tl__bar.is-cut {
+	min-width: 4px;
+	border-radius: 1px;
+}
+
+/* The right end of a bar changes its length. */
+.ed-tl__edge {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: min(7px, 40%);
+	border-radius: 0 3px 3px 0;
+	background: rgba(12, 43, 37, 0.35);
+	cursor: ew-resize;
+}
+
+/* What a layer still does after the whole animation is gone is not seen. */
+.ed-tl__gone {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	background: repeating-linear-gradient(
+		135deg,
+		var(--ng-well) 0 3px,
+		transparent 3px 6px
+	);
+	pointer-events: none;
+}
+
+.ed-tl__warn {
+	color: var(--ng-warn);
+}
+
+/* The transitions of the selected row. */
+.ed-tl__edit {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 4px;
+	padding-top: 10px;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.ed-tl__edit-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.ed-tl__edit-head > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 /* The crop of a placement, as a value in the inspector. */

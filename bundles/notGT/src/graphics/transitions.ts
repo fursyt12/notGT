@@ -1,7 +1,11 @@
-import type { Transition, TransitionType } from "../shared/types";
+import { transitionSpan } from "../shared/motion";
+import type { Layer, Transition, TransitionType } from "../shared/types";
 
 const SLIDE_X = 150;
 const SLIDE_Y = 96;
+
+const ENTER_EASING = "cubic-bezier(.2,.8,.2,1)";
+const EXIT_EASING = "ease-in";
 
 interface VisualState {
 	opacity?: string;
@@ -19,7 +23,9 @@ const NEUTRAL: VisualState = {
 function awayState(type: TransitionType): VisualState {
 	switch (type) {
 		case "none":
-			return { ...NEUTRAL };
+			// A cut. It is only asked for when it has a delay to wait out, and
+			// until then the picture is simply not there.
+			return { ...NEUTRAL, opacity: "0" };
 		case "fade":
 			return { ...NEUTRAL, opacity: "0" };
 		case "slide-left":
@@ -47,46 +53,167 @@ function apply(el: HTMLElement, state: VisualState): void {
 	el.style.clipPath = state.clipPath ?? "inset(0 0 0 0)";
 }
 
-function props(durationMs: number, easing: string): string {
+function props(durationMs: number, easing: string, delayMs: number): string {
 	return [
-		`opacity ${durationMs}ms ${easing}`,
-		`transform ${durationMs}ms ${easing}`,
-		`clip-path ${durationMs}ms ${easing}`,
+		`opacity ${durationMs}ms ${easing} ${delayMs}ms`,
+		`transform ${durationMs}ms ${easing} ${delayMs}ms`,
+		`clip-path ${durationMs}ms ${easing} ${delayMs}ms`,
 	].join(", ");
 }
 
-/** Plays the entrance transition on `el` (usually the animator wrapper). */
+/** Plays the entrance transition on `el` (the animator wrapper). */
 export function enterAnimation(el: HTMLElement, transition?: Transition): void {
-	const duration = Math.max(0, transition?.durationMs ?? 0);
-	const easing = transition?.easing || "cubic-bezier(.2,.8,.2,1)";
-	if (duration === 0) {
-		el.style.transition = "none";
+	const { delay, duration, end } = transitionSpan(transition);
+	el.style.transition = "none";
+	if (end === 0) {
 		apply(el, NEUTRAL);
 		return;
 	}
-	el.style.transition = "none";
 	apply(el, awayState(transition?.type ?? "fade"));
 	// Force a style flush so the browser registers the starting frame.
 	void el.offsetWidth;
-	el.style.transition = props(duration, easing);
+	el.style.transition = props(duration, transition?.easing || ENTER_EASING, delay);
 	apply(el, NEUTRAL);
 }
 
-/** Plays the exit transition, then calls `done`. */
-export function exitAnimation(
-	el: HTMLElement,
-	transition: Transition | undefined,
-	done: () => void,
-): void {
-	const duration = Math.max(0, transition?.durationMs ?? 0);
-	const easing = transition?.easing || "ease-in";
-	if (duration === 0) {
-		done();
-		return;
-	}
-	el.style.transition = props(duration, easing);
+/**
+ * Starts the exit transition on `el`. It is over `transitionSpan(transition).end`
+ * ms later; the caller removes the slot then (see `phaseMs`).
+ */
+export function exitAnimation(el: HTMLElement, transition: Transition | undefined): void {
+	const { delay, duration, end } = transitionSpan(transition);
+	if (end === 0) return;
+	el.style.transition = props(duration, transition?.easing || EXIT_EASING, delay);
 	apply(el, NEUTRAL);
 	void el.offsetWidth;
 	apply(el, awayState(transition?.type ?? "fade"));
-	window.setTimeout(done, duration + 40);
+}
+
+// ---------------------------------------------------------------------------
+// A layer's own entrance and exit
+//
+// These run on the layer element, inside the wrapper and at the same time as
+// its transition. A layer already has an opacity and a rotation of its own in
+// its inline style, so instead of rewriting that style the transition is a Web
+// Animation laid over it: when the entrance is over the animation lets go and
+// the layer is exactly as it was styled.
+// ---------------------------------------------------------------------------
+
+/**
+ * The two ends of a layer's transition: `away` is the layer before its entrance
+ * and after its exit, `home` is the layer as it is styled. Only the properties
+ * the transition moves are listed, so the rest of the style is left alone.
+ */
+function layerFrames(type: TransitionType, layer: Layer): { away: Keyframe; home: Keyframe } {
+	const opacity = layer.style?.opacity ?? 1;
+	// Every transform has to carry the layer's own rotation along.
+	const rotate = layer.style?.rotation ? ` rotate(${layer.style.rotation}deg)` : "";
+	const slide = (x: number, y: number) => ({
+		away: { opacity: 0, transform: `translate3d(${x}px,${y}px,0)${rotate}` },
+		home: { opacity, transform: `translate3d(0,0,0)${rotate}` },
+	});
+	switch (type) {
+		case "slide-left":
+			return slide(-SLIDE_X, 0);
+		case "slide-right":
+			return slide(SLIDE_X, 0);
+		case "slide-up":
+			return slide(0, SLIDE_Y);
+		case "slide-down":
+			return slide(0, -SLIDE_Y);
+		case "scale":
+			return {
+				away: { opacity: 0, transform: `scale(0.94)${rotate}` },
+				home: { opacity, transform: `scale(1)${rotate}` },
+			};
+		case "wipe-left":
+			return { away: { clipPath: "inset(0 0 0 100%)" }, home: { clipPath: "inset(0 0 0 0)" } };
+		case "wipe-right":
+			return { away: { clipPath: "inset(0 100% 0 0)" }, home: { clipPath: "inset(0 0 0 0)" } };
+		default:
+			// `fade`, and `none` too: a cut is a fade that takes no time.
+			return { away: { opacity: 0 }, home: { opacity } };
+	}
+}
+
+function play(
+	el: HTMLElement,
+	frames: Keyframe[],
+	timing: KeyframeAnimationOptions,
+	fallbackEasing: string,
+): void {
+	try {
+		el.animate(frames, timing);
+	} catch {
+		// An easing the browser cannot read: the transition still plays.
+		el.animate(frames, { ...timing, easing: fallbackEasing });
+	}
+}
+
+/**
+ * Stops whatever a layer is playing. With `keep` the layer stays where it had
+ * got to instead of snapping back to its own style. Returns whether anything
+ * was running.
+ */
+function stopLayer(el: HTMLElement, keep: boolean): boolean {
+	const running = typeof el.getAnimations === "function" ? el.getAnimations() : [];
+	for (const animation of running) {
+		if (keep) {
+			try {
+				animation.commitStyles();
+			} catch {
+				// Not rendered: there is nothing to keep.
+			}
+		}
+		animation.cancel();
+	}
+	return running.length > 0;
+}
+
+/**
+ * Plays a layer's own entrance, from the start: a layer that is already on
+ * screen (a re-trigger) plays it again. Until its delay is over the layer is
+ * kept away, so a delayed layer does not flash before it comes in.
+ */
+export function enterLayer(el: HTMLElement, layer: Layer): void {
+	stopLayer(el, false);
+	const transition = layer.inTransition;
+	if (!transition || layer.hidden || typeof el.animate !== "function") return;
+	const { delay, duration, end } = transitionSpan(transition);
+	if (end === 0) return;
+	const { away, home } = layerFrames(transition.type, layer);
+	play(
+		el,
+		[away, home],
+		{ delay, duration, easing: transition.easing || ENTER_EASING, fill: "backwards" },
+		ENTER_EASING,
+	);
+}
+
+/**
+ * Plays a layer's own exit and leaves the layer away when it is over. The slot
+ * is dropped by the out page once the whole exit has run (see `phaseMs`).
+ */
+export function exitLayer(el: HTMLElement, layer: Layer): void {
+	// An exit that cuts an entrance short goes on from where the layer got to.
+	const interrupted = stopLayer(el, true);
+	const transition = layer.outTransition;
+	if (!transition || layer.hidden || typeof el.animate !== "function") return;
+	const { delay, duration } = transitionSpan(transition);
+	const { away, home } = layerFrames(transition.type, layer);
+	let from: Keyframe | null = home;
+	if (interrupted) {
+		// A wipe cannot start from "no clip at all", so that one end is spelled
+		// out; everything else starts from what the layer looks like right now.
+		from =
+			"clipPath" in away && getComputedStyle(el).clipPath === "none"
+				? { clipPath: home["clipPath"] }
+				: null;
+	}
+	play(
+		el,
+		from ? [from, away] : [away],
+		{ delay, duration, easing: transition.easing || EXIT_EASING, fill: "forwards" },
+		EXIT_EASING,
+	);
 }

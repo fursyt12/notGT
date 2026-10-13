@@ -43,18 +43,18 @@ import type { GalleryExample } from "../shared/examples/gallery";
 import { EditorCanvas } from "./editor/canvas";
 import { useCodeDocument } from "./editor/code-preview";
 import { Splitter, useDeskFullscreen, useEditorLayout, type LayoutEdge } from "./editor/layout";
+import { MotionTimeline, TransitionFields } from "./editor/motion";
 import {
 	CheckField,
 	ColorField,
 	FONT_FAMILIES,
 	Field,
 	InlineName,
+	LAYER_ICON,
 	LAYER_TYPE_LABEL,
 	NumField,
 	Section,
 	SelectField,
-	TRANSITION_LABEL,
-	TRANSITION_TYPES,
 	TextField,
 	clamp,
 	formatBytes,
@@ -72,7 +72,6 @@ import {
 	clone,
 	copyText,
 	defaultPlayback,
-	defaultTransition,
 	deleteTemplate,
 	duplicateTemplate,
 	flattenData,
@@ -105,19 +104,10 @@ import {
 	Menu,
 	PlaybackFields,
 	exampleMenuItem,
-	type IconName,
 	type MenuItem,
 } from "./ui";
 
 // ------------------------------------------------------------------ helpers
-
-const LAYER_ICON: Record<LayerType, IconName> = {
-	text: "text",
-	shape: "shape",
-	image: "image",
-	gif: "gif",
-	video: "video",
-};
 
 const LAYER_TYPES: LayerType[] = ["text", "shape", "image", "gif", "video"];
 
@@ -1565,6 +1555,26 @@ function LayerInspector({
 					</div>
 				</Section>
 			) : null}
+
+			<Section title={t("Entrance and exit")} defaultOpen={false}>
+				<TransitionFields
+					phase="in"
+					value={layer.inTransition}
+					optional
+					onChange={(next) => onPatch({ inTransition: next })}
+				/>
+				<TransitionFields
+					phase="out"
+					value={layer.outTransition}
+					optional
+					onChange={(next) => onPatch({ outTransition: next })}
+				/>
+				<div className="ed-hint">
+					{t(
+						"A layer's own entrance and exit play together with the animation's. The “Animation” tab shows all of them on one timeline.",
+					)}
+				</div>
+			</Section>
 		</div>
 	);
 }
@@ -1714,25 +1724,24 @@ function declaredExitMs(hooks: CodeHooks, stored: number): number {
 function TemplateSettings({
 	template,
 	hooks,
+	focusLayerId,
 	onPatch,
+	onLayer,
 }: {
 	template: TitleTemplate;
 	/** Reported by the live preview; `null` until it has loaded. */
 	hooks: CodeHooks | null;
+	/** The layer selected on the canvas, if any: the timeline opens on it. */
+	focusLayerId: string | null;
 	onPatch: (patch: Partial<TitleTemplate>) => void;
+	onLayer: (layerId: string, patch: Partial<Layer>) => void;
 }) {
-	const inTransition = template.inTransition ?? defaultTransition();
-	const outTransition = template.outTransition ?? defaultTransition();
 	const playback = template.playback ?? defaultPlayback();
 	// A code animation animates its own entrance and exit (`onShow` / `onHide`),
 	// so it has no transition settings to show: the system never animates its
 	// wrapper, and the fields would be a lie.
 	const isCode = template.kind === "code";
 	const exitMs = template.code?.exitMs ?? 0;
-	const transitionOptions = TRANSITION_TYPES.map((type) => ({
-		value: type,
-		label: t(TRANSITION_LABEL[type]),
-	}));
 
 	return (
 		<div className="ed-panel-body">
@@ -1803,70 +1812,14 @@ function TemplateSettings({
 					) : null}
 				</Section>
 			) : (
-				<>
-					<Section title={t("Entrance")} defaultOpen={false}>
-						<SelectField
-							label={t("Transition")}
-							value={inTransition.type}
-							options={transitionOptions}
-							onChange={(value) => onPatch({ inTransition: { ...inTransition, type: value } })}
-						/>
-						<div className="ed-grid2">
-							<NumField
-								label={t("Duration")}
-								suffix={t("ms")}
-								step={10}
-								min={0}
-								value={inTransition.durationMs}
-								onChange={(value) =>
-									onPatch({
-										inTransition: { ...inTransition, durationMs: Math.max(0, Math.round(value)) },
-									})
-								}
-							/>
-							<TextField
-								label={t("Easing (CSS)")}
-								value={inTransition.easing}
-								placeholder="ease-out"
-								onChange={(value) => onPatch({ inTransition: { ...inTransition, easing: value } })}
-							/>
-						</div>
-					</Section>
-
-					<Section title={t("Exit")} defaultOpen={false}>
-						<SelectField
-							label={t("Transition")}
-							value={outTransition.type}
-							options={transitionOptions}
-							onChange={(value) => onPatch({ outTransition: { ...outTransition, type: value } })}
-						/>
-						<div className="ed-grid2">
-							<NumField
-								label={t("Duration")}
-								suffix={t("ms")}
-								step={10}
-								min={0}
-								value={outTransition.durationMs}
-								onChange={(value) =>
-									onPatch({
-										outTransition: {
-											...outTransition,
-											durationMs: Math.max(0, Math.round(value)),
-										},
-									})
-								}
-							/>
-							<TextField
-								label={t("Easing (CSS)")}
-								value={outTransition.easing}
-								placeholder="ease-in"
-								onChange={(value) =>
-									onPatch({ outTransition: { ...outTransition, easing: value } })
-								}
-							/>
-						</div>
-					</Section>
-				</>
+				<Section title={t("Entrance and exit")}>
+					<MotionTimeline
+						template={template}
+						focusLayerId={focusLayerId}
+						onTemplate={onPatch}
+						onLayer={onLayer}
+					/>
+				</Section>
 			)}
 
 			<Section title={t("Default playback")} defaultOpen={false}>
@@ -2653,14 +2606,23 @@ export function EditorApp() {
 		notify(t("Taken off air"));
 	};
 
+	// Escape always leaves the crop tool, whatever has focus. It is caught on
+	// the way down and marked as used, so that on a desk that fills the panel
+	// the same press does not leave full screen as well.
+	useEffect(() => {
+		if (!cropMode) return;
+		const handler = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			setCropMode(false);
+		};
+		window.addEventListener("keydown", handler, true);
+		return () => window.removeEventListener("keydown", handler, true);
+	}, [cropMode]);
+
 	// Arrow-key nudging: the layer when one is selected, otherwise the placement.
 	useEffect(() => {
 		const handler = (event: KeyboardEvent) => {
-			// Escape always leaves the crop tool, whatever has focus.
-			if (event.key === "Escape" && cropMode) {
-				setCropMode(false);
-				return;
-			}
 			const target = event.target as HTMLElement | null;
 			if (
 				target &&
@@ -2704,7 +2666,7 @@ export function EditorApp() {
 		};
 		window.addEventListener("keydown", handler);
 		return () => window.removeEventListener("keydown", handler);
-	}, [selectedLayerId, draft, activeItemId, out, mutate, cropMode]);
+	}, [selectedLayerId, draft, activeItemId, out, mutate]);
 
 	// ---------------------------------------------------------------- derive
 
@@ -2731,6 +2693,54 @@ export function EditorApp() {
 	const tabs: InspectorTab[] =
 		draft?.kind === "layers" ? ["layer", "placement", "template"] : ["placement", "template"];
 	const tab = tabs.includes(inspectorTab) ? inspectorTab : "placement";
+
+	// The tools that work on the canvas. They sit in the toolbar, and move onto
+	// the desk when it goes full screen: there the toolbar is out of sight.
+	const canvasTools = (
+		<>
+			<Menu label={t("Add layer")} items={layerMenu(addLayer)}>
+				<Icon name="plus" size={14} />
+				{t("Layer")}
+				<Icon name="chevronDown" size={12} />
+			</Menu>
+			<button
+				type="button"
+				className={`ed-tool${cropMode ? " is-active" : ""}`}
+				onClick={toggleCropMode}
+				disabled={!canCrop}
+				data-crop-toggle
+				title={
+					canCrop
+						? t("A frame over the selected animation: everything outside it is hidden")
+						: t("Select an animation on the out first")
+				}
+			>
+				<Icon name="crop" size={14} />
+				{t("Crop")}
+			</button>
+		</>
+	);
+	const cropTools =
+		cropMode && activeItem ? (
+			<>
+				<span className="ed-hint" data-crop-hint>
+					{t("The frame is the visible part. Drag its edges and corners.")}
+				</span>
+				{activeItem.crop ? (
+					<button
+						type="button"
+						className="ghost small"
+						onClick={() => setCrop(undefined)}
+						data-crop-reset
+					>
+						{t("Reset")}
+					</button>
+				) : null}
+				<button type="button" className="small" onClick={() => setCropMode(false)}>
+					{t("Done")}
+				</button>
+			</>
+		) : null;
 
 	return (
 		<div className="ed-root">
@@ -2759,26 +2769,7 @@ export function EditorApp() {
 					}}
 				/>
 				<span className="ed-vline" />
-				<Menu label={t("Add layer")} items={layerMenu(addLayer)}>
-					<Icon name="plus" size={14} />
-					{t("Layer")}
-					<Icon name="chevronDown" size={12} />
-				</Menu>
-				<button
-					type="button"
-					className={`ed-tool${cropMode ? " is-active" : ""}`}
-					onClick={toggleCropMode}
-					disabled={!canCrop}
-					data-crop-toggle
-					title={
-						canCrop
-							? t("A frame over the selected animation: everything outside it is hidden")
-							: t("Select an animation on the out first")
-					}
-				>
-					<Icon name="crop" size={14} />
-					{t("Crop")}
-				</button>
+				{deskFull.active ? null : canvasTools}
 				<IconButton
 					className={deskFull.active ? "is-on" : undefined}
 					icon={deskFull.active ? "collapse" : "expand"}
@@ -2786,26 +2777,7 @@ export function EditorApp() {
 					onClick={deskFull.toggle}
 					disabled={!out}
 				/>
-				{cropMode && activeItem ? (
-					<>
-						<span className="ed-hint" data-crop-hint>
-							{t("The frame is the visible part. Drag its edges and corners.")}
-						</span>
-						{activeItem.crop ? (
-							<button
-								type="button"
-								className="ghost small"
-								onClick={() => setCrop(undefined)}
-								data-crop-reset
-							>
-								{t("Reset")}
-							</button>
-						) : null}
-						<button type="button" className="small" onClick={() => setCropMode(false)}>
-							{t("Done")}
-						</button>
-					</>
-				) : null}
+				{deskFull.active ? null : cropTools}
 				<span className="ed-spacer" />
 				{dirty ? <span className="ed-chip is-dirty">{t("Unsaved")}</span> : null}
 				<button
@@ -2910,6 +2882,14 @@ export function EditorApp() {
 							deskFull={deskFull.active}
 							deskFilled={deskFull.filled}
 							onToggleDeskFull={deskFull.toggle}
+							deskTools={
+								deskFull.active ? (
+									<>
+										{canvasTools}
+										{cropTools}
+									</>
+								) : null
+							}
 						/>
 					) : (
 						<div className="ed-center" data-theme="dark">
@@ -3038,7 +3018,13 @@ export function EditorApp() {
 							) : null}
 
 							{tab === "template" ? (
-								<TemplateSettings template={draft} hooks={codeHooks} onPatch={updateTemplate} />
+								<TemplateSettings
+									template={draft}
+									hooks={codeHooks}
+									focusLayerId={selectedLayerId}
+									onPatch={updateTemplate}
+									onLayer={updateLayer}
+								/>
 							) : null}
 						</>
 					) : (

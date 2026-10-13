@@ -27,6 +27,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	type ReactNode,
 } from "react";
 import {
 	Ellipse,
@@ -118,6 +119,12 @@ export interface EditorCanvasProps {
 	/** The desk fills the panel because the browser's full screen is not available. */
 	deskFilled?: boolean;
 	onToggleDeskFull?: () => void;
+	/**
+	 * Tools shown on the desk itself, in a strip above the canvas. In full
+	 * screen the desk is all there is, so the tools that work on the canvas
+	 * have to come along with it.
+	 */
+	deskTools?: ReactNode;
 }
 
 interface Geometry {
@@ -262,6 +269,7 @@ export function EditorCanvas({
 	deskFull = false,
 	deskFilled = false,
 	onToggleDeskFull,
+	deskTools,
 }: EditorCanvasProps) {
 	const { ref, width, height } = useElementSize<HTMLDivElement>();
 	const stageRef = useRef<Konva.Stage | null>(null);
@@ -729,6 +737,11 @@ export function EditorCanvas({
 				data-desk-full={deskFull ? "" : undefined}
 				ref={deskRef}
 			>
+			{deskTools ? (
+				<div className="ed-desk-tools" role="toolbar" aria-label={t("Tools")} data-desk-tools>
+					{deskTools}
+				</div>
+			) : null}
 			<div className="ed-canvas-wrap" ref={ref}>
 				{fit > 0 ? (
 					<div className="ed-canvas-stage" style={{ width: stageW, height: stageH }}>

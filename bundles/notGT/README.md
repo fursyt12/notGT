@@ -73,12 +73,21 @@ A **template** is one whole animation. There are two kinds (`kind`):
   [“Writing a code animation”](#writing-a-code-animation).
 
 A template has an entrance and an exit (`inTransition` / `outTransition`: `none`, `fade`,
-`slide-left/right/up/down`, `scale`, `wipe-left/right`, plus `durationMs`) and its own
-playback configuration, `playback` (used when a placement has none of its own). For
-`kind: "layers"` the transitions are applied to the animation's wrapper; `kind: "code"`
-has **none at all**: the code itself animates the entrance and the exit (`onShow` /
-`onHide`) and the system does not touch the wrapper — see
+`slide-left/right/up/down`, `scale`, `wipe-left/right`, plus `durationMs` and an optional
+`delayMs`) and its own playback configuration, `playback` (used when a placement has none
+of its own). For `kind: "layers"` the transitions are applied to the animation's wrapper;
+`kind: "code"` has **none at all**: the code itself animates the entrance and the exit
+(`onShow` / `onHide`) and the system does not touch the wrapper — see
 [“Transitions”](#transitions-entrance-and-exit).
+
+**Every layer can have an entrance and an exit of its own**: the same two fields,
+`inTransition` / `outTransition`, on the layer. They play on the layer itself, together
+with the template's on the whole picture, and each waits its own `delayMs` first — so a
+plate can wipe in, the name slide up 200 ms later and the role fade in after that. All
+the clocks of a phase start together: when the animation is shown for an entrance, when
+it is taken off for an exit. `none` with a delay is a cut at that moment. A layer without
+these fields simply comes and goes with the animation, and on the way out the animation
+stays up until its last layer has left.
 
 ### Placements (items)
 
@@ -340,7 +349,9 @@ draw it.
 - The **full-screen** button next to it gives the whole screen to the desk — the canvas
   and its status bar, without the bars around it. The same button sits at the end of the
   status bar, so it is there in full screen too; `Esc` also leaves. Where the browser does
-  not allow a page full screen, the desk fills the panel instead.
+  not allow a page full screen, the desk fills the panel instead. In full screen
+  **`+ Layer`** and **`Crop`** come along: they move into a strip above the canvas, so a
+  layer can be added and a placement cropped without leaving it.
 - **`Play`** and **`Go on air`** act on the selected placement: the same one-shot and the
   same “On air” switch Control has (the button turns into **`Take off air`**). Unsaved
   edits are saved first. For an animation that is not on this out, the manual show is
@@ -395,16 +406,36 @@ remembered in the browser.
 **On the right is the inspector**, with a tab for each thing being edited:
 
 - **“Layer”** — the selected layer's properties: position and size, text and variable,
-  font, stroke and shadow, the source of an image or a video. The tab opens by itself when
-  a layer is selected.
+  font, stroke and shadow, the source of an image or a video, and “Entrance and exit” —
+  the layer's own transitions with their delays. The tab opens by itself when a layer is
+  selected.
 - **“Placement”** — the animation on this out: `x`/`y`/scale and “Fit out width”
   (`scale = out.width / template.width`), the size of the crop window and “Clear”,
   playback (“Timed” / “Until switched off”, “Hold”, “As long as the video”), “Starts from
   the API and Companion” (`enabled`).
-- **“Animation”** — the template itself: name, box size, kind, entrance and exit
-  transitions and default playback. For a code animation, instead of transitions it shows
-  what the code animates itself and how long its exit takes: that is read from
-  `onHide(fn, ms)` and written to `code.exitMs` for you.
+- **“Animation”** — the template itself: name, box size, kind, “Entrance and exit” and
+  default playback. For a code animation, instead of transitions it shows what the code
+  animates itself and how long its exit takes: that is read from `onHide(fn, ms)` and
+  written to `code.exitMs` for you.
+
+**“Entrance and exit” is a timeline of the whole animation.** There is a row for the
+animation as a whole and one for each layer; the entrance is the left half of a row and
+the exit the right half, and a bar starts at its delay and is as long as its duration.
+Both halves count from zero — the entrance from the moment of the show, the exit from the
+moment the animation is taken off — and the totals above them say how long each takes.
+
+- **Drag a bar** to set when it starts, and **its right edge** to set how long it takes;
+  with the focus on a bar the arrow keys move it by 10 ms (`Shift` — by 100 ms).
+- A layer with no transition of its own is drawn as a dashed outline of the animation's:
+  it comes and goes with the whole picture. Dragging that outline gives the layer a
+  transition of its own.
+- **Click a row** to get its numbers under the timeline: the transition, the delay, the
+  duration and the easing, for the entrance and for the exit. “With the whole animation”
+  takes a layer's own transition away again.
+- The exit of the whole animation takes the picture away, so what a layer does after it
+  is not seen: that part of the bar is hatched, and a note says what to change.
+
+`Play` shows the result on the canvas, exactly as it goes on air.
 
 A **code animation** (`kind: "code"`) is edited in the **dock under the canvas**: tabs for
 HTML / CSS / JavaScript, a “Reference” for the runtime, and a preview of the animation on
@@ -785,6 +816,7 @@ curl -sS -X POST http://<host>/api/templates \
             "x": 6, "y": 78, "width": 60,
             "binding": "speaker.name",
             "style": { "fontFamily": "Montserrat", "fontSize": 64, "color": "#ffffff" },
+            "inTransition": { "type": "slide-up", "durationMs": 300, "delayMs": 200 },
             "z": 1
           }
         ],
@@ -1261,7 +1293,8 @@ The rules:
 
 For an animation built from layers the system does the entrance and the exit: the slot
 is wrapped, and the template's `inTransition` / `outTransition` is applied to that
-wrapper. For a code animation that is rarely what you want: its own letter-by-letter
+wrapper, while a layer's own `inTransition` / `outTransition` plays on the layer inside
+it. For a code animation that is rarely what you want: its own letter-by-letter
 animation and its own exit live inside the iframe.
 
 To have the code do the transitions, register the phases:
