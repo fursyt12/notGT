@@ -36,6 +36,8 @@ export const REPLICANTS = {
 	 * and ask again. Not persistent.
 	 */
 	teamRevision: "teamRevision",
+	/** Countdowns and stopwatches (`Timer[]`, see `shared/timer.ts`). Persistent. */
+	timers: "timers",
 } as const;
 
 /**
@@ -46,9 +48,11 @@ export const REPLICANTS = {
  *   3 — the whole examples gallery is part of the default library;
  *   4 — the older built-in code examples were redrawn;
  *   5 — the whole library was redrawn in the brand colours and fonts;
- *   6 — the file example is gone, and so are its sample variables.
+ *   6 — the file example is gone, and so are its sample variables;
+ *   7 — timers: the timer example, the countdown redrawn to show a timer,
+ *       and the timers they show.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /**
  * How a spreadsheet is connected.
@@ -111,6 +115,10 @@ export const MESSAGES = {
 	refresh: "refresh",
 	/** take everything off air now, one-shots in flight included: { outId? } */
 	stop: "stop",
+	/** drive a timer: { command, timer?, ...params } -> { timer } | { timers } */
+	timer: "timer",
+	/** the server's clock, ms since epoch, so pages agree on what a timer shows */
+	clock: "clock",
 } as const;
 
 /**
@@ -150,6 +158,8 @@ export interface LayerStyle {
 	lineHeight?: number;
 	letterSpacing?: number;
 	textTransform?: "none" | "uppercase" | "lowercase";
+	/** Every digit as wide as the others, so a ticking timer does not jitter. */
+	tabularNums?: boolean;
 	/* box */
 	padding?: number;
 	fill?: string;
@@ -411,6 +421,19 @@ export interface PublicState {
 		}>;
 	}>;
 	templates?: Array<{ id: string; name: string; kind: TemplateKind }>;
+	/**
+	 * The timers, without their ticking value: that is `GET /api/timers`, or
+	 * the `timers` topic of the WebSocket.
+	 */
+	timers?: Array<{
+		id: string;
+		name: string;
+		key: string;
+		mode: "down" | "up";
+		running: boolean;
+		durationMs: number;
+		groups: string[];
+	}>;
 }
 
 export function newId(prefix = "id"): string {

@@ -325,3 +325,141 @@
 	align-items: center;
 	gap: 8px;
 }
+
+/* ------------------------------------------------------------------ timers */
+
+.tmr {
+	position: relative;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+/* Like a cue: a Lemon edge while the timer runs. */
+.tmr::before {
+	content: "";
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: 3px;
+	background: transparent;
+	transition: background-color 0.15s ease;
+}
+
+.tmr.is-running::before {
+	background: var(--ng-live-edge);
+}
+
+.tmr__main {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 16px 6px;
+}
+
+.tmr__main .cue__meta {
+	max-width: 100%;
+}
+
+/* The number itself, big enough to read across a gallery. */
+.tmr__face {
+	flex: 0 0 auto;
+	font-family: var(--ng-display);
+	font-size: 44px;
+	font-weight: 700;
+	line-height: 1;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.02em;
+	color: var(--ng-muted);
+}
+
+.tmr.is-running .tmr__face {
+	color: var(--ng-fg);
+}
+
+.tmr.is-done .tmr__face,
+.tmr.is-over .tmr__face {
+	color: var(--ng-danger);
+}
+
+.tmr__bar {
+	height: 3px;
+	margin: 0 16px 0 36px;
+	border-radius: 2px;
+	background: var(--ng-bg-3);
+	overflow: hidden;
+}
+
+.tmr__bar > span {
+	display: block;
+	height: 100%;
+	background: var(--ng-accent);
+}
+
+.tmr.is-done .tmr__bar > span {
+	background: var(--ng-danger);
+}
+
+.tmr__controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 16px 12px 36px;
+}
+
+.tmr__go {
+	min-width: 104px;
+}
+
+.tmr__steps {
+	display: inline-flex;
+	gap: 2px;
+	font-variant-numeric: tabular-nums;
+}
+
+.tmr__time {
+	width: 96px;
+	font-variant-numeric: tabular-nums;
+}
+
+.tmr__time.is-bad {
+	border-color: var(--ng-danger);
+}
+
+.tmr__err {
+	padding: 0 16px 10px 36px;
+}
+
+.tmr__settings {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 4px 16px 14px 36px;
+}
+
+.tmr__grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+	align-items: end;
+	gap: 10px 12px;
+}
+
+.tmr__overtime {
+	justify-content: flex-end;
+	min-height: 32px;
+}
+
+.tmr__use {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.tmr__use .hint {
+	flex: 1;
+	min-width: 0;
+}
+
+.tmr__groups {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}

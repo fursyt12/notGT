@@ -12,6 +12,7 @@ import {
 import {
 	BUNDLE_NAME,
 	CODE_MESSAGES,
+	MESSAGES,
 	type ItemCrop,
 	type Out,
 	REPLICANTS,
@@ -22,6 +23,16 @@ import {
 	type VariableSelection,
 } from "../shared/types";
 import { cropBox } from "../shared/crop";
+import {
+	ServerClock,
+	type Timer,
+	codeUsesTimers,
+	templateUsesTimers,
+	timerTickMs,
+	timersVars,
+	withTimers,
+	withoutTimers,
+} from "../shared/timer";
 import { phaseMs } from "../shared/motion";
 import {
 	CODE_HOOKS_TIMEOUT_MS,
@@ -83,6 +94,10 @@ interface Slot {
 	codeHooks?: CodeHooks;
 	/** Last error thrown inside the animation, for the debug overlay. */
 	codeError?: string;
+	/** The code animation reads a timer, so it is sent the ticks. */
+	usesTimers?: boolean;
+	/** The variables last posted into the iframe, to post only what changed. */
+	posted?: string;
 }
 
 const stage = document.getElementById("notgt-stage") as HTMLDivElement;
@@ -129,7 +144,21 @@ const selectionRep = nodecg.Replicant<VariableSelection>(
 	{ defaultValue: {} },
 ) as ClientReplicant<VariableSelection>;
 
+const timersRep = nodecg.Replicant<Timer[]>(REPLICANTS.timers, BUNDLE_NAME, {
+	defaultValue: [],
+}) as ClientReplicant<Timer[]>;
+
 const slots = new Map<string, Slot>();
+
+/** The server's clock: a timer shows the same second here as everywhere else. */
+const clock = new ServerClock();
+function syncClock(): void {
+	void clock.sample(() => nodecg.sendMessage(MESSAGES.clock) as Promise<number>).catch(() => {});
+}
+
+function timers(): Timer[] {
+	return timersRep.value ?? [];
+}
 
 function templates(): TitleTemplate[] {
 	return templatesRep.value ?? [];
@@ -170,6 +199,9 @@ function mergedData(): TitleData {
 function computeInstances(out: Out | undefined): Instance[] {
 	const list: Instance[] = [];
 	if (!out) return list;
+	// Every title reads the timers as `timer.<key>.*`, worked out right now.
+	const now = clock.now();
+	const live = (data: TitleData): TitleData => withTimers(data, timers(), now);
 
 	const playing = runtimeRep.value?.playing?.[out.id] ?? [];
 	const byId = new Map(templates().map((t) => [t.id, t]));
@@ -187,7 +219,7 @@ function computeInstances(out: Out | undefined): Instance[] {
 			y: item.y ?? 0,
 			scale: item.scale ?? 1,
 			trigger: runtimeRep.value?.triggers?.[`${out.id}:${item.id}`] ?? 0,
-			data: baseData(),
+			data: live(baseData()),
 			crop: item.crop ? cropBox(item, template) : null,
 			outW: out.width,
 			outH: out.height,
@@ -209,7 +241,7 @@ function computeInstances(out: Out | undefined): Instance[] {
 				y: 0,
 				scale: 1,
 				trigger: active.updatedAt ?? 0,
-				data: mergedData(),
+				data: live(mergedData()),
 				crop: null,
 				outW: out.width,
 				outH: out.height,
@@ -324,6 +356,8 @@ function setupCodeIframe(
 	data: TitleData,
 ): void {
 	slot.iframeReady = false;
+	slot.posted = undefined;
+	slot.usesTimers = templateUsesTimers(template);
 	const token = ++slot.renderToken;
 
 	const iframe = document.createElement("iframe");
@@ -351,6 +385,7 @@ function setupCodeIframe(
 		buildSourcedDocument(src, codeData(data))
 			.then((document) => {
 				if (slot.iframe === iframe && slot.renderToken === token) {
+					slot.usesTimers = codeUsesTimers(document);
 					iframe.srcdoc = document;
 				}
 			})
@@ -394,10 +429,14 @@ function rebuildSlot(slot: Slot, template: TitleTemplate, data: TitleData): void
 function updateSlotData(slot: Slot, template: TitleTemplate, data: TitleData): void {
 	if (template.kind === "code") {
 		if (slot.iframeReady) {
-			slot.iframe?.contentWindow?.postMessage(
-				{ type: CODE_MESSAGES.data, data: codeData(data) },
-				"*",
-			);
+			// Posted only when it changed: a running timer redraws the out
+			// several times a second, and an animation that does not read the
+			// timers must not see its `onData` run for each of them.
+			const payload = codeData(slot.usesTimers ? data : withoutTimers(data));
+			const json = JSON.stringify(payload);
+			if (json === slot.posted) return;
+			slot.posted = json;
+			slot.iframe?.contentWindow?.postMessage({ type: CODE_MESSAGES.data, data: payload }, "*");
 		}
 		return;
 	}
@@ -694,6 +733,27 @@ titleDataRep.on("change", scheduleRender);
 activeTitleRep.on("change", scheduleRender);
 runtimeRep.on("change", scheduleRender);
 selectionRep.on("change", scheduleRender);
+timersRep.on("change", scheduleRender);
+
+/**
+ * A running timer changes what is on screen without any Replicant changing.
+ * Look a few times a second and draw again when what a timer shows — not its
+ * exact ms — has moved on.
+ */
+let timerSignature = "";
+function tickTimers(): void {
+	const list = timers();
+	if (list.length > 0 && slots.size > 0) {
+		const signature = JSON.stringify(
+			Object.entries(timersVars(list, clock.now())).map(([key, vars]) => [key, vars.text, vars.t, vars.running, vars.done]),
+		);
+		if (signature !== timerSignature) {
+			timerSignature = signature;
+			scheduleRender();
+		}
+	}
+	window.setTimeout(tickTimers, timerTickMs(list));
+}
 
 // Top-level `await` would force the bundler to target ES2022; a promise chain
 // keeps the output valid for older CEF builds used by OBS.
@@ -704,6 +764,7 @@ void waitForReplicants(
 	activeTitleRep,
 	runtimeRep,
 	selectionRep,
+	timersRep,
 ).then(() => {
 	if (!outConfig()) {
 		console.warn(
@@ -713,6 +774,9 @@ void waitForReplicants(
 	}
 
 	render();
+	syncClock();
+	window.setInterval(syncClock, 60_000);
+	tickTimers();
 
 	// Keep the debug overlay honest while idle.
 	if (debug) setInterval(scheduleRender, 1000);

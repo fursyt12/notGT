@@ -155,6 +155,44 @@ The active show also has a **per-show override**: `data` in the body of
 `POST /api/titles/:id/show` is laid over the global store without changing it. This is
 handy when names come from outside and have no place in the global variables.
 
+### Timers
+
+A **timer** is a countdown or a stopwatch that the operator starts, pauses and nudges in
+the **Control** panel (or from Companion, REST or the WebSocket), and that any number of
+titles show at once. Each timer is a group of variables under `timer.<key>`:
+
+| Variable                   | Example    | What it is                                                         |
+| -------------------------- | ---------- | ------------------------------------------------------------------ |
+| `timer.match.text`         | `04:59`    | The value in the timer's format.                                   |
+| `timer.match.hh` `mm` `ss` | `00` `04` `59` | Hours, minutes within the hour, seconds within the minute.     |
+| `timer.match.t`            | `3`        | Tenths of a second.                                                |
+| `timer.match.sign`         | `-`        | `-` past zero (overtime), empty otherwise.                         |
+| `timer.match.totalSeconds` | `299`      | The shown value in whole seconds; negative in overtime.           |
+| `timer.match.progress`     | `0.0033`   | 0 → 1 over the duration.                                           |
+| `timer.match.running` `done` `overtime` | `true` | Whether it runs, has reached its end, is past zero. |
+| `timer.match.name`         | `Match`    | The timer's name.                                                  |
+
+- **In a layers title** — `{{timer.match.text}}` in any text, or a text layer whose
+  variable is `timer.match.text`. **Editor → Layer → Timer** adds such a layer in one go
+  (and makes a timer if there is none yet): a timer as a title of its own.
+- **In a code title** — `timer("match")` → `"04:59"`, `timer("match", "ss")` → `"59"`;
+  `<span data-bind="timer.match.text">` ticks by itself, and `onData` runs as the timer
+  ticks. An animation whose code does not mention `timer` is not sent the ticks, so its
+  `onData` does not run every second for nothing.
+- **Counts** `down` from its duration to zero (then stops, or goes on with a minus when
+  “Past zero, keep counting” is on) or `up` from zero (stopping at its limit, if it has
+  one). **Format**: `auto` (`04:59`, `1:04:59`), `hh:mm:ss`, `mm:ss` (minutes past 59 keep
+  counting), `ss`, `mm:ss.t`.
+- **Shared with** — the groups of the [team](#team-users-groups-and-keys) whose members see
+  the timer in the Control panel and whose WebSocket keys may drive it; none = everyone.
+  A member's new timer is shared with their own groups, and they can share it with another
+  group too. The titles read every timer, whoever it is shared with.
+
+The server keeps a timer as *when it was started and how much it had counted before*, on
+its own clock, never as a ticking number: every out and panel works out the value itself,
+so all of them show the same second without a frame per tick, an out on another machine
+included. A countdown that reaches zero is stopped by the server at that moment.
+
 ### Service state
 
 - The `activeTitle` Replicant — the “program”: what is shown now, on which out, with which
@@ -163,6 +201,8 @@ handy when names come from outside and have no place in the global variables.
   `revision`. Recomputed on the server and not persisted.
 - The `selection` Replicant — the chosen element of every list variable
   (`{"guests": 1}`). Persisted; included in `GET /api/state`.
+- The `timers` Replicant — the [timers](#timers). Persisted; listed (without their
+  ticking value) in `GET /api/state`.
 
 ---
 
@@ -653,6 +693,11 @@ In all the examples below `$NOTGT_TOKEN` is the value of `apiToken`, and
 | `PUT` `PATCH`        | `/api/outs/:outId/items/:itemId`            | Update a placement.                                                                             |
 | `DELETE`             | `/api/outs/:outId/items/:itemId`            | Delete a placement.                                                                             |
 | `POST`               | `/api/outs/:outId/items/:itemId/trigger`    | One-shot of a specific placement (optional `{holdMs}`).                                         |
+| `GET`                | `/api/timers`                               | The timers, each with what it shows now (`vars`) and the server's time.                        |
+| `POST`               | `/api/timers`                               | Make a timer: `{name, key?, mode?: "down"\|"up", duration?: "5:00", overtime?, format?, groups?}`. |
+| `GET` `PUT` `PATCH`  | `/api/timers/:timer`                        | Read / change a timer (by id or key). A running timer keeps running.                           |
+| `DELETE`             | `/api/timers/:timer`                        | Delete a timer.                                                                                 |
+| `POST`               | `/api/timers/:timer/:command`               | `start` · `pause` · `toggle` · `reset` · `restart` · `set {value: "1:30"}` · `adjust {delta: 10}` (seconds, or `"-1:00"`). |
 
 ### `GET /api/state`
 
@@ -999,9 +1044,11 @@ code paths.
 | `select`         | `path`, `index`                                     | Chooses the element of a list variable.                                                                   |
 | `select`         | `path`, `delta`, `wrap?`                            | Steps from the current element: `1` is “next”, `-1` “previous”; wraps around unless `wrap` is `false`.   |
 | `clearSelection` | `path`                                              | Back to element `0`.                                                                                      |
+| `timer`          | `action`, `timer`, …                                | Drives a timer: `action` is a command of `POST /api/timers/:timer/:command`, or `create` · `update` · `remove`; the rest as there. Only the timers shared with the client's groups (or everyone). |
+| `getTimers`      | —                                                   | The timers within reach, with what they show now.                                                        |
 | `getState`       | —                                                   | The state, in the reply.                                                                                  |
 | `getData`        | `path?`, `raw?`                                     | The variables, or one value.                                                                              |
-| `subscribe`      | `topics`                                            | `state` (on by default) and `data` — the variable store, pushed as `{"type":"data","data":{…}}`.          |
+| `subscribe`      | `topics`                                            | `state` (on by default), `data` — the variable store, pushed as `{"type":"data","data":{…}}` — and `timers`: `{"type":"timers","timers":[{key, text, ss, running, …}]}` each time what a timer shows changes (a Companion button that counts). |
 | `unsubscribe`    | `topics`                                            | Stops a push.                                                                                             |
 | `ping`           | —                                                   | Answers; for a client that wants its own keep-alive.                                                      |
 
@@ -1232,6 +1279,8 @@ means in practice.
 - **The last state of the program (activeTitle)** — what was shown, on which out, with
   which label and overrides.
 - **Service metadata (meta)** — for example, the fact of first-run initialization.
+- **Timers** — a running timer keeps counting through a restart: it is kept as the moment
+  it was started.
 - **Uploaded assets** (the `media` category) — kept in `assets/` (in Docker, the
   `notgt-assets` volume).
 
@@ -1239,7 +1288,7 @@ means in practice.
 
 - **Derived playback state** (`runtime`: `playing`, `revision`) — recomputed on the server
   from scratch.
-- **Running timers** — a `setTimeout` lives only in the process, so a single trigger “in
+- **Playback timeouts** — a `setTimeout` lives only in the process, so a single trigger “in
   flight” is lost. `held`, however, is state of the placement and is persisted: the
   scheduler brings the animations that were switched on back up automatically on start.
 
@@ -1268,6 +1317,7 @@ Inside the iframe you have:
 | `onShow(fn)`               | The animation was shown: play the entrance. See [“Transitions”](#transitions-entrance-and-exit). |
 | `onHide(fn, ms?)`          | The animation is being hidden: play the exit; `ms` is how long the system will wait for it.    |
 | `hideDone()`               | Say “the exit is over” without waiting out `ms`.                                               |
+| `timer(key, field?)`       | A [timer](#timers): `timer("match")` → `"04:59"`, `timer("match", "ss")` → `"59"`. `onData` runs as it ticks. |
 | `[data-bind="path"]`       | Text nodes with this attribute update automatically on every data change.                      |
 | `{{path}}` in HTML and CSS | The value is substituted **once, on load** (not live).                                         |
 
@@ -1544,7 +1594,8 @@ sensible spot.
 | Kinetic lower third      | `example-kinetic`       | code       | letter-by-letter entrance, its own exit, `onShow` / `onHide` |
 | Live poll                | `example-poll`          | code       | bars and percentages travel to new values as the data is edited |
 | Ticker                   | `code-sample`           | code       | frame-by-frame motion, the shortest complete code animation |
-| Countdown                | `example-countdown`     | code       | counting from `Date.now()`, three states, a ring of time left |
+| Timer card               | `example-timer`         | code       | a [timer](#timers) of the Control panel: `timer()` in `onData`, running / paused / overtime; ships with the `segment` timer (5:00) |
+| Countdown                | `example-countdown`     | code       | a [timer](#timers) of the Control panel as days to seconds, a ring of time left, paused / final seconds / time up; ships with the `countdown` timer (10:00) |
 | Network clock            | `example-clock`         | code       | time from an API, corrected against the local clock         |
 | Weather from the internet | `example-external-data` | code      | external JSON, a loading skeleton, “stale data”             |
 
@@ -1562,7 +1613,7 @@ live preview:
 
 | Template                     | id                       | What it teaches                                                                                  |
 | ---------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------ |
-| Countdown                    | `example-countdown`      | a countdown: counting from `Date.now()`, three states, a remaining-time ring on `conic-gradient`  |
+| Countdown                    | `example-countdown`      | showing a [timer](#timers) instead of counting: `timer()` in `onData`, four states, a remaining-time ring on `conic-gradient` |
 | Network clock                | `example-clock`          | time from an API: a correction against the local clock, hands turned by CSS, honest fallback to local time |
 | Weather from the internet    | `example-external-data`  | external JSON: parsing the response, a loading skeleton, “stale data” instead of an empty screen  |
 
@@ -1579,11 +1630,15 @@ the global store and do not get in the way of other titles.
 ```bash
 curl -X POST http://localhost:9090/api/titles/example-countdown/show \
   -H 'content-type: application/json' \
-  -d '{"data":{"countdown":{"title":"On air in","target":"2027-01-01T00:00:00+03:00"}}}'
+  -d '{"data":{"countdown":{"title":"On air in"}}}'
+
+# the countdown shows the `countdown` timer: set it and start it
+curl -X POST http://localhost:9090/api/timers/countdown/set -H 'content-type: application/json' -d '{"value":"5:00"}'
+curl -X POST http://localhost:9090/api/timers/countdown/start
 ```
 
-Every variable of every example is optional — without them it shows a meaningful demo (a
-countdown from +10 minutes, Moscow, clear sky and so on). So the examples can be tried
+Every variable of every example is optional — without them it shows a meaningful demo (the
+countdown's own 10-minute timer, Moscow, clear sky and so on). So the examples can be tried
 before you set any data up.
 
 The clock and the weather are better **held** on screen than played for a set time: add
@@ -1597,17 +1652,23 @@ above).
 
 | Variable            | Default       | Meaning                                                           |
 | ------------------- | ------------- | ----------------------------------------------------------------- |
-| `countdown.title`   | `Starts in`   | the caption above the digits                                      |
-| `countdown.target`  | now + 10 min  | the target: ISO 8601 (`2027-01-01T00:00:00+03:00`) or Unix time in ms |
-| `countdown.from`    | the moment it is shown | the start of the count, for the ring (ISO 8601)          |
+| `countdown.timer`   | `countdown`   | the key of the [timer](#timers) it shows (Control panel → Timers) |
+| `countdown.title`   | the timer's name | the caption above the digits                                   |
 | `countdown.urgent`  | `10`          | how many seconds before zero the “panic” turns on                 |
 | `countdown.accent`  | `#FF5A8C`     | accent colour                                                     |
 
-What to look at in the code: the remainder is always computed from `Date.now()`, so the
-count neither slips nor accumulates drift; the ring is a single `conic-gradient` eased by
-a CSS transition on `@property --p`, while the JS only sets a number. The ring shows how
-much time is **left** (full at the start, empty at zero). A changing digit triggers a CSS
-“toss” animation through a class.
+The countdown does not count: it shows the `countdown` timer, which is started, paused,
+reset and nudged in the Control panel (or from Companion), so every out shows the same
+second and the operator can stop the clock. It comes with that timer (10:00, stops at
+zero); point `countdown.timer` at another one to show that instead.
+
+What to look at in the code: `timer(key, field)` is read in `onData`, which runs on every
+tick of the timer — there is no `setInterval` or `requestAnimationFrame` of its own. The
+ring is a single `conic-gradient` eased by a one-second CSS transition on
+`@property --p`, while the JS only sets a number once a tick; it shows how much time is
+**left** (`1 − progress`: full at the start, empty at zero). States: counting, paused,
+final seconds, time is up, and “no such timer” when the key names none. A changing digit
+triggers a CSS “toss” animation through a class.
 
 #### `example-clock` — network clock
 

@@ -11,6 +11,7 @@ import {
 import { localNumber, t } from "./i18n";
 import { getNodecg, type ClientReplicant } from "../shared/client";
 import { TEAM_BASE, type TeamMe } from "../shared/team";
+import { ServerClock, type Timer, timerTickMs, timerWithin, timersVars, withTimers } from "../shared/timer";
 import type { ExampleLang, GalleryExample } from "../shared/examples/gallery";
 import {
 	createDefaultOut,
@@ -47,6 +48,7 @@ export interface Db {
 	runtime: ClientReplicant<RuntimeState>;
 	selection: ClientReplicant<VariableSelection>;
 	sources: ClientReplicant<DataSource[]>;
+	timers: ClientReplicant<Timer[]>;
 }
 
 let db: Db | undefined;
@@ -94,6 +96,9 @@ export function getDb(): Db {
 		sources: nodecg.Replicant<DataSource[]>(REPLICANTS.sources, BUNDLE_NAME, {
 			defaultValue: [],
 		}) as ClientReplicant<DataSource[]>,
+		timers: nodecg.Replicant<Timer[]>(REPLICANTS.timers, BUNDLE_NAME, {
+			defaultValue: [],
+		}) as ClientReplicant<Timer[]>,
 	};
 	return db;
 }
@@ -242,6 +247,13 @@ export function addExample(example: GalleryExample, lang: ExampleLang): TitleTem
 			changed = true;
 		}
 		if (changed) write(getDb().titleData, next);
+	}
+
+	// The timers it shows, unless there already is one with that key.
+	const timers = read(getDb().timers) ?? [];
+	for (const sample of example.timers?.(lang) ?? []) {
+		if (timers.some((timer) => timer.key === sample.key)) continue;
+		void createTimer({ ...sample }).catch(() => {});
 	}
 	return saved;
 }
@@ -871,6 +883,106 @@ export function absoluteOutUrl(outId: string): string {
 export function useOutUrl(outId: string): string {
 	useMe();
 	return absoluteOutUrl(outId);
+}
+
+// ------------------------------------------------------------------- timers
+
+const EMPTY_TIMERS: Timer[] = [];
+
+/** Every timer — what the titles read, whoever they are shared with. */
+export function useAllTimers(): Timer[] {
+	return useReplicantValue(() => getDb().timers, EMPTY_TIMERS);
+}
+
+/** The groups the operator works with: `null` = all of them. */
+function myGroups(current: TeamMe | undefined): string[] | null {
+	if (!current) return loginEnabled() ? [] : null;
+	return current.role === "admin" ? null : current.groups.map((group) => group.id);
+}
+
+/** The timers shared with the operator's groups, or with everyone. */
+export function useTimers(): Timer[] {
+	const timers = useAllTimers();
+	const current = useMe();
+	return useMemo(() => {
+		const groups = myGroups(current);
+		return timers.filter((timer) => timerWithin(timer, groups));
+	}, [timers, current]);
+}
+
+/**
+ * Runs a timer command on the server, on the server's clock (see
+ * `extension/timers.ts`): start · pause · toggle · reset · restart · set ·
+ * adjust · create · update · remove. Rejects with the server's message.
+ */
+export function timerCommand(
+	command: string,
+	params: Record<string, unknown> = {},
+): Promise<{ timer?: Timer; removed?: string }> {
+	return getNodecg().sendMessage(MESSAGES.timer, { command, ...params }) as Promise<{
+		timer?: Timer;
+		removed?: string;
+	}>;
+}
+
+/** A new timer, shared with the groups of whoever makes it (everyone, for an administrator). */
+export function createTimer(params: Record<string, unknown> = {}): Promise<{ timer?: Timer }> {
+	const groups = myGroups(me);
+	return timerCommand("create", groups ? { groups, ...params } : params);
+}
+
+const clock = new ServerClock();
+let clockStarted = false;
+function startClock(): void {
+	if (clockStarted) return;
+	clockStarted = true;
+	const sync = () => void clock.sample(() => getNodecg().sendMessage(MESSAGES.clock) as Promise<number>).catch(() => {});
+	sync();
+	window.setInterval(sync, 60_000);
+}
+
+/** Now, on the server's clock. */
+export function serverNow(): number {
+	startClock();
+	return clock.now();
+}
+
+/**
+ * The moment to read `timers` at, as state: it moves on while one of them
+ * runs, each time what it shows changes — not on every frame.
+ */
+export function useTimerClock(timers: readonly Timer[], enabled = true): number {
+	startClock();
+	const [now, setNow] = useState(() => clock.now());
+	const running = enabled && timers.some((timer) => timer.running);
+	useEffect(() => {
+		setNow(clock.now());
+		if (!running) return;
+		let last = "";
+		const id = window.setInterval(() => {
+			const at = clock.now();
+			const signature = JSON.stringify(
+				Object.values(timersVars(timers, at)).map((vars) => [vars.text, vars.t, vars.running]),
+			);
+			if (signature !== last) {
+				last = signature;
+				setNow(at);
+			}
+		}, timerTickMs(timers));
+		return () => window.clearInterval(id);
+	}, [timers, running]);
+	return now;
+}
+
+/**
+ * The variables as the titles see them: `data` with every timer in it under
+ * `timer`, ticking. `enabled = false` keeps the timers still (they are still
+ * there, at their current value) for a preview that does not show them.
+ */
+export function useLiveData(data: TitleData, enabled = true): TitleData {
+	const timers = useAllTimers();
+	const now = useTimerClock(timers, enabled);
+	return useMemo(() => withTimers(data, timers, now), [data, timers, now]);
 }
 
 export function copyText(text: string): Promise<void> {

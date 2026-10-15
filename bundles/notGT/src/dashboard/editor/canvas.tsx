@@ -66,7 +66,8 @@ import {
 import { outUrl } from "../../shared/defaults";
 import { t } from "../i18n";
 import { IconButton } from "../ui";
-import { useCodeDocument } from "./code-preview";
+import { useCodeDocument, useTimerFeed } from "./code-preview";
+import { withoutTimers } from "../../shared/timer";
 import {
 	type SnapBox,
 	type SnapLine,
@@ -1342,7 +1343,14 @@ function CodeOverlayFrame({
 	dim: number;
 	data: TitleData;
 }) {
-	const doc = useCodeDocument(box.template, data);
+	// The canvas hands down the variables with the timers ticking in them; the
+	// document is built without them, or it would restart on every tick, and
+	// the frame is fed the ticks instead.
+	const baseJson = JSON.stringify(withoutTimers(data));
+	const base = useMemo(() => JSON.parse(baseJson) as TitleData, [baseJson]);
+	const doc = useCodeDocument(box.template, base);
+	const frameRef = useRef<HTMLIFrameElement | null>(null);
+	const feedTimers = useTimerFeed(frameRef, box.template, base);
 	const window_ = crop ?? fullCrop(box.template);
 	return (
 		<div
@@ -1360,6 +1368,8 @@ function CodeOverlayFrame({
 			    is only created once there is a document to show. */}
 			{doc ? (
 				<iframe
+					ref={frameRef}
+					onLoad={feedTimers}
 					title={t("{name} — preview on the canvas", { name: box.template.name })}
 					sandbox="allow-scripts allow-same-origin"
 					srcDoc={doc}

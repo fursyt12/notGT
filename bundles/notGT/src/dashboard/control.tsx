@@ -3,8 +3,9 @@
  *
  * Left: what is placed on each out, one row per placement, with the two things
  * an operator does on air — play it once, or switch it on and keep it there.
- * Right: the variables those titles read. Nothing here changes a layout; that
- * is the Editor's job.
+ * Under them: the timers those titles can show, started, paused and nudged
+ * here. Right: the variables those titles read. Nothing here changes a
+ * layout; that is the Editor's job.
  */
 import { createRoot } from "react-dom/client";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
@@ -61,6 +62,7 @@ import {
 	loadWorkbook,
 	trackWorkbook,
 } from "./sources";
+import { TimersPanel } from "./timers";
 import {
 	CopyButton,
 	Disclosure,
@@ -1014,6 +1016,7 @@ function App() {
 					) : (
 						outs.map((out) => <OutBlock key={out.id} out={out} />)
 					)}
+					<TimersPanel />
 					<QuickShow />
 				</div>
 				<DataPanel />

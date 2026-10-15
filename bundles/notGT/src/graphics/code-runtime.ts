@@ -40,7 +40,9 @@ export function codeExitBudgetMs(template: TitleTemplate | undefined, declared: 
  *   onHide(fn, ms?) - the animation is going away: animate the exit, `ms` is how
  *                     long the out page will wait before dropping the iframe
  *   hideDone()      - "my exit animation is over", drop me now
- *   [data-bind=x]   - auto-updating text nodes
+ *   timer(key, f?)  - a timer's value: `timer('match')` = "04:59", or one of its
+ *                     fields: `timer('match', 'ss')`; `onData` fires as it ticks
+ *   [data-bind=x]   - auto-updating text nodes (`timer.match.text` ticks too)
  *
  * Registering `onShow` / `onHide` hands that phase over to the animation: the
  * out page then skips the template's own in/out transition for it, instead of
@@ -112,6 +114,9 @@ window.vars = function(path, fallback){
   if (text === '' && fallback !== undefined) return fallback;
   return text;
 };
+window.timer = function(key, field){
+  return window.vars('timer.' + key + '.' + (field || 'text'));
+};
 window.onData = function(cb){
   if (typeof cb !== 'function') return;
   _callbacks.push(cb);
@@ -146,6 +151,7 @@ window.notgt = {
   onShow: window.onShow,
   onHide: window.onHide,
   hideDone: window.hideDone,
+  timer: window.timer,
   get phase(){ return _phase; },
   get root(){ return document.body; }
 };

@@ -3,6 +3,8 @@ import type { ExampleCode } from "./types";
 /**
  * Пример — обратный отсчёт.
  *
+ * Показывает таймер из панели Control: сам он ничего не считает.
+ *
  * Встроенный пример code-анимации: код лежит прямо в шаблоне (как в
  * «Code sample (ticker)»), поэтому его видно и можно править в панели Editor.
  * Документация по переменным — в комментарии внутри CSS.
@@ -42,26 +44,26 @@ export const countdownExample: ExampleCode = {
  * ОБРАТНЫЙ ОТСЧЁТ (countdown).
  *
  * Что показывает пример:
- *   - расчёт «сколько осталось» от текущего времени до цели;
+ *   - титр, который ПОКАЗЫВАЕТ таймер notGT, а не считает сам: «Старт»,
+ *     «Пауза», «+1:00» нажимают в панели Control (или в Companion), и на
+ *     всех out'ах одна и та же секунда — значение идёт от часов сервера;
+ *   - timer(ключ, поле) в onData: onData вызывается на каждом тике таймера,
+ *     поэтому никакого setInterval и requestAnimationFrame;
  *   - кольцо «сколько осталось» на conic-gradient, которое плавно
- *     тянется CSS-переходом по @property (JS меняет только число,
- *     анимацию делает CSS);
- *   - три визуальных состояния: ожидание, «осталось мало», «время вышло»;
- *   - живую реакцию на переменные: смена цели/заголовка в панели Control
- *     видна на экране без перезагрузки Browser Source.
+ *     тянется CSS-переходом по @property (JS меняет только число раз в
+ *     секунду, анимацию между тиками делает CSS);
+ *   - четыре визуальных состояния: идёт, пауза, «осталось мало», «время вышло».
  *
  * Переменные (все необязательные, у каждой есть фолбэк):
- *   countdown.title     — подпись над цифрами (по умолчанию «До начала»)
- *   countdown.target    — цель, ISO 8601: 2026-12-31T23:59:59+03:00
- *   countdown.from      — начало отсчёта для кольца прогресса (ISO 8601);
- *                         если не задано, берётся момент загрузки анимации
+ *   countdown.timer     — ключ таймера из панели Control (countdown)
+ *   countdown.title     — подпись над цифрами (по умолчанию — название таймера)
  *   countdown.urgent    — за сколько секунд до нуля включить «панику» (10)
  *   countdown.accent    — акцентный цвет (по умолчанию #ff5a8c)
  *
  * Проверить руками:
- *   curl -X POST http://localhost:9090/api/data?mode=merge \
- *     -H 'content-type: application/json' \
- *     -d '{"countdown":{"title":"До эфира","target":"2027-01-01T00:00:00+03:00"}}'
+ *   curl -X POST http://localhost:9090/api/timers/countdown/set \
+ *     -H 'content-type: application/json' -d '{"value":"0:30"}'
+ *   curl -X POST http://localhost:9090/api/timers/countdown/start
  */
 
 /* Кольцо прогресса анимируется CSS-переходом по кастомному свойству.
@@ -161,6 +163,7 @@ body {
 	font-weight: 600;
 	letter-spacing: 0.12em;
 	text-transform: uppercase;
+	white-space: nowrap;
 	color: var(--muted);
 }
 
@@ -199,7 +202,8 @@ body {
 			var(--accent) calc(var(--p) * 360deg),
 			rgba(255, 255, 255, 0.12) 0
 		);
-	transition: --p 260ms linear;
+	/* Таймер тикает раз в секунду; переход заполняет промежуток. */
+	transition: --p 1s linear;
 }
 
 .ring::after {
@@ -288,6 +292,16 @@ body {
 
 /* --- состояния --------------------------------------------------- */
 
+/* Пауза: цифры приглушены, точка не мигает. */
+.cd.is-paused .num {
+	opacity: 0.6;
+}
+
+.cd.is-paused .cd__dot {
+	animation: none;
+	opacity: 0.5;
+}
+
 .cd.is-urgent .num {
 	color: var(--accent);
 }
@@ -338,7 +352,6 @@ body {
 	js: String.raw`(function () {
 	"use strict";
 
-	var DEFAULT_LEAD_MS = 10 * 60 * 1000; // демо-цель: +10 минут
 	var DEFAULT_URGENT_S = 10;
 
 	// root — контейнер анимации (document.body). Скрипт стоит в конце
@@ -360,23 +373,7 @@ body {
 		minutes: root.querySelector("#u-minutes"),
 		seconds: root.querySelector("#u-seconds"),
 	};
-
-	// Демо-цель фиксируем один раз на жизнь iframe: иначе без
-	// переменной отсчёт каждый кадр начинался бы заново.
-	var demoTarget = Date.now() + DEFAULT_LEAD_MS;
-	var startedAt = Date.now();
-	var urgentSeconds = DEFAULT_URGENT_S;
 	var lastText = {};
-
-	function parseTime(value) {
-		if (!value) return NaN;
-		var text = String(value).trim();
-		if (text === "") return NaN;
-		// Голое число в переменной трактуем как Unix-время в мс.
-		if (/^\d+$/.test(text)) return Number(text);
-		var ms = Date.parse(text);
-		return isNaN(ms) ? NaN : ms;
-	}
 
 	function pad2(n) {
 		return n < 10 ? "0" + n : String(n);
@@ -394,93 +391,80 @@ body {
 		unit.classList.add("is-tick");
 	}
 
-	function readConfig() {
-		var target = parseTime(vars("countdown.target", ""));
-		var from = parseTime(vars("countdown.from", ""));
-		var urgent = parseInt(vars("countdown.urgent", ""), 10);
-
-		if (!isNaN(from)) startedAt = from;
-		urgentSeconds = isNaN(urgent) || urgent < 0 ? DEFAULT_URGENT_S : urgent;
-
-		el.card.style.setProperty(
-			"--accent",
-			vars("countdown.accent", "#ff5a8c"),
-		);
-		// Подпись ставим из JS с фолбэком: у [data-bind] фолбэка нет,
-		// пустая переменная затёрла бы текст в HTML.
-		el.title.textContent = vars("countdown.title", "До начала");
-
-		return { target: isNaN(target) ? demoTarget : target, isDemo: isNaN(target) };
+	function setState(name) {
+		el.card.classList.toggle("is-urgent", name === "urgent");
+		el.card.classList.toggle("is-done", name === "done");
+		el.card.classList.toggle("is-paused", name === "paused");
 	}
 
-	var config = readConfig();
+	// Какой таймер показываем: его ключ из панели Control. Переменная, а
+	// не константа — так один титр может показать любой таймер.
+	function key() {
+		return vars("countdown.timer", "countdown");
+	}
 
-	function render() {
-		var remaining = config.target - Date.now();
+	// onData вызывается сразу, на каждое изменение переменных и на каждом
+	// тике таймера — своих часов у титра нет.
+	onData(function () {
+		var k = key();
+		var urgent = parseInt(vars("countdown.urgent", ""), 10);
+		if (isNaN(urgent) || urgent < 0) urgent = DEFAULT_URGENT_S;
+		el.card.style.setProperty("--accent", vars("countdown.accent", "#ff5a8c"));
+		// Подпись — из переменной, иначе название таймера.
+		el.title.textContent = vars("countdown.title", timer(k, "name") || "До начала");
 
-		if (remaining <= 0) {
-			el.card.classList.remove("is-urgent");
-			el.card.classList.add("is-done");
-			el.state.textContent = vars("countdown.label", "время вышло");
-			el.ringValue.textContent = "0%";
+		// Таймера с таким ключом нет: говорим об этом, а не показываем нули.
+		if (timer(k) === "") {
+			setState("none");
+			el.state.textContent = "нет такого таймера";
 			el.ring.style.setProperty("--p", 0);
-			setUnit("days", "00");
-			setUnit("hours", "00");
-			setUnit("minutes", "00");
-			setUnit("seconds", "00");
+			el.ringValue.textContent = "—";
+			setUnit("days", "--");
+			setUnit("hours", "--");
+			setUnit("minutes", "--");
+			setUnit("seconds", "--");
 			return;
 		}
 
-		var totalSeconds = Math.floor(remaining / 1000);
-		var days = Math.floor(totalSeconds / 86400);
-		var hours = Math.floor((totalSeconds % 86400) / 3600);
-		var minutes = Math.floor((totalSeconds % 3600) / 60);
-		var seconds = totalSeconds % 60;
+		var totalSeconds = Math.max(0, Number(timer(k, "totalSeconds")) || 0);
+		var done = timer(k, "done") === "true";
+		var running = timer(k, "running") === "true";
 
-		setUnit("days", pad2(days));
-		setUnit("hours", pad2(hours));
-		setUnit("minutes", pad2(minutes));
-		setUnit("seconds", pad2(seconds));
+		setUnit("days", pad2(Math.floor(totalSeconds / 86400)));
+		setUnit("hours", pad2(Math.floor((totalSeconds % 86400) / 3600)));
+		setUnit("minutes", pad2(Math.floor((totalSeconds % 3600) / 60)));
+		setUnit("seconds", pad2(totalSeconds % 60));
 
-		// Кольцо показывает, сколько времени ещё ОСТАЛОСЬ: в начале
-		// полное, к нулю пустеет. Если старт позже цели — считаем, что
-		// осталось нечего.
-		var span = config.target - startedAt;
-		var left = span > 0 ? remaining / span : 0;
+		// Кольцо показывает, сколько времени ещё ОСТАЛОСЬ: в начале полное,
+		// к нулю пустеет. progress таймера — сколько прошло, от 0 до 1.
+		var left = done ? 0 : 1 - (Number(timer(k, "progress")) || 0);
 		left = Math.max(0, Math.min(1, left));
 		el.ring.style.setProperty("--p", left);
 		el.ringValue.textContent = Math.round(left * 100) + "%";
 
-		var urgent = totalSeconds <= urgentSeconds;
-		el.card.classList.toggle("is-urgent", urgent);
-		el.card.classList.remove("is-done");
-
-		if (config.isDemo) el.state.textContent = "демо-цель +10 мин";
-		else if (urgent) el.state.textContent = "осталось меньше минуты";
-		else el.state.textContent = "идёт отсчёт";
-	}
-
-	// requestAnimationFrame вместо setInterval: значение всегда
-	// считается от Date.now(), поэтому отсчёт не «уезжает» и не
-	// накапливает дрейф, даже если вкладку на время скрыли.
-	function loop() {
-		render();
-		requestAnimationFrame(loop);
-	}
-
-	// Переменные меняются — перечитываем цель и перерисовываем сразу.
-	onData(function () {
-		config = readConfig();
-		render();
+		if (done) {
+			setState("done");
+			el.state.textContent = "время вышло";
+		} else if (!running) {
+			setState("paused");
+			el.state.textContent = "на паузе";
+		} else if (totalSeconds <= urgent) {
+			setState("urgent");
+			el.state.textContent = "последние секунды";
+		} else {
+			setState("running");
+			el.state.textContent = "идёт отсчёт";
+		}
 	});
-
-	requestAnimationFrame(loop);
 })();
 
 // Уход делает сам код: система обёртку не анимирует (см. «Переходы»).
 onHide(() => {
-	root.querySelectorAll(".cd").forEach((el) =>
-		el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, fill: "forwards" }),
-	);
+	const card = root.querySelector(".cd");
+	if (!card) return hideDone();
+	card
+		.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, fill: "forwards" })
+		.finished.then(hideDone)
+		.catch(() => {});
 }, 300);`,
 };

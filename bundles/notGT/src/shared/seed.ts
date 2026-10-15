@@ -9,7 +9,7 @@
  * a fresh copy.
  */
 import { clone, flattenData, getByPathRaw, setByPath } from "./binding";
-import { GALLERY, type ExampleLang } from "./examples/gallery";
+import { GALLERY, type ExampleLang, type ExampleTimer } from "./examples/gallery";
 import type { TitleData, TitleTemplate } from "./types";
 
 /**
@@ -133,3 +133,15 @@ export function seedVariables(lang: ExampleLang, base: TitleData = {}): TitleDat
 	}
 	return next;
 }
+
+/**
+ * The timers the examples in `library` show. Made by the extension when they
+ * are missing, on first run and when an example that needs one arrives.
+ */
+export function seedTimers(lang: ExampleLang, library: TitleTemplate[]): ExampleTimer[] {
+	const ids = new Set(library.map((template) => template.id));
+	return GALLERY.filter((example) => ids.has(example.id)).flatMap((example) => example.timers?.(lang) ?? []);
+}
+
+/** Examples that came after the library was first seeded, by the schema version that added them. */
+export const ADDED_IN: Record<string, number> = { "example-timer": 7 };

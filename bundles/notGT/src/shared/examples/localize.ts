@@ -32,8 +32,9 @@ const TABLES: Record<string, Pairs> = {
 		...quoted([
 			["До начала", "Starts in"],
 			["время вышло", "time is up"],
-			["демо-цель +10 мин", "demo target +10 min"],
-			["осталось меньше минуты", "under a minute left"],
+			["на паузе", "paused"],
+			["нет такого таймера", "no such timer"],
+			["последние секунды", "final seconds"],
 			["идёт отсчёт", "counting down"],
 		]),
 	],

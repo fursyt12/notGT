@@ -57,6 +57,8 @@ export interface TeamMe {
 	role: TeamRole;
 	outs: "all" | string[];
 	groups: Array<{ id: string; name: string }>;
+	/** Every group of the team, the operator's or not: whom a timer can be shared with. */
+	allGroups: Array<{ id: string; name: string }>;
 	/** Keys of the OBS links of the outs this operator sees. */
 	outKeys: Record<string, string>;
 	/** This operator still signs in with the password everybody knows. */

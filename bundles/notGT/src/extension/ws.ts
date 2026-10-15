@@ -10,7 +10,9 @@ import { asObject, buildPublicState, isPlainObject, pickNumber, pickString } fro
 import { type Access, EVERYTHING, extractToken, type Principal } from "./auth";
 import type { Scheduler } from "./scheduler";
 import type { BundleConfig, ServerAPI, Store } from "./store";
+import { timerTickMs, timerWithin } from "../shared/timer";
 import type { Team } from "./team";
+import { TimerError, type Timers } from "./timers";
 import { playTemplateOnce } from "./trigger";
 
 /**
@@ -21,8 +23,8 @@ import { playTemplateOnce } from "./trigger";
  * It is a plain WebSocket — not Socket.IO — on `/api/ws`, speaking JSON text
  * frames. Every frame is an object with a `type`:
  *
- *   server -> client   hello · state · data · reply · error
- *   client -> server   login · subscribe · show · hide · toggle · trigger · …
+ *   server -> client   hello · state · data · timers · reply · error
+ *   client -> server   login · subscribe · show · hide · toggle · trigger · timer · …
  *
  * Each client frame is answered by exactly one `reply` that echoes the frame's
  * `id`. `state` is pushed on its own whenever what is on air changes, so a
@@ -30,7 +32,9 @@ import { playTemplateOnce } from "./trigger";
  *
  * A client reaches as far as what it signed in with: the global key and an
  * administrator reach every out; a group's key, or a member of groups, only
- * the outs of those groups — in what it is told and in what it may do.
+ * the outs of those groups — in what it is told and in what it may do. The
+ * same goes for timers: a client sees and drives the timers shared with its
+ * groups (and those shared with everyone).
  */
 
 /** Bumped when a frame changes in a way an existing client would trip over. */
@@ -47,7 +51,13 @@ const HEARTBEAT_MS = 30_000;
 const PUSH_DEBOUNCE_MS = 10;
 const MAX_PAYLOAD = 1024 * 1024;
 
-const TOPICS = ["state", "data"] as const;
+/**
+ *   state  — what is on air, pushed when it changes (on by default);
+ *   data   — the variable store;
+ *   timers — what every timer within reach shows, pushed when it changes:
+ *            once a second, or every tenth for a timer that shows tenths.
+ */
+const TOPICS = ["state", "data", "timers"] as const;
 type Topic = (typeof TOPICS)[number];
 
 interface Client {
@@ -56,6 +66,8 @@ interface Client {
 	principal: Principal | null;
 	/** The last `state` frame sent, so an unchanged one is not sent again. */
 	lastState: string;
+	/** The last `timers` frame sent. */
+	lastTimers: string;
 	topics: Set<Topic>;
 	alive: boolean;
 	loginTimer?: ReturnType<typeof setTimeout>;
@@ -85,6 +97,7 @@ export function createWsApi(
 	scheduler: Scheduler,
 	access: Access,
 	team: Team,
+	timers: Timers,
 ): WsApi | undefined {
 	const log = nodecg.log;
 	const paths = ["/api/ws", `/bundles/${BUNDLE_NAME}/api/ws`];
@@ -101,7 +114,7 @@ export function createWsApi(
 	// The whole state: `hideApiState` is about the size of a *polled* answer,
 	// and here a frame goes out only when something changed.
 	const stateConfig = { ...((nodecg.bundleConfig ?? {}) as BundleConfig), hideApiState: false };
-	const readState = (): PublicState => buildPublicState(store, stateConfig);
+	const readState = (): PublicState => buildPublicState(store, stateConfig, timers);
 
 	const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 	const clients = new Set<Client>();
@@ -117,6 +130,13 @@ export function createWsApi(
 
 	/** The state as far as this client reaches. */
 	const stateFor = (client: Client, full: PublicState = readState()): PublicState => {
+		const groups = client.principal?.groups() ?? null;
+		if (groups) {
+			full = {
+				...full,
+				timers: full.timers?.filter((timer) => timer.groups.length === 0 || timer.groups.some((id) => groups.includes(id))),
+			};
+		}
 		const outs = client.principal?.outs();
 		if (!outs) return full;
 		const reach = new Set(outs);
@@ -173,6 +193,43 @@ export function createWsApi(
 	store.outs.on("change", stateChanged);
 	store.templates.on("change", stateChanged);
 	store.titleData.on("change", dataChanged);
+	timers.onChange(stateChanged);
+
+	/** What the timers within a client's reach show now, as a `timers` frame. */
+	const timersFrame = (client: Client, now: number): string => {
+		const groups = client.principal?.groups() ?? null;
+		const list = timers
+			.list()
+			.filter((timer) => timerWithin(timer, groups))
+			.map((timer) => {
+				// `ms` and `progress` move on every look; a frame goes out when
+				// what a button would show changes.
+				const { ms: _ms, progress: _progress, ...vars } = timers.read(timer, now).vars;
+				return { id: timer.id, key: timer.key, ...vars };
+			});
+		return JSON.stringify({ type: "timers", timers: list });
+	};
+	const sendTimers = (client: Client, now = Date.now(), force = false): void => {
+		const frame = timersFrame(client, now);
+		if (!force && frame === client.lastTimers) return;
+		client.lastTimers = frame;
+		if (client.socket.readyState === client.socket.OPEN) client.socket.send(frame);
+	};
+	let timersTick: ReturnType<typeof setTimeout> | undefined;
+	const tickTimers = (): void => {
+		const now = Date.now();
+		let listening = false;
+		for (const client of clients) {
+			if (!client.principal || !client.topics.has("timers")) continue;
+			listening = true;
+			sendTimers(client, now);
+		}
+		timersTick = listening ? setTimeout(tickTimers, timerTickMs(timers.list())) : undefined;
+	};
+	const watchTimers = (): void => {
+		timersTick ??= setTimeout(tickTimers, 0);
+	};
+	timers.onChange(watchTimers);
 
 	// ------------------------------------------------------------- commands
 
@@ -232,6 +289,10 @@ export function createWsApi(
 				sendState(client);
 			}
 			if (added.includes("data")) send(client, { type: "data", data: store.readData() });
+			if (added.includes("timers")) {
+				sendTimers(client, Date.now(), true);
+				watchTimers();
+			}
 			return { topics: [...client.topics] };
 		},
 		unsubscribe: (params, client) => {
@@ -372,6 +433,34 @@ export function createWsApi(
 			return { path, index: Math.floor(index), selection: store.setSelection({ [path]: index }) };
 		},
 		clearSelection: (params) => ({ selection: store.clearSelection(requireString(params, "path")) }),
+
+		/**
+		 * Drives a timer: `action` is start · pause · toggle · reset · restart ·
+		 * set {value} · adjust {delta} · create · update · remove; `timer` is
+		 * its id or key. Within the groups the client reaches.
+		 */
+		timer: (params, client) => {
+			const action = requireString(params, "action", "command");
+			const { action: _action, command: _command, ...rest } = params;
+			try {
+				const result = timers.command(action, rest, client.principal?.groups() ?? null);
+				return result.timer ? { timer: timers.read(result.timer) } : { removed: result.removed };
+			} catch (error) {
+				if (error instanceof TimerError) throw new CommandError(error.code, error.message);
+				throw error;
+			}
+		},
+		getTimers: (_params, client) => {
+			const groups = client.principal?.groups() ?? null;
+			const now = Date.now();
+			return {
+				serverTime: now,
+				timers: timers
+					.list()
+					.filter((timer) => timerWithin(timer, groups))
+					.map((timer) => timers.read(timer, now)),
+			};
+		},
 	};
 
 	// --------------------------------------------------------------- session
@@ -497,6 +586,7 @@ export function createWsApi(
 			socket,
 			principal: access.ws.open ? EVERYTHING : null,
 			lastState: "",
+			lastTimers: "",
 			topics: new Set<Topic>(["state"]),
 			alive: true,
 		};
@@ -579,6 +669,7 @@ export function createWsApi(
 			clearInterval(heartbeat);
 			if (stateTimer) clearTimeout(stateTimer);
 			if (dataTimer) clearTimeout(dataTimer);
+			if (timersTick) clearTimeout(timersTick);
 			httpServer.off("upgrade", onUpgrade);
 			for (const client of clients) client.socket.close(CLOSE_GOING_AWAY, "server stopping");
 			wss.close();

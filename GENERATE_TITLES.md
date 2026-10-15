@@ -32,7 +32,10 @@ HARD RUNTIME RULES (do not break these):
      without waiting for the rest of ms;
    - [data-bind="path"] in HTML — text nodes with this attribute are
      updated automatically by the runtime; never touch them manually
-     from JS.
+     from JS;
+   - timer(key, field) — a timer of the Control panel (see TIMERS):
+     timer("match") → "04:59", timer("match", "ss") → "59". Always a
+     string, like vars().
 
 4. {{path}} and {{path ?? fallback}} substitution works ONLY inside
    code.html and code.css, and only ONCE at load time (not live). There
@@ -62,6 +65,60 @@ HARD RUNTIME RULES (do not break these):
 
 9. No <form> elements, no fetch/XHR to third-party domains, no
    localStorage — the title must be a clean, self-contained fragment.
+
+TIMERS (when the title shows a countdown, a stopwatch or a clock of the show)
+
+The operator runs timers in notGT's Control panel: starts, pauses, resets, adds a
+minute. Every timer is a group of variables `timer.<key>.*` that any title can read, and
+the runtime keeps them ticking. A title that shows such a timer READS it — it never
+counts by itself:
+
+| field          | example  | meaning                                                   |
+| -------------- | -------- | --------------------------------------------------------- |
+| `text`         | `04:59`  | the value in the format the operator chose                |
+| `hh` `mm` `ss` | `00` `04` `59` | hours, minutes within the hour, seconds within the minute |
+| `t`            | `3`      | tenths of a second                                        |
+| `sign`         | `-`      | `-` past zero (overtime), empty otherwise                 |
+| `totalSeconds` | `299`    | the shown value in whole seconds, negative in overtime    |
+| `progress`     | `0.42`   | 0 → 1 over the timer's duration                           |
+| `running` `done` `overtime` | `"true"` | runs / reached its end / is past zero (strings!) |
+| `name`         | `Match`  | the timer's name, as the operator typed it                |
+
+Rules:
+
+- Read a timer with `timer(key)` / `timer(key, field)` inside `onData`, or put
+  `data-bind="timer.<key>.text"` on an element. `onData` runs on every tick (once a
+  second, every tenth for a timer with tenths) — so it must only update the DOM, never
+  replay an animation or rebuild the layout.
+- **No `setInterval`, no `Date.now()` arithmetic** for an operator-controlled timer: the
+  value comes from the server's clock and the same second shows on every out. A
+  `setInterval` is only for a clock of your own (wall time), not for these timers.
+- Do not write `{{timer.…}}` in code.html/code.css: it is substituted once at load and
+  then stands still.
+- Take the key from a variable, so one title can follow any timer:
+  `const key = () => vars("myTitle.timer", "match");`.
+- `running`, `done`, `overtime` are the strings `"true"` / `"false"`: compare with
+  `=== "true"`.
+- Give the digits `font-variant-numeric: tabular-nums` (or a monospaced font), or the
+  layout shakes as 1 and 0 trade places.
+- A progress bar moves once a second: give it `transition: transform 1s linear` so it
+  glides in between.
+- Show the states: running, paused, `done` (a countdown at 00:00), `overtime` (past zero,
+  with a minus in `text`).
+- A title that never mentions `timer` is not sent the ticks; keep the word `timer(` or
+  `timer.<key>.` in the code of a title that shows one.
+
+```js
+const key = () => vars("myTitle.timer", "match");
+onData(() => {
+  const k = key();
+  $("digits").textContent = timer(k) || "--:--";
+  $("name").textContent = timer(k, "name");
+  $("card").dataset.state = timer(k, "overtime") === "true" ? "over"
+    : timer(k, "running") === "true" ? "live" : "paused";
+  $("fill").style.transform = "scaleX(" + (Number(timer(k, "progress")) || 0) + ")";
+});
+```
 
 PHASES: ENTRANCE, ON AIR, EXIT (mandatory part of the code)
 
@@ -147,7 +204,9 @@ SELF-CHECK BEFORE ANSWERING
   removed inside `onShow`;
 - everything started in `onShow` is stopped in `onHide`;
 - the background is transparent, the layout is in percent, and there are no external
-  requests.
+  requests;
+- a title that shows a notGT timer reads it through `timer()` / `data-bind` in `onData`,
+  with no `setInterval` of its own, and its digits are `tabular-nums`.
 
 REQUIRED OUTPUT FORMAT:
 Reply with exactly three labeled code blocks:
@@ -179,7 +238,7 @@ so they can be tweaked by hand without touching the logic.
 INPUTS (fill in and send along with this prompt):
 
 - Title type: [lower third / name+role bug / fullscreen bumper /
-  ticker / counter / other]
+  ticker / counter / timer / other]
 - Design canvas: [1920×1080 by default, specify otherwise if needed]
 - Style/tone: [minimalist / corporate / sports / gaming / whatever]
 - Brand book: [attach a file OR list: primary color HEX, accent color
@@ -187,6 +246,8 @@ INPUTS (fill in and send along with this prompt):
   (SVG/PNG and how to embed it), do's/don'ts]
 - Data to display and proposed variable paths:
   [e.g. speaker.name, speaker.role, event.title]
+- Timers it shows, if any: [the key(s) from the Control panel, e.g. match;
+  countdown or stopwatch; what happens at zero]
 - Animation flourishes: [letters fly in one by one / counter ticks up /
   icon pulses / etc.]
 - Entrance / exit / on air: [how the title should appear, what it should

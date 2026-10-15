@@ -13,12 +13,15 @@ import {
 import {
 	missingLibrary,
 	rebrandedVariables,
+	ADDED_IN,
 	redrawnExamples,
 	seedLanguage,
+	seedTimers,
 	seedLibrary,
 	seedVariables,
 	withoutRetiredSamples,
 } from "../shared/seed";
+import type { ExampleTimer } from "../shared/examples/gallery";
 import {
 	BUNDLE_NAME,
 	type ActiveTitleState,
@@ -58,6 +61,12 @@ export interface Store {
 	readonly runtime: Rep<RuntimeState>;
 	readonly selection: Rep<VariableSelection>;
 	readonly meta: Rep<MetaState>;
+	/**
+	 * Timers the examples need, to be made when missing: on first run, and
+	 * when an upgrade brings an example that shows one. Empty otherwise, so a
+	 * timer the operator deleted stays deleted.
+	 */
+	readonly timerSeeds: ExampleTimer[];
 
 	listTemplates(): TitleTemplate[];
 	getTemplate(id: string): TitleTemplate | undefined;
@@ -418,11 +427,13 @@ export function createStore(nodecg: ServerAPI): Store {
 		nodecg.bundleConfig?.language,
 		process.env["LC_ALL"] || process.env["LC_MESSAGES"] || process.env["LANG"] || "",
 	);
+	let timerSeeds: ExampleTimer[] = [];
 	if (!meta.value?.initialized) {
 		const defaultOutId = nodecg.bundleConfig?.defaultOutId || "main";
 		if (listTemplates().length === 0) templates.value = seedLibrary(lang);
 		if (listOuts().length === 0) outs.value = [createDefaultOut(defaultOutId)];
 		if (Object.keys(readData()).length === 0) titleData.value = seedVariables(lang);
+		timerSeeds = seedTimers(lang, listTemplates());
 		meta.value = { initialized: true, schemaVersion: SCHEMA_VERSION };
 		log.info("Seeded the example library (%s), an out and sample data", lang);
 	} else if ((meta.value.schemaVersion ?? 1) < SCHEMA_VERSION) {
@@ -445,9 +456,15 @@ export function createStore(nodecg: ServerAPI): Store {
 			templates.value = listTemplates().map((template) => byId.get(template.id) ?? template);
 		}
 		// Since v3 the whole gallery is seeded, so past that point a missing
-		// example is one the operator deleted.
-		const added = from < 3 ? missingLibrary(listTemplates(), lang) : [];
+		// example is one the operator deleted — unless it is newer than the
+		// version this installation comes from.
+		const added = missingLibrary(listTemplates(), lang).filter(
+			(template) => from < 3 || from < (ADDED_IN[template.id] ?? 0),
+		);
 		for (const template of added) upsertTemplate(template);
+		// An example that arrives, or is redrawn into one that shows a timer
+		// (v7 turned the countdown into one), gets its timer.
+		timerSeeds = from < 7 ? seedTimers(lang, [...added, ...redrawn]) : seedTimers(lang, added);
 		titleData.value = seedVariables(lang, withoutRetiredSamples(rebrandedVariables(readData())));
 		meta.value = { ...meta.value, schemaVersion: SCHEMA_VERSION };
 		log.info(
@@ -466,6 +483,7 @@ export function createStore(nodecg: ServerAPI): Store {
 		runtime,
 		selection,
 		meta,
+		timerSeeds,
 		listTemplates,
 		getTemplate,
 		upsertTemplate,

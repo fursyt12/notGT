@@ -12,6 +12,7 @@ import { playTemplateOnce } from "./trigger";
 import { createStore, type ServerAPI } from "./store";
 import { createTeam } from "./team";
 import { createTeamRouter, TEAM_BASE } from "./team-api";
+import { createTimers } from "./timers";
 import { createWsApi } from "./ws";
 
 /**
@@ -86,18 +87,25 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	store.setOutKeys((outId) => team.outKey(outId));
 	mount(TEAM_BASE, createTeamRouter(nodecg, team, nodecg.util.authCheck as unknown as Handler));
 
+	// Countdowns and stopwatches, shared with the groups of the team.
+	const timers = createTimers(nodecg, {
+		hasGroup: (id) => team.hasGroup(id),
+		seed: store.timerSeeds,
+	});
+
 	// One answer to "who may drive the show" for both APIs.
 	const access = createAccess(nodecg, team);
 	const router = createApiRouter(nodecg, store, scheduler, {
 		access,
 		syncAnimations,
 		videoDuration,
+		timers,
 	});
 	mount("/api", router);
 	mount(`/bundles/${BUNDLE_NAME}/api`, router);
 
 	// The same verbs over a WebSocket, with the state pushed instead of polled.
-	const ws = createWsApi(nodecg, store, scheduler, access, team);
+	const ws = createWsApi(nodecg, store, scheduler, access, team, timers);
 
 	// Drag-and-dropped media for the `video` layer. Lives in the NodeCG assets
 	// tree (a Docker volume), so uploads survive a container rebuild. Guarded by
@@ -164,6 +172,7 @@ export default function notGTExtension(nodecg: ServerAPI): {
 
 	nodecg.listenFor("serverStopping", (() => {
 		scheduler.dispose();
+		timers.dispose();
 		ws?.close();
 	}) as any);
 
@@ -171,7 +180,7 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	store.outs.on("change", () => scheduler.sync());
 
 	nodecg.log.info(
-		"notGT ready — REST API on /api (state, titles/show|hide|toggle|trigger, data, templates, outs, animations)",
+		"notGT ready — REST API on /api (state, titles/show|hide|toggle|trigger, data, templates, outs, timers, animations)",
 	);
 	if (ws) nodecg.log.info("WebSocket API on %s (state push, the same verbs)", ws.paths[0]);
 	if (access.loginEnabled) {

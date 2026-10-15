@@ -21,6 +21,7 @@ import {
 	type NextFn,
 } from "./auth";
 import type { Scheduler } from "./scheduler";
+import { TimerError, timerErrorStatus, type Timers } from "./timers";
 import { playTemplateOnce } from "./trigger";
 import type { BundleConfig, ServerAPI, Store } from "./store";
 
@@ -40,6 +41,8 @@ export interface ApiHooks {
 	syncAnimations?: () => { added: number; total: number; removed: number };
 	/** Length of a template's video layer in ms, when it has one. */
 	videoDuration?: (templateId: string) => number | undefined;
+	/** The countdowns and stopwatches. */
+	timers: Timers;
 }
 
 export function createApiRouter(
@@ -61,7 +64,7 @@ export function createApiRouter(
 
 	// ----------------------------------------------------------------- state
 	router.get("/state", (_req, res) => {
-		json(res, 200, buildPublicState(store, config));
+		json(res, 200, buildPublicState(store, config, hooks.timers));
 	});
 
 	// ------------------------------------------------------------------ data
@@ -256,6 +259,46 @@ export function createApiRouter(
 		json(res, 200, { ok: true, ...result, active: store.activeTitle.value });
 	});
 
+	// ---------------------------------------------------------------- timers
+	// A timer is named by its id or by its key (`match` for `{{timer.match.text}}`).
+	const timers = hooks.timers;
+	const runTimer = (res: ApiResponse, command: string, params: Record<string, unknown>, status = 200): void => {
+		try {
+			const result = timers.command(command, params);
+			json(res, status, {
+				ok: true,
+				...(result.timer ? { timer: timers.read(result.timer) } : {}),
+				...(result.removed ? { id: result.removed } : {}),
+			});
+		} catch (error) {
+			if (!(error instanceof TimerError)) throw error;
+			json(res, timerErrorStatus(error), { error: error.code, message: error.message });
+		}
+	};
+	router.get("/timers", (_req, res) => {
+		const now = Date.now();
+		json(res, 200, { serverTime: now, timers: timers.list().map((timer) => timers.read(timer, now)) });
+	});
+	router.post("/timers", (req, res) => runTimer(res, "create", asObject(req.body), 201));
+	router.get("/timers/:ref", (req, res) => {
+		const timer = timers.find(req.params["ref"]!);
+		if (!timer) return notFound(res, "timer", req.params["ref"]!);
+		json(res, 200, { timer: timers.read(timer) });
+	});
+	const updateTimer: Handler = (req, res) =>
+		runTimer(res, "update", { ...asObject(req.body), timer: req.params["ref"] });
+	router.put("/timers/:ref", updateTimer);
+	router.patch("/timers/:ref", updateTimer);
+	router.delete("/timers/:ref", (req, res) => runTimer(res, "remove", { timer: req.params["ref"] }));
+	/** start · pause · toggle · reset · restart · set {value} · adjust {delta}; the body or the query. */
+	router.post("/timers/:ref/:command", (req, res) => {
+		const command = req.params["command"]!;
+		if (command === "create" || command === "update" || command === "remove") {
+			return json(res, 400, { error: "bad_request", message: `Use ${command === "create" ? "POST /timers" : command === "update" ? "PATCH /timers/:id" : "DELETE /timers/:id"}` });
+		}
+		runTimer(res, command, { ...req.query, ...asObject(req.body), timer: req.params["ref"] });
+	});
+
 	// ------------------------------------------------------------------ outs
 	router.get("/outs", (_req, res) => {
 		json(res, 200, { outs: store.listOuts() });
@@ -372,7 +415,7 @@ export function createApiRouter(
 
 // --------------------------------------------------------------------- utils
 
-export function buildPublicState(store: Store, config: BundleConfig): PublicState {
+export function buildPublicState(store: Store, config: BundleConfig, timers?: Timers): PublicState {
 	const active = store.activeTitle.value ?? {
 		templateId: null,
 		visible: false,
@@ -410,6 +453,17 @@ export function buildPublicState(store: Store, config: BundleConfig): PublicStat
 			id: template.id,
 			name: template.name,
 			kind: template.kind,
+		}));
+	}
+	if (timers) {
+		state.timers = timers.list().map((timer) => ({
+			id: timer.id,
+			name: timer.name,
+			key: timer.key,
+			mode: timer.mode,
+			running: timer.running,
+			durationMs: timer.durationMs,
+			groups: timer.groups,
 		}));
 	}
 	return state;

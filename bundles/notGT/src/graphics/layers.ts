@@ -72,6 +72,7 @@ export function applyLayerStyle(el: HTMLElement, layer: Layer): void {
 		st.lineHeight = String(s.lineHeight ?? 1.2);
 		st.letterSpacing = s.letterSpacing !== undefined ? `${s.letterSpacing}px` : "";
 		st.textTransform = s.textTransform ?? "none";
+		st.fontVariantNumeric = s.tabularNums ? "tabular-nums" : "";
 		st.padding = s.padding !== undefined ? `${s.padding}px` : "0";
 		st.whiteSpace = "pre-wrap";
 		st.overflow = "visible";

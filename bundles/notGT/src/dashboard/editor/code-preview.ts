@@ -9,14 +9,16 @@
  *     `graphics/animations/`) is fetched and gets that same runtime injected,
  *     so what the dashboard shows is what goes on air.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import {
 	buildCodeDocument,
 	buildSourcedDocument,
 	codeSource,
 } from "../../graphics/code-runtime";
-import type { TitleData, TitleTemplate } from "../../shared/types";
+import { templateUsesTimers } from "../../shared/timer";
+import { CODE_MESSAGES, type TitleData, type TitleTemplate } from "../../shared/types";
+import { useLiveData } from "../shared";
 
 export function useCodeDocument(
 	template: TitleTemplate | undefined,
@@ -54,4 +56,32 @@ export function useCodeDocument(
 	}, [template, data, restartToken]);
 
 	return doc;
+}
+
+/**
+ * Keeps the timers of a code preview ticking. The document is built without
+ * them — a document that changed every second would restart the animation
+ * every second — and the variables, timers in them, are posted into the
+ * frame as the out page does: once it has loaded (the returned callback is
+ * its `onLoad`) and whenever what a timer shows changes. Only for an
+ * animation that reads a timer.
+ */
+export function useTimerFeed(
+	frame: RefObject<HTMLIFrameElement | null>,
+	template: TitleTemplate | undefined,
+	data: TitleData,
+): () => void {
+	const uses = Boolean(template && templateUsesTimers(template));
+	const live = useLiveData(data, uses);
+	const latest = useRef(live);
+	latest.current = live;
+	const post = useCallback(() => {
+		if (!uses) return;
+		// A plain copy: the variables are the Replicant's own proxies, which
+		// `postMessage` cannot clone.
+		const data = JSON.parse(JSON.stringify(latest.current)) as TitleData;
+		frame.current?.contentWindow?.postMessage({ type: CODE_MESSAGES.data, data }, "*");
+	}, [frame, uses]);
+	useEffect(post, [live, post]);
+	return post;
 }

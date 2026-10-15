@@ -8,15 +8,27 @@
  * edited or deleted, and comes in the dashboard's language.
  */
 import { createCodeSampleTemplate, createDefaultTemplate } from "../defaults";
+import type { TimerFormat, TimerMode } from "../timer";
 import type { TemplateKind, TitleData, TitleTemplate } from "../types";
 import { createExampleTemplates } from "./index";
 import { kineticExample } from "./kinetic";
 import { layerExamples } from "./layers";
 import { localizeExampleText } from "./localize";
 import { pollExample } from "./poll";
+import { timerExample } from "./timer";
 
 export type ExampleLang = "en" | "ru";
 export type Localized = Record<ExampleLang, string>;
+
+/** A timer an example shows; made when there is no timer with that key yet. */
+export interface ExampleTimer {
+	key: string;
+	name: string;
+	mode?: TimerMode;
+	durationMs?: number;
+	overtime?: boolean;
+	format?: TimerFormat;
+}
 
 /** A template without the fields that are assigned when it is added. */
 export type ExampleTemplate = Omit<TitleTemplate, "id" | "name" | "createdAt" | "updatedAt">;
@@ -31,6 +43,8 @@ export interface GalleryExample {
 	template(lang: ExampleLang): ExampleTemplate;
 	/** Sample values for the variables it reads; only missing ones are added. */
 	data?(lang: ExampleLang): TitleData;
+	/** The timers it shows; only missing ones are made. */
+	timers?(lang: ExampleLang): ExampleTimer[];
 	/**
 	 * Where it sits when placed on an out, in percent of the out. Absent = the
 	 * top-left corner, which is right for a full-frame animation.
@@ -113,10 +127,20 @@ const countdown: GalleryExample = {
 	kind: "code",
 	name: { en: "Countdown", ru: "Обратный отсчёт" },
 	summary: {
-		en: "Counts down to a target time, with a ring of time left and three states.",
-		ru: "Отсчёт до заданного времени: кольцо остатка и три состояния.",
+		en: "Shows a timer of the Control panel: days to seconds, a ring of time left, paused and time-up states.",
+		ru: "Показывает таймер из панели Control: дни, часы, минуты, секунды, кольцо остатка, пауза и «время вышло».",
 	},
 	template: (lang) => seededCode("example-countdown", lang),
+	data: () => ({ countdown: { timer: "countdown" } }),
+	timers: (lang) => [
+		{
+			key: "countdown",
+			name: lang === "ru" ? "До начала" : "Starts in",
+			mode: "down",
+			durationMs: 10 * 60_000,
+			overtime: false,
+		},
+	],
 };
 
 const clock: GalleryExample = {
@@ -148,6 +172,7 @@ export const GALLERY: GalleryExample[] = [
 	kineticExample,
 	pollExample,
 	ticker,
+	timerExample,
 	countdown,
 	clock,
 	weather,

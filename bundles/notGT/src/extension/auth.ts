@@ -85,12 +85,20 @@ export interface Principal {
 	readonly group: { id: string; name: string } | null;
 	/** The outs within reach right now; null = every out. Follows the team as it is edited. */
 	outs(): string[] | null;
+	/** The groups within reach right now, for the timers shared with them; null = every group. */
+	groups(): string[] | null;
 	/** Still let in: the key was not revoked, the user not removed. */
 	valid(): boolean;
 }
 
 /** The one an open server lets in, and the holder of the global key. */
-export const EVERYTHING: Principal = { user: null, group: null, outs: () => null, valid: () => true };
+export const EVERYTHING: Principal = {
+	user: null,
+	group: null,
+	outs: () => null,
+	groups: () => null,
+	valid: () => true,
+};
 
 export function createAccess(nodecg: ServerAPI, team: Team): Access {
 	const config = (nodecg.bundleConfig ?? {}) as BundleConfig;
@@ -145,6 +153,7 @@ export function createAccess(nodecg: ServerAPI, team: Team): Access {
 						user: null,
 						group,
 						outs: () => team.groupOuts(group.id) ?? [],
+						groups: () => [group.id],
 						valid: () => team.findGroup(key)?.id === group.id,
 					};
 				}
@@ -157,6 +166,7 @@ export function createAccess(nodecg: ServerAPI, team: Team): Access {
 						const outs = team.outsOf(username);
 						return outs === "all" ? null : outs;
 					},
+					groups: () => team.groupsOf(username),
 					valid: () => team.roleOf(username) !== undefined,
 				};
 			},

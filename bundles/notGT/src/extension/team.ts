@@ -63,6 +63,10 @@ export interface Team {
 	roleOf(username: string | null | undefined): TeamRole | undefined;
 	/** The outs a user works with: `"all"` for an administrator. */
 	outsOf(username: string | null | undefined): "all" | string[];
+	/** The groups a user belongs to: `null` for an administrator, who reaches all of them. */
+	groupsOf(username: string | null | undefined): string[] | null;
+	/** Whether a group of that id exists. */
+	hasGroup(id: string): boolean;
 	me(username: string | null | undefined): TeamMe;
 	state(): TeamState;
 
@@ -218,6 +222,12 @@ export function createTeam(nodecg: ServerAPI, store: Store, file: string): Team 
 		return [...outs].filter(outExists);
 	}
 
+	function groupsOf(username: string | null | undefined): string[] | null {
+		if (roleOf(username) === "admin") return null;
+		const user = username ? findUser(username) : undefined;
+		return user ? knownGroups(user.groups) : [];
+	}
+
 	function outKey(outId: string): string | undefined {
 		if (!loginEnabled || !outExists(outId)) return undefined;
 		if (!data.outKeys[outId]) {
@@ -296,6 +306,8 @@ export function createTeam(nodecg: ServerAPI, store: Store, file: string): Team 
 		loginEnabled,
 		roleOf,
 		outsOf,
+		groupsOf,
+		hasGroup: (id) => data.groups.some((group) => group.id === id),
 
 		me(username) {
 			const role = roleOf(username) ?? "member";
@@ -315,6 +327,7 @@ export function createTeam(nodecg: ServerAPI, store: Store, file: string): Team 
 				groups: data.groups
 					.filter((group) => role === "admin" || user?.groups.includes(group.id))
 					.map((group) => ({ id: group.id, name: group.name })),
+				allGroups: data.groups.map((group) => ({ id: group.id, name: group.name })),
 				outKeys,
 				defaultPassword: Boolean(user?.defaultPassword),
 			};

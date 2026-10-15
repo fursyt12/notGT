@@ -41,7 +41,8 @@ import type {
 } from "../shared/types";
 import type { GalleryExample } from "../shared/examples/gallery";
 import { EditorCanvas } from "./editor/canvas";
-import { useCodeDocument } from "./editor/code-preview";
+import { useCodeDocument, useTimerFeed } from "./editor/code-preview";
+import { TIMER_VAR, type Timer, layersUseTimers, timerPaths } from "../shared/timer";
 import { Splitter, useDeskFullscreen, useEditorLayout, type LayoutEdge } from "./editor/layout";
 import { MotionTimeline, TransitionFields } from "./editor/motion";
 import {
@@ -71,6 +72,7 @@ import {
 	addItem,
 	clone,
 	copyText,
+	createTimer,
 	defaultPlayback,
 	deleteTemplate,
 	duplicateTemplate,
@@ -90,6 +92,8 @@ import {
 	updateItem,
 	updateItemPlayback,
 	useActiveTitle,
+	useAllTimers,
+	useLiveData,
 	useOuts,
 	useRuntime,
 	useSelection,
@@ -112,12 +116,56 @@ import {
 const LAYER_TYPES: LayerType[] = ["text", "shape", "image", "gif", "video"];
 
 /** The "add a layer" choices — the toolbar and the layer list share them. */
-function layerMenu(onAdd: (type: LayerType) => void): MenuItem[] {
-	return LAYER_TYPES.map((type) => ({
+function layerMenu(onAdd: (type: LayerType) => void, timer?: MenuItem): MenuItem[] {
+	const items: MenuItem[] = LAYER_TYPES.map((type) => ({
 		label: t(LAYER_TYPE_LABEL[type]),
 		icon: LAYER_ICON[type],
 		onSelect: () => onAdd(type),
 	}));
+	return timer ? [...items, timer] : items;
+}
+
+/**
+ * A timer on its own: a text layer that shows a timer of the Control panel,
+ * its digits all one width so it does not jitter as it counts.
+ */
+function timerLayer(layer: Layer, key: string): Layer {
+	return {
+		...layer,
+		name: t("Timer"),
+		text: "00:00",
+		binding: `${TIMER_VAR}.${key}.text`,
+		// As wide as its digits: a fixed width would wrap them on a small box.
+		width: undefined,
+		style: { ...layer.style, fontSize: 72, tabularNums: true },
+	};
+}
+
+/** "Add layer → Timer": a layer for one of the timers there are, or for a new one. */
+function timerMenuItem(timers: Timer[], onAdd: (key: string) => void, onCreate: () => void): MenuItem {
+	if (timers.length === 0) {
+		return {
+			label: t("Timer"),
+			hint: t("Makes a timer to start in Control"),
+			icon: "timer",
+			separated: true,
+			onSelect: onCreate,
+		};
+	}
+	return {
+		label: t("Timer"),
+		icon: "timer",
+		separated: true,
+		children: [
+			...timers.map((timer) => ({
+				label: timer.name,
+				hint: `{{${TIMER_VAR}.${timer.key}.text}}`,
+				icon: "timer" as const,
+				onSelect: () => onAdd(timer.key),
+			})),
+			{ label: t("New timer"), icon: "plus", separated: true, onSelect: onCreate },
+		],
+	};
 }
 
 /** The ways to start an animation: from scratch, or from an example. */
@@ -506,6 +554,7 @@ function LayerList({
 	onMove,
 	onDelete,
 	onAdd,
+	timerItem,
 }: {
 	layers: Layer[];
 	selectedLayerId: string | null;
@@ -515,13 +564,14 @@ function LayerList({
 	onMove: (id: string, delta: number) => void;
 	onDelete: (id: string) => void;
 	onAdd: (type: LayerType) => void;
+	timerItem?: MenuItem;
 }) {
 	const ordered = useMemo(() => sortByZ(layers).reverse(), [layers]);
 	return (
 		<section className="ed-group">
 			<header className="ed-group__head">
 				<h3>{t("Layers")}</h3>
-				<Menu className="small" icon="plus" label={t("Add layer")} items={layerMenu(onAdd)} />
+				<Menu className="small" icon="plus" label={t("Add layer")} items={layerMenu(onAdd, timerItem)} />
 			</header>
 			{ordered.length === 0 ? (
 				<p className="ed-hint ed-group__hint">
@@ -1943,6 +1993,7 @@ function CodeDock({
 	const doc = useCodeDocument(template, data, nonce);
 	const box = useElementSize<HTMLDivElement>();
 	const frameRef = useRef<HTMLIFrameElement | null>(null);
+	const feedTimers = useTimerFeed(frameRef, template, data);
 
 	// The preview runs the real runtime, so it reports the same hooks the out
 	// page will get. Only this dock's own frame is listened to: the canvas
@@ -2046,6 +2097,7 @@ function CodeDock({
 						{doc ? (
 							<iframe
 								ref={frameRef}
+								onLoad={feedTimers}
 								className="ed-preview-frame"
 								title={t("Code animation preview")}
 								sandbox="allow-scripts allow-same-origin"
@@ -2095,6 +2147,7 @@ export function EditorApp() {
 	const templates = useTemplates();
 	const outs = useOuts();
 	const data = useTitleData();
+	const allTimers = useAllTimers();
 	const runtime = useRuntime();
 	const selection = useSelection();
 	const active = useActiveTitle();
@@ -2451,7 +2504,7 @@ export function EditorApp() {
 		return { item, template: saved };
 	};
 
-	const addLayer = (type: LayerType) => {
+	const addLayer = (type: LayerType, shape?: (layer: Layer) => Layer) => {
 		let working = draft && draft.kind === "layers" ? draft : null;
 		if (!working) {
 			if (editingTemplateId && !confirmDiscard()) return;
@@ -2459,7 +2512,7 @@ export function EditorApp() {
 			if (!started) return;
 			working = started.template;
 		}
-		const layer = makeLayer(type, 1);
+		const layer = shape ? shape(makeLayer(type, 1)) : makeLayer(type, 1);
 		const layers = normalizeZ(working.layers ?? []);
 		layer.z = layers.length + 1;
 		const next = { ...working, layers: [...layers, layer] };
@@ -2670,7 +2723,28 @@ export function EditorApp() {
 
 	// ---------------------------------------------------------------- derive
 
-	const dataPaths = useMemo(() => flattenData(data).map((row) => row.path), [data]);
+	const dataPaths = useMemo(
+		() => [...flattenData(data).map((row) => row.path), ...timerPaths(allTimers)],
+		[data, allTimers],
+	);
+	// The canvas shows the timers ticking, as the out will, while a layer of an
+	// animation on it shows one. A code animation is fed by its own frame.
+	const previewUsesTimers = useMemo(
+		() =>
+			[draft, ...items.map((item) => templates.find((template) => template.id === item.templateId))].some(
+				(template) => template?.kind === "layers" && layersUseTimers(template),
+			),
+		[draft, items, templates],
+	);
+	const liveData = useLiveData(data, previewUsesTimers);
+	const addTimerLayer = (key: string) => addLayer("text", (layer) => timerLayer(layer, key));
+	const timerItem = timerMenuItem(allTimers, addTimerLayer, () => {
+		void createTimer({ name: t("Timer {n}", { n: allTimers.length + 1 }) })
+			.then((result) => {
+				if (result.timer) addTimerLayer(result.timer.key);
+			})
+			.catch((error: unknown) => window.alert(String((error as Error)?.message ?? error)));
+	});
 	const templatesLoaded = getDb().templates.value !== undefined;
 	const outsLoaded = getDb().outs.value !== undefined;
 	const draftLayers = draft?.layers ?? [];
@@ -2698,7 +2772,7 @@ export function EditorApp() {
 	// the desk when it goes full screen: there the toolbar is out of sight.
 	const canvasTools = (
 		<>
-			<Menu label={t("Add layer")} items={layerMenu(addLayer)}>
+			<Menu label={t("Add layer")} items={layerMenu(addLayer, timerItem)}>
 				<Icon name="plus" size={14} />
 				{t("Layer")}
 				<Icon name="chevronDown" size={12} />
@@ -2839,6 +2913,7 @@ export function EditorApp() {
 							onMove={moveLayer}
 							onDelete={deleteLayer}
 							onAdd={addLayer}
+							timerItem={timerItem}
 						/>
 					) : null}
 
@@ -2872,7 +2947,7 @@ export function EditorApp() {
 							liveDraft={!activeItem && onAir}
 							previewPlaying={previewPlaying}
 							restartToken={restartToken}
-							data={data}
+							data={liveData}
 							selection={selection}
 							onSelectItem={handleSelectItem}
 							onSelectLayer={setSelectedLayerId}
@@ -2968,7 +3043,7 @@ export function EditorApp() {
 								selectedLayer ? (
 									<LayerInspector
 										layer={selectedLayer}
-										data={data}
+										data={liveData}
 										selection={selection}
 										dataPaths={dataPaths}
 										previewPlaying={previewPlaying}
