@@ -76,3 +76,6 @@ tmp_node_modules
 
 # release asset
 /*.tgz
+
+# Local compose settings: passwords and keys live there.
+/.env

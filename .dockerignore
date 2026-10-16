@@ -32,3 +32,6 @@ node_modules
 
 # NOTE: `bundles/` is intentionally NOT ignored here — the notGT bundle is
 # copied into the image and built there by the `bundle-build` stage.
+
+# Local compose settings (passwords) — never baked into an image.
+/.env
