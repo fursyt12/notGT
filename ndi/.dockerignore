@@ -1,0 +1,3 @@
+node_modules
+*.pam
+.e2e

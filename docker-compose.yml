@@ -18,6 +18,18 @@
 #
 # The *API* token is NOT configured here: it lives in the bundle config that is
 # bind mounted below (./bundles/notGT/cfg/notGT.json).
+#
+# NDI (for Resolume Arena, vMix and the rest that take NDI, not a web page):
+# two lines in `.env` and the NDI sender starts next to the server —
+#
+#   COMPOSE_PROFILES=ndi
+#   NDI_ACCEPT_LICENSE=yes      # the NDI SDK licence; the build downloads NDI's library
+#
+#   docker compose up --build -d
+#
+# then switch NDI on for an out in Titles & Outs. Linux hosts only (a Raspberry
+# Pi included): the sender needs the host's network for NDI. See the `ndi`
+# service below and ndi/README.md.
 # ---------------------------------------------------------------------------
 
 services:
@@ -46,6 +58,9 @@ services:
       NOTGT_LOGIN_USER: "${NOTGT_LOGIN_USER:-}"
       NOTGT_LOGIN_PASSWORD: "${NOTGT_LOGIN_PASSWORD:-}"
       NOTGT_SESSION_SECRET: "${NOTGT_SESSION_SECRET:-}"
+      # Where the key of the NDI senders is kept for the `ndi` service below.
+      # Harmless without it: a small file in a volume of its own.
+      NOTGT_NDI_KEY_FILE: /run/notgt-ndi/key
 
     # ---------------------------------------------------------------------
     # PERSISTENCE (explicit acceptance criterion)
@@ -65,6 +80,9 @@ services:
       # (and tweak the other keys) without rebuilding the image.
       # The bundle reads it at boot -> restart the container after editing.
       - ./bundles/notGT/cfg:/opt/nodecg/bundles/notGT/cfg
+      # Shared with the `ndi` service: the senders' key, so the sender gets in
+      # with nothing copied by hand.
+      - notgt-ndi:/run/notgt-ndi
       # Excel workbooks to track from the Data panel ("Track a file on the
       # server") must be visible inside the container. Uncomment, put the
       # workbooks in ./data, and give the path as /data/<file>.xlsx.
@@ -154,10 +172,52 @@ services:
     #   # `PathPrefix(`/bundles`)` and protect only `/dashboard`.
     #   # -------------------------------------------------------------------
 
+  # -------------------------------------------------------------------------
+  # NDI SENDER (optional, OFF by default — the `ndi` profile)
+  #
+  # Renders every out that has NDI switched on in the dashboard and sends it
+  # as an NDI source. Switched on by COMPOSE_PROFILES=ndi in `.env` (or
+  # `docker compose --profile ndi up -d`); the build needs
+  # NDI_ACCEPT_LICENSE=yes, because it downloads the NDI library from NDI.
+  #
+  # `network_mode: host` is not optional: NDI finds sources with mDNS and
+  # receivers connect straight to the sender, neither of which crosses
+  # Docker's bridge. That is why this works on Linux (a Raspberry Pi
+  # included) and not on Docker Desktop for Mac or Windows — there, run the
+  # sender natively (ndi/README.md). The sender reaches the server on the
+  # port published above.
+  # -------------------------------------------------------------------------
+  ndi:
+    profiles: ["ndi"]
+    build:
+      context: ./ndi
+      args:
+        NPM_REGISTRY: "${NPM_REGISTRY:-}"
+        NDI_ACCEPT_LICENSE: "${NDI_ACCEPT_LICENSE:-}"
+    image: notgt-ndi:latest
+    container_name: notgt-ndi
+    restart: unless-stopped
+    network_mode: host
+    # Chromium keeps its pictures in shared memory; Docker's default 64 MB is
+    # too little for a few 1080p outs.
+    shm_size: "1gb"
+    depends_on:
+      notgt:
+        condition: service_healthy
+    environment:
+      NOTGT_SERVER: "http://127.0.0.1:${NOTGT_PORT:-9090}"
+      # Written by the notgt service; read again whenever it changes.
+      NOTGT_TOKEN_FILE: /run/notgt-ndi/key
+      # How this sender is named in the dashboard. Empty = the host name.
+      NOTGT_NDI_ID: "${NOTGT_NDI_ID:-}"
+    volumes:
+      - notgt-ndi:/run/notgt-ndi:ro
+
 volumes:
   notgt-db:
   notgt-assets:
   notgt-logs:
+  notgt-ndi:
 # ---------------------------------------------------------------------------
 # TRAEFIK network — only for the TRAEFIK block above.
 #

@@ -8,6 +8,7 @@
  *
  * See README.md for the flags and for running it on a Raspberry Pi.
  */
+import fs from "node:fs";
 import os from "node:os";
 import { createRequire } from "node:module";
 import { app } from "electron";
@@ -25,7 +26,9 @@ const { version } = require("./package.json");
 const HELP = `notGT NDI sender ${version}
 
   --server <url>     notGT server (default http://127.0.0.1:9090, or NOTGT_SERVER)
-  --token <key>      apiToken of the server (or NOTGT_TOKEN)
+  --token <key>      the senders' key, or the server's apiToken (or NOTGT_TOKEN)
+  --token-file <f>   read the key from this file, again whenever it changes
+                     (or NOTGT_TOKEN_FILE; what docker-compose.yml uses)
   --id <name>        how this sender is named in the dashboard (default: host name)
   --poll <ms>        how often to ask the server what to send (default 2000)
 
@@ -154,12 +157,28 @@ async function start() {
 		const server = String(
 			args.server || process.env.NOTGT_SERVER || "http://127.0.0.1:9090",
 		);
-		const client = new ServerClient({
-			server,
-			token:
-				typeof args.token === "string" ? args.token : process.env.NOTGT_TOKEN,
-		});
-		const senderId = typeof args.id === "string" ? args.id : os.hostname();
+		const tokenFile =
+			typeof args["token-file"] === "string"
+				? args["token-file"]
+				: process.env.NOTGT_TOKEN_FILE;
+		const fixedToken =
+			typeof args.token === "string" ? args.token : process.env.NOTGT_TOKEN;
+		// A file is read on every request: the server rewrites it when the key
+		// is replaced, and it may not be there yet when the sender starts.
+		const token = tokenFile
+			? () => {
+					try {
+						return fs.readFileSync(tokenFile, "utf8").trim() || fixedToken;
+					} catch {
+						return fixedToken;
+					}
+				}
+			: fixedToken;
+		const client = new ServerClient({ server, token });
+		const senderId =
+			typeof args.id === "string"
+				? args.id
+				: process.env.NOTGT_NDI_ID || os.hostname();
 		const pollMs = Math.max(500, Number(args.poll) || 2000);
 		let lastProblem = "";
 		log(`following ${server}`);

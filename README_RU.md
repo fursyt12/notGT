@@ -119,6 +119,11 @@ docker compose up --build -d      # http://localhost:9090/dashboard/
 сервисом нужны имя хоста и TLS — смотрите закомментированный блок TRAEFIK в
 `docker-compose.yml`.
 
+**NDI** для Resolume и подобных идёт в комплекте на Linux-хосте (и на Raspberry Pi):
+впишите в `.env` `COMPOSE_PROFILES=ndi` и `NDI_ACCEPT_LICENSE=yes` (лицензия NDI SDK —
+сборка скачивает библиотеку NDI), выполните тот же `docker compose up --build -d` и
+включите NDI у out'а. См. [ndi/README_RU.md](ndi/README_RU.md#docker).
+
 <details>
 <summary>Если образ не собирается</summary>
 

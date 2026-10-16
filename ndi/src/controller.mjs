@@ -151,9 +151,11 @@ export class ServerClient {
 	}
 
 	headers(extra = {}) {
+		// The key may come from a file that is rewritten when the key changes.
+		const token = typeof this.token === "function" ? this.token() : this.token;
 		return {
 			Accept: "application/json",
-			...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
 			...extra,
 		};
 	}

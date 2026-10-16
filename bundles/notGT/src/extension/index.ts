@@ -4,7 +4,7 @@ import { BUNDLE_NAME, MESSAGES } from "../shared/types";
 import { createApiRouter } from "./api";
 import { createAccess, type Handler } from "./auth";
 import { createMediaRouter } from "./media";
-import { createNdiHub } from "./ndi";
+import { createNdiHub, keepNdiKeyFile } from "./ndi";
 import { probeDurationMs } from "./video-duration";
 import { syncFileAnimations } from "./file-animations";
 import { createSources } from "./sources";
@@ -98,6 +98,17 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	const access = createAccess(nodecg, team);
 	// The outs that also go out over NDI, for the senders to pick up.
 	const ndi = createNdiHub(nodecg, store);
+	// docker-compose.yml's NDI sender reads its key from a folder it shares
+	// with this container. Without the sign-in the key is the `apiToken`, if any.
+	const ndiKeyFile = process.env["NOTGT_NDI_KEY_FILE"]?.trim();
+	if (ndiKeyFile) {
+		keepNdiKeyFile(
+			nodecg,
+			ndiKeyFile,
+			() => team.ndiKey() ?? ((nodecg.bundleConfig?.apiToken as string | undefined) ?? "").trim(),
+			(listener) => team.onChange(listener),
+		);
+	}
 	const router = createApiRouter(nodecg, store, scheduler, {
 		access,
 		syncAnimations,

@@ -120,6 +120,11 @@ away. No reverse proxy and no `.env` are needed. Set `NOTGT_PORT` in a `.env` (c
 see the commented-out TRAEFIK block in `docker-compose.yml` for a hostname and TLS in
 front of it.
 
+**NDI** for Resolume and the like comes along on a Linux host (a Raspberry Pi included):
+put `COMPOSE_PROFILES=ndi` and `NDI_ACCEPT_LICENSE=yes` (the NDI SDK licence — the build
+downloads NDI's library) in `.env`, run the same `docker compose up --build -d`, and
+switch NDI on for an out. See [ndi/README.md](ndi/README.md#docker).
+
 <details>
 <summary>If the image does not build</summary>
 

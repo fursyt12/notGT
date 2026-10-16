@@ -1307,6 +1307,12 @@ curl http://localhost:9090/api/ndi
 
 A sender that stops reporting drops out of the dashboard after ten seconds.
 
+With Docker Compose the sender can run next to the server (the `ndi` profile, see
+[ndi/README.md](../../ndi/README.md#docker)). The server then keeps the senders' key in
+the file `NOTGT_NDI_KEY_FILE` names — `docker-compose.yml` sets it — for the sender to
+read: the key while the sign-in is on, the `apiToken` without it, empty when the API is
+open.
+
 ## Persistence
 
 NodeCG keeps the Replicants in `db/` (in Docker, in the `notgt-db` volume). What that

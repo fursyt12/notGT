@@ -131,3 +131,21 @@ test("the client brings the key and explains a refusal", async () => {
 	assert.equal(calls[1].init.method, "POST");
 	assert.equal(calls[1].init.body, JSON.stringify({ id: "pi" }));
 });
+
+test("a key given as a function is read on every request", async () => {
+	const seen = [];
+	let key = "";
+	const fetch = async (_url, init) => {
+		seen.push(init.headers.Authorization);
+		return new Response(JSON.stringify({ outs: [] }));
+	};
+	const client = new ServerClient({
+		server: "http://notgt.local:9090",
+		token: () => key,
+		fetch,
+	});
+	await client.outputs();
+	key = "ndi_new";
+	await client.outputs();
+	assert.deepEqual(seen, [undefined, "Bearer ndi_new"]);
+});

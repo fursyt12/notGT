@@ -119,6 +119,46 @@ needs no key, unless `apiToken` is set — then `--token` is the `apiToken`.
 `NOTGT_NDI_DEBUG=1` makes it say, every two seconds, what each source sends and what that
 costs.
 
+## Docker
+
+On a Linux machine running notGT with Docker Compose — a Raspberry Pi included — the
+sender comes with it. Two lines in `.env` next to `docker-compose.yml`:
+
+```bash
+COMPOSE_PROFILES=ndi
+NDI_ACCEPT_LICENSE=yes
+```
+
+```bash
+docker compose up --build -d
+```
+
+Then switch NDI on for an out in **Titles & Outs**; it shows up in Resolume as
+`<this machine> (notGT Main)`. Nothing else to set up:
+
+- **The NDI library** is downloaded from NDI while the image is built — only with
+  `NDI_ACCEPT_LICENSE=yes`, which accepts the
+  [NDI SDK License Agreement](https://ndi.video/for-developers/ndi-sdk/). Without it the
+  build stops and says so. The image keeps a copy of the licence in
+  `/usr/local/share/ndi/`.
+- **The key** is handed over by the server: it writes the senders' key into a volume the
+  two containers share, and the sender reads it from there — again when it is replaced in
+  the dashboard.
+- **The network**: the sender runs on the host's network (`network_mode: host`). It has
+  to — NDI finds sources with mDNS and receivers connect straight to the sender, and
+  neither crosses Docker's bridge. It reaches the server on the published port
+  (`NOTGT_PORT`).
+- **The architecture** is the machine's own: x86-64, arm64 and 32-bit ARM each get their
+  Electron and their NDI library.
+
+`NOTGT_NDI_ID` in `.env` names the sender in the dashboard (the host name by default).
+`docker compose logs -f ndi` shows what it sends; `docker compose exec ndi node
+scripts/probe.mjs --source "notGT Main"` checks the source from inside.
+
+**Docker Desktop (macOS, Windows)** has no real host network for containers, so NDI from
+a container does not reach the LAN there. Run the sender natively instead
+([Starting it](#starting-it)) — the server can stay in Docker.
+
 ## Raspberry Pi
 
 A Raspberry Pi 4 or 5 with the 64-bit Raspberry Pi OS — Lite (no desktop) is enough: on a
