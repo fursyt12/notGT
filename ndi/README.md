@@ -180,7 +180,9 @@ Linux with no display the sender renders with none.
    sudo ldconfig
    ```
 
-   (`arm-rpi4-linux-gnueabihf` is the folder for a 32-bit system.)
+   (`arm-rpi4-linux-gnueabihf` is the folder for a 32-bit system.) NDI finds sources
+   through Avahi, which Raspberry Pi OS runs already; elsewhere:
+   `sudo systemctl enable --now avahi-daemon`.
 
 3. **What Chromium needs**, on Lite:
 
@@ -235,12 +237,25 @@ it). `--ips 10.0.0.5` reaches a machine that mDNS does not.
 
 - **“The NDI library was not found”** — install the NDI runtime (see above) or set
   `NDI_LIB`. The message lists every place it looked.
+- **The source is not seen in OBS, Resolume or anywhere** — on **Linux** (a Pi included)
+  NDI finds and announces sources through **Avahi**, exactly as DistroAV in OBS does: with
+  `avahi-daemon` not running, nothing on that machine is seen, and it sees nothing. The
+  sender says so in its log and under the out in the dashboard. Start it:
+  `sudo systemctl enable --now avahi-daemon` (Raspberry Pi OS runs it already). Docker
+  Compose hands the host's Avahi to the sender — it has to run on the host.
 - **The source is not seen in Resolume** — NDI finds sources with mDNS (UDP 5353) and
   sends over TCP from port 5960 up; let both through the firewall of both machines. On
   networks without mDNS, NDI Access Manager or a Discovery Server tell receivers where
   to look.
 - **The sender says the server refused the key** — the key was replaced, or this is the
   `apiToken` of another server. Copy the command again from **NDI senders**.
+- **“the picture goes out 1280×720 instead of 1920×1080”** — on Windows and macOS the
+  sender draws in a hidden window, and the desktop does not let a window be bigger than
+  the screen at its display scaling (a 1920×1080 screen at 150% is 1280×720). The sender
+  first tries drawing it at 2× or 3×; where that does not help it sends the whole out,
+  smaller, and says so. Lower the display scaling, or choose a smaller picture size in
+  the NDI settings. On Linux this does not happen: there the sender always draws with no
+  display (`NOTGT_NDI_DISPLAY=1` makes it use the desktop's).
 - **“No NDI sender has picked it up yet”** — no sender reports to this server: it is not
   running, or it follows another address. Its own output says which.
 - **Chromium does not start on Linux** (`The SUID sandbox helper binary was found, but

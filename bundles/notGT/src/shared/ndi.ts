@@ -53,6 +53,8 @@ export interface NdiOutStatus {
 	width: number;
 	height: number;
 	error?: string;
+	/** It is sent, but not as asked — e.g. smaller than the out. */
+	warning?: string;
 }
 
 /** What one sender said last. */

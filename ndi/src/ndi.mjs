@@ -120,6 +120,19 @@ function findFiles(dir, name, depth) {
 	return found.sort().reverse();
 }
 
+/**
+ * On Linux the NDI library finds and announces sources through Avahi: with
+ * avahi-daemon not running a source is sent, and nobody — OBS with DistroAV,
+ * Resolume, NDI Studio Monitor — finds it. Returns what is wrong, or
+ * `undefined` when discovery can work.
+ */
+export function discoveryProblem(platform = process.platform) {
+	if (platform !== "linux") return undefined;
+	const sockets = ["/run/avahi-daemon/socket", "/var/run/avahi-daemon/socket"];
+	if (sockets.some((socket) => fs.existsSync(socket))) return undefined;
+	return "avahi-daemon is not running here, so NDI receivers cannot find the source — start it: sudo systemctl enable --now avahi-daemon";
+}
+
 /** Which folder of the Linux SDK holds the library for this machine. */
 export function linuxSdkFolder(arch = process.arch) {
 	if (arch === "x64") return "x86_64-linux-gnu";

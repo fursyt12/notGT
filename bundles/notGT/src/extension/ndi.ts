@@ -46,6 +46,7 @@ function outStatus(value: unknown): NdiOutStatus | undefined {
 	if (!id) return undefined;
 	const state = STATES.includes(input["state"] as NdiState) ? (input["state"] as NdiState) : "error";
 	const error = text(input["error"], 300);
+	const warning = text(input["warning"], 300);
 	return {
 		id,
 		ndiName: text(input["ndiName"], 120),
@@ -55,6 +56,7 @@ function outStatus(value: unknown): NdiOutStatus | undefined {
 		width: Math.round(count(input["width"])),
 		height: Math.round(count(input["height"])),
 		...(error ? { error } : {}),
+		...(warning ? { warning } : {}),
 	};
 }
 

@@ -100,9 +100,10 @@ app
 	});
 
 async function start() {
-	const { loadNdi, NdiMissingError, REDIST_URL } = await import(
-		"./src/ndi.mjs"
-	);
+	const { loadNdi, NdiMissingError, REDIST_URL, discoveryProblem } =
+		await import("./src/ndi.mjs");
+	let discovery = discoveryProblem();
+	if (discovery) log(discovery);
 	const { Output } = await import("./src/output.mjs");
 
 	let ndi;
@@ -209,13 +210,24 @@ async function start() {
 		const tick = async () => {
 			try {
 				controller.apply(await client.outputs());
+				// Checked every round: starting Avahi is enough, no restart.
+				const now = discoveryProblem();
+				if (now !== discovery)
+					log(now ?? "avahi-daemon is running: receivers can find the sources");
+				discovery = now;
 				await client.report({
 					id: senderId,
 					host: os.hostname(),
 					platform: `${process.platform}-${process.arch}`,
 					version,
 					ndi: ndi?.version ?? "",
-					outs: controller.status(),
+					outs: controller
+						.status()
+						.map((out) =>
+							discovery && !out.warning && !out.error
+								? { ...out, warning: discovery }
+								: out,
+						),
 				});
 				if (lastProblem) log("the server answers again");
 				lastProblem = "";

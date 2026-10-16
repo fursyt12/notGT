@@ -111,7 +111,10 @@ const appDir = path.resolve(args.app ?? path.join(__dirname, ".."));
 const ndiDir = path.resolve(__dirname, "..", "ndi");
 const NDI_ENTRY = path.join(ndiDir, "bin", "notgt-ndi.mjs");
 const NDI_KEY_FILE = path.join(appDir, "db", "notGT-ndi.key");
+/** Waits between restarts of a sender that keeps ending: 5 s, 10 s, 20 s … a minute. */
 const NDI_RESTART_MS = 5000;
+const NDI_RESTART_MAX_MS = 60_000;
+let ndiRestartMs = NDI_RESTART_MS;
 const ndiWanted =
 	args.ndi &&
 	!["off", "false", "no", "0"].includes(
@@ -1546,16 +1549,17 @@ function startSender(port) {
 	}
 	let sender;
 	try {
+		// The key file by the environment, not as an argument: Electron on
+		// Windows quits at once when a file path is among its arguments.
 		sender = spawn(
 			process.execPath,
-			[
-				NDI_ENTRY,
-				"--server",
-				`http://127.0.0.1:${port}`,
-				"--token-file",
-				NDI_KEY_FILE,
-			],
-			{ cwd: ndiDir, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+			[NDI_ENTRY, "--server", `http://127.0.0.1:${port}`],
+			{
+				cwd: ndiDir,
+				stdio: ["ignore", "pipe", "pipe"],
+				windowsHide: true,
+				env: { ...process.env, NOTGT_TOKEN_FILE: NDI_KEY_FILE },
+			},
 		);
 	} catch (err) {
 		pushLog(`[launcher] NDI: ${err.message}`);
@@ -1569,20 +1573,26 @@ function startSender(port) {
 			"[launcher] The NDI sender is started.",
 		),
 	);
+	const startedAt = Date.now();
 	sender.on("error", (err) => pushLog(`[launcher] NDI: ${err.message}`));
 	sender.on("exit", (code, signal) => {
 		if (state.sender !== sender) return;
 		state.sender = null;
 		if (state.status !== "running") return;
+		// A sender that ran for a while starts the count again.
+		if (Date.now() - startedAt > NDI_RESTART_MAX_MS)
+			ndiRestartMs = NDI_RESTART_MS;
+		const wait = ndiRestartMs;
+		ndiRestartMs = Math.min(ndiRestartMs * 2, NDI_RESTART_MAX_MS);
 		pushLog(
 			T(
-				`[launcher] Отправитель NDI завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}); перезапуск через ${NDI_RESTART_MS / 1000} с.`,
-				`[launcher] The NDI sender ended (code ${code}${signal ? `, signal ${signal}` : ""}); restarting in ${NDI_RESTART_MS / 1000} s.`,
+				`[launcher] Отправитель NDI завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}); перезапуск через ${wait / 1000} с.`,
+				`[launcher] The NDI sender ended (code ${code}${signal ? `, signal ${signal}` : ""}); restarting in ${wait / 1000} s.`,
 			),
 		);
 		setTimeout(() => {
 			if (state.status === "running" && state.port === port) startSender(port);
-		}, NDI_RESTART_MS);
+		}, wait);
 	});
 }
 

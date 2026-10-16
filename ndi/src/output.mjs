@@ -49,56 +49,27 @@ export class Output {
 		this.timers = [];
 		this.stopped = false;
 		this.debug = process.env.NOTGT_NDI_DEBUG ? log : () => {};
+		/**
+		 * Device pixels per window pixel. A desktop cuts a window to its screen,
+		 * offscreen or not; drawing a smaller window at 2× or 3× gets the whole
+		 * picture back where Chromium honours it (see checkSize).
+		 */
+		this.scale = 1;
+		this.sizeChecked = false;
+		this.sizeGivenUp = false;
+		/**
+		 * Share of the asked size the picture is drawn at — below 1 only when
+		 * the screen leaves no other way; the whole out is then drawn smaller,
+		 * never cut.
+		 */
+		this.shrink = 1;
+		/** Said in the dashboard when the picture cannot come out at its size. */
+		this.warning = undefined;
 		/** Time spent in the paint handler: copying, converting, handing over. */
 		this.busyMs = 0;
 	}
 
 	start() {
-		const { width, height, designWidth } = this.config;
-		const window = new BrowserWindow({
-			show: false,
-			width,
-			height,
-			useContentSize: true,
-			frame: false,
-			transparent: true,
-			backgroundColor: "#00000000",
-			enableLargerThanScreen: true,
-			paintWhenInitiallyHidden: true,
-			webPreferences: {
-				offscreen: { useSharedTexture: false, deviceScaleFactor: 1 },
-				// The page lays out at the out's own size and is drawn smaller.
-				zoomFactor: width / designWidth,
-				backgroundThrottling: false,
-				autoplayPolicy: "no-user-gesture-required",
-				contextIsolation: true,
-				nodeIntegration: false,
-				sandbox: true,
-				spellcheck: false,
-			},
-		});
-		this.window = window;
-		const contents = window.webContents;
-		contents.setFrameRate(IDLE_FPS);
-		contents.setAudioMuted(true);
-
-		contents.on("paint", (_event, dirty, image) => this.paint(dirty, image));
-		contents.on("did-finish-load", () => {
-			this.state = this.watching ? "sending" : "idle";
-			this.error = undefined;
-		});
-		contents.on(
-			"did-fail-load",
-			(_event, code, description, _url, isMainFrame) => {
-				if (!isMainFrame || code === -3) return; // -3: replaced by a newer load
-				this.fail(`could not load the out page: ${description} (${code})`);
-			},
-		);
-		contents.on("render-process-gone", (_event, details) => {
-			this.fail(`the page stopped: ${details.reason}`);
-		});
-		contents.setWindowOpenHandler(() => ({ action: "deny" }));
-
 		this.timers.push(setInterval(() => this.watch(), WATCH_MS));
 		let lastCount = 0;
 		this.timers.push(
@@ -113,7 +84,126 @@ export class Output {
 				this.busyMs = 0;
 			}, 2000),
 		);
+		this.openWindow();
+	}
+
+	/** The offscreen window, at `this.scale`; replaces the one there was. */
+	openWindow() {
+		if (this.window && !this.window.isDestroyed()) this.window.destroy();
+		this.sizeChecked = false;
+		const { designWidth } = this.config;
+		const width = Math.round((this.config.width * this.shrink) / this.scale);
+		const height = Math.round((this.config.height * this.shrink) / this.scale);
+		// The page lays out at the out's own size, whatever it is drawn at.
+		const zoom = width / designWidth;
+		const window = new BrowserWindow({
+			show: false,
+			width,
+			height,
+			useContentSize: true,
+			frame: false,
+			transparent: true,
+			backgroundColor: "#00000000",
+			enableLargerThanScreen: true,
+			paintWhenInitiallyHidden: true,
+			webPreferences: {
+				offscreen: { useSharedTexture: false, deviceScaleFactor: this.scale },
+				zoomFactor: zoom,
+				backgroundThrottling: false,
+				autoplayPolicy: "no-user-gesture-required",
+				contextIsolation: true,
+				nodeIntegration: false,
+				sandbox: true,
+				spellcheck: false,
+			},
+		});
+		this.window = window;
+		const contents = window.webContents;
+		contents.setFrameRate(
+			this.watching ? Math.round(this.config.fps) : IDLE_FPS,
+		);
+		contents.setAudioMuted(true);
+
+		contents.on("paint", (_event, dirty, image) => {
+			if (this.window === window) this.paint(dirty, image);
+		});
+		contents.on("did-finish-load", () => {
+			// Set again once loaded: at 2× and up Chromium drops the zoom it was given.
+			contents.setZoomFactor(zoom);
+			this.state = this.watching ? "sending" : "idle";
+			this.error = undefined;
+		});
+		contents.on(
+			"did-fail-load",
+			(_event, code, description, _url, isMainFrame) => {
+				if (!isMainFrame || code === -3) return; // -3: replaced by a newer load
+				this.fail(`could not load the out page: ${description} (${code})`);
+			},
+		);
+		contents.on("render-process-gone", (_event, details) => {
+			this.fail(`the page stopped: ${details.reason}`);
+		});
+		contents.setWindowOpenHandler(() => ({ action: "deny" }));
 		this.load();
+	}
+
+	/**
+	 * The first picture of a window says whether the desktop let it be the
+	 * size asked. If not, it is tried once at a higher scale; if that does not
+	 * help either, the picture goes out at the size it comes, and the
+	 * dashboard says why.
+	 */
+	checkSize(image) {
+		if (this.sizeChecked) return;
+		this.sizeChecked = true;
+		const { width, height } = image.getSize();
+		const want = this.config;
+		const expectWidth = Math.round(want.width * this.shrink);
+		const expectHeight = Math.round(want.height * this.shrink);
+		if (width === expectWidth && height === expectHeight) {
+			if (this.scale > 1) {
+				this.log(
+					`${want.ndiName}: drawn at ${this.scale}× to fit the screen; ${width}×${height} as asked`,
+				);
+			}
+			if (this.shrink === 1) this.warning = undefined;
+			return;
+		}
+		if (!this.sizeGivenUp && this.scale === 1 && this.shrink === 1) {
+			this.cut = { width, height };
+			const scale = Math.ceil(
+				Math.max(want.width / width, want.height / height),
+			);
+			if (scale >= 2 && scale <= 4) {
+				this.log(
+					`${want.ndiName}: the screen cuts the window to ${width}×${height}; drawing it at ${scale}× instead`,
+				);
+				this.scale = scale;
+				setImmediate(() => !this.stopped && this.openWindow());
+				return;
+			}
+		}
+		if (!this.sizeGivenUp) {
+			// No scale helps here: draw the whole out, smaller, inside the
+			// window the screen allows — the right shape, nothing cut off.
+			this.sizeGivenUp = true;
+			const cut = this.cut ?? { width, height };
+			this.scale = 1;
+			this.shrink = Math.min(
+				cut.width / want.width,
+				cut.height / want.height,
+				1,
+			);
+			const w = Math.round(want.width * this.shrink);
+			const h = Math.round(want.height * this.shrink);
+			this.warning = `this computer's screen, at its display scaling, is smaller than the out: the picture goes out ${w}×${h} instead of ${want.width}×${want.height} — lower the display scaling, or choose a smaller NDI picture size`;
+			this.log(`${want.ndiName}: ${this.warning}`);
+			setImmediate(() => !this.stopped && this.openWindow());
+			return;
+		}
+		// Still not the size asked: send what comes, and say so.
+		this.warning = `the picture goes out ${width}×${height} instead of ${want.width}×${want.height}: the screen of this computer is smaller than the out — choose a smaller NDI picture size`;
+		this.log(`${want.ndiName}: ${this.warning}`);
 	}
 
 	load() {
@@ -174,12 +264,13 @@ export class Output {
 
 	handle(dirty, image) {
 		if (this.stopped || !this.window) return;
-		if (!this.watching) return;
 		if (image.isEmpty()) {
 			// The page has no picture yet.
-			this.repaintSoon();
+			if (this.watching) this.repaintSoon();
 			return;
 		}
+		this.checkSize(image);
+		if (!this.watching) return;
 		const size = image.getSize();
 		if (
 			size.width !== this.frames.width ||
@@ -231,6 +322,7 @@ export class Output {
 			width: this.frames.width,
 			height: this.frames.height,
 			...(this.error ? { error: this.error } : {}),
+			...(this.warning ? { warning: this.warning } : {}),
 		};
 	}
 

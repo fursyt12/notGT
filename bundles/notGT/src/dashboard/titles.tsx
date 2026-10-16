@@ -117,6 +117,7 @@ function ndiReport(sender: NdiSenderStatus, out: NdiOutStatus): { text: string; 
 	const where = sender.host;
 	if (out.state === "error") return { text: `${where}: ${out.error ?? t("error")}`, tone: "warn" };
 	if (out.state === "loading") return { text: t("Opening on {host}…", { host: where }), tone: "muted" };
+	if (out.warning) return { text: `${where}: ${out.warning}`, tone: "warn" };
 	if (out.state === "idle") return { text: t("Ready on {host}, nobody receives it", { host: where }), tone: "muted" };
 	return {
 		text: t("Sending from {host} · receivers: {count} · {fps} fps", {

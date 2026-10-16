@@ -3,9 +3,9 @@
  * Starts the NDI sender in Electron with the switches Chromium has to see on
  * its command line — set from inside the app they come too late:
  *
- *  - `--ozone-platform=headless` when Linux has no display (a Pi without a
- *    desktop, a server, a container), with a screen big enough for any out:
- *    the headless screen is 1×1 and windows are cut to the screen;
+ *  - `--ozone-platform=headless` on Linux, desktop or not, with a screen big
+ *    enough for any out: windows are cut to the screen, and the headless one
+ *    is 1×1 unless told otherwise;
  *  - `--no-sandbox` when Chromium's sandbox cannot start here: running as
  *    root, or neither the setuid helper nor user namespaces are available.
  *
@@ -49,11 +49,22 @@ function sandboxWorks() {
 }
 
 const user = process.argv.slice(2);
+const env = { ...process.env };
+// A file path in Electron's arguments makes it quit at once on Windows, with
+// -1 and not a word (C:\… after a switch, existing or not). The key file
+// goes in the environment instead, where main.mjs reads it as well.
+const tokenFile = user.indexOf("--token-file");
+if (tokenFile !== -1 && user[tokenFile + 1] !== undefined) {
+	env.NOTGT_TOKEN_FILE = user[tokenFile + 1];
+	user.splice(tokenFile, 2);
+}
 const chromium = [];
 if (process.platform === "linux") {
+	// Always, not only without a desktop: a desktop cuts windows to its screen,
+	// offscreen ones included, and the sender never shows a window anyway.
+	// NOTGT_NDI_DISPLAY=1 (or an --ozone-platform of one's own) keeps it.
 	if (
-		!process.env.DISPLAY &&
-		!process.env.WAYLAND_DISPLAY &&
+		!process.env.NOTGT_NDI_DISPLAY &&
 		!user.some((a) => a.startsWith("--ozone-platform"))
 	) {
 		chromium.push(
@@ -65,16 +76,34 @@ if (process.platform === "linux") {
 		chromium.push("--no-sandbox");
 }
 
-// Chromium's own complaints — no D-Bus on a Pi without a desktop, and the
-// like — are noise here; NOTGT_NDI_DEBUG lets them through.
-if (!process.env.NOTGT_NDI_DEBUG) chromium.push("--log-level=3");
+// Chromium's own complaints on Linux — no D-Bus on a Pi without a desktop,
+// and the like — are noise; NOTGT_NDI_DEBUG lets them through. Elsewhere
+// they are what there is to read when it does not start.
+if (process.platform === "linux" && !process.env.NOTGT_NDI_DEBUG) {
+	chromium.push("--log-level=3");
+}
 
+const startedAt = Date.now();
 const child = spawn(electron, [...chromium, appDir, ...user], {
 	stdio: "inherit",
+	env,
+});
+child.on("error", (error) => {
+	process.stderr.write(
+		`[notgt-ndi] Electron could not be started (${electron}): ${error.message}\n`,
+	);
+	process.exitCode = 1;
 });
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 	process.on(signal, () => child.kill(signal));
 }
 child.on("exit", (code, signal) => {
+	if (code && Date.now() - startedAt < 10_000) {
+		// Gone before it could say anything itself: at least say that.
+		const hex = (code >>> 0).toString(16).toUpperCase();
+		process.stderr.write(
+			`[notgt-ndi] Electron ended at once with code ${code} (0x${hex}); NOTGT_NDI_DEBUG=1 shows Chromium's own messages\n`,
+		);
+	}
 	process.exitCode = code ?? (signal ? 1 : 0);
 });

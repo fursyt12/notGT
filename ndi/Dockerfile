@@ -26,6 +26,7 @@ RUN apt-get update \
 		libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 \
 		libasound2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libxss1 \
 		libpango-1.0-0 libcairo2 fonts-dejavu-core \
+		libavahi-client3 libavahi-common3 \
 	&& rm -rf /var/lib/apt/lists/*
 
 # The NDI library, for this machine's architecture.

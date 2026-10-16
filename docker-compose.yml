@@ -212,6 +212,11 @@ services:
       NOTGT_NDI_ID: "${NOTGT_NDI_ID:-}"
     volumes:
       - notgt-ndi:/run/notgt-ndi:ro
+      # NDI on Linux finds and announces sources through the host's Avahi
+      # (avahi-daemon, over D-Bus). Without these nobody sees the sources;
+      # the dashboard says so when avahi-daemon is not running on the host.
+      - /run/dbus:/run/dbus:ro
+      - /run/avahi-daemon:/run/avahi-daemon:ro
 
 volumes:
   notgt-db:
