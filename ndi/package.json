@@ -1,0 +1,21 @@
+{
+  "name": "notgt-ndi",
+  "version": "0.10.0",
+  "private": true,
+  "description": "notGT NDI sender: renders the outs of a notGT server off screen and sends each one as an NDI source.",
+  "license": "MIT",
+  "type": "module",
+  "main": "main.mjs",
+  "bin": {
+    "notgt-ndi": "bin/notgt-ndi.mjs"
+  },
+  "scripts": {
+    "start": "node bin/notgt-ndi.mjs",
+    "probe": "node scripts/probe.mjs",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "electron": "^44.8.0",
+    "koffi": "^3.3.3"
+  }
+}

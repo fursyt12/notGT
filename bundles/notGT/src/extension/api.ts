@@ -11,6 +11,7 @@ import {
 	type TitleData,
 	type TitleTemplate,
 } from "../shared/types";
+import { normalizeNdi } from "../shared/ndi";
 import {
 	type Access,
 	type ApiRequest,
@@ -20,6 +21,7 @@ import {
 	type Handler,
 	type NextFn,
 } from "./auth";
+import type { NdiHub } from "./ndi";
 import type { Scheduler } from "./scheduler";
 import { TimerError, timerErrorStatus, type Timers } from "./timers";
 import { playTemplateOnce } from "./trigger";
@@ -43,6 +45,8 @@ export interface ApiHooks {
 	videoDuration?: (templateId: string) => number | undefined;
 	/** The countdowns and stopwatches. */
 	timers: Timers;
+	/** The NDI outputs: what the senders send, and what they report. */
+	ndi: NdiHub;
 }
 
 export function createApiRouter(
@@ -410,6 +414,19 @@ export function createApiRouter(
 		json(res, 200, { ok: true, outId, itemId });
 	});
 
+	// ------------------------------------------------------------------- ndi
+	// The NDI sender (`ndi/` at the root of the repository) asks what to send
+	// and says how it went; the dashboard shows that next to each out.
+	router.get("/ndi", (_req, res) => {
+		json(res, 200, hooks.ndi.list());
+	});
+
+	router.post("/ndi/status", (req, res) => {
+		const problem = hooks.ndi.report(req.body);
+		if (problem) return json(res, 400, { error: "bad_request", message: problem });
+		json(res, 200, { ok: true });
+	});
+
 	return router;
 }
 
@@ -582,6 +599,7 @@ export function normalizeOut(input: Record<string, unknown>, existing?: Out): Ou
 					normalizeItem(item as unknown as Record<string, unknown>, index),
 				)
 			: base.items,
+		ndi: "ndi" in input ? normalizeNdi(input["ndi"]) : base.ndi,
 		updatedAt: Date.now(),
 	};
 }

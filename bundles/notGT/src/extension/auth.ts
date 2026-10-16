@@ -65,6 +65,8 @@ export interface Access {
 	/** Nothing is configured: every request is let through. */
 	readonly open: boolean;
 	checkToken(provided: unknown): boolean;
+	/** The key of the NDI senders, which opens `/api/ndi` and nothing else. */
+	checkNdiKey(provided: unknown): boolean;
 	checkPassword(username: unknown, password: unknown): boolean;
 	/** The WebSocket, which has keys of its own and knows the team. */
 	readonly ws: {
@@ -133,6 +135,16 @@ export function createAccess(nodecg: ServerAPI, team: Team): Access {
 		hasUsers: loginEnabled && Boolean(login.local?.enabled),
 		open: token === "" && !loginEnabled,
 		checkToken: (provided) => matches(provided, token),
+		checkNdiKey: (provided) => {
+			if (typeof provided !== "string" || provided === "") return false;
+			try {
+				const key = team.ndiKey();
+				return key !== undefined && matches(provided, key);
+			} catch {
+				// The key could not be made (a read-only disk): nobody presents it.
+				return false;
+			}
+		},
 		checkPassword,
 		ws: {
 			get hasToken() {
@@ -247,6 +259,13 @@ export function createApiAuth(nodecg: ServerAPI, access: Access) {
 		}
 
 		if (access.checkToken(extractToken(req))) {
+			next();
+			return;
+		}
+
+		// An NDI sender on another machine has no session, and should not
+		// need the key that drives the whole show.
+		if ((req.path === "/ndi" || req.path === "/ndi/status") && access.checkNdiKey(extractToken(req))) {
 			next();
 			return;
 		}

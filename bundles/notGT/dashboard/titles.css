@@ -64,6 +64,111 @@
 	color: var(--ng-muted);
 }
 
+/* ---------------------------------------------------------------------- ndi */
+
+.tt-ndi {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 0 16px 14px;
+}
+
+.tt-ndi__line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+/* The summary is the button that opens the settings. */
+.tt-ndi__open {
+	justify-content: flex-start;
+	min-width: 0;
+	color: var(--ng-muted);
+	font-weight: 400;
+}
+
+.tt-ndi__open > .truncate {
+	text-align: left;
+}
+
+.tt-ndi.is-on .tt-ndi__open {
+	color: var(--ng-fg);
+}
+
+.tt-ndi__settings {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 10px 12px 12px;
+	border-radius: var(--ng-radius-s);
+	background: var(--ng-bg-3);
+}
+
+.tt-ndi__grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+	align-items: end;
+	gap: 10px 12px;
+}
+
+.tt-ndi__wide {
+	grid-column: 1 / -1;
+}
+
+/* Bordered like the other fields here, not the bare in-place title input. */
+.tt-ndi__settings .tt-ndi__name {
+	margin-left: 0;
+	border-color: var(--ng-line);
+	background: var(--ng-well);
+	font-weight: 500;
+}
+
+.tt-ndi__alpha {
+	justify-content: flex-end;
+	min-height: 32px;
+}
+
+.tt-ndi__status {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	font-size: 12px;
+}
+
+.tt-ndi__state.is-ok {
+	color: var(--ng-ok);
+}
+
+.tt-ndi__state.is-warn {
+	color: var(--ng-warn);
+}
+
+.tt-ndi__state.is-muted {
+	color: var(--ng-muted);
+}
+
+.tt-ndi-senders__row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 40px;
+	padding: 4px 16px;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.tt-ndi-senders__how {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 0 0;
+	border-top: 1px solid var(--ng-line-soft);
+}
+
+.tt-ndi-senders__how > .hint {
+	padding: 0 16px;
+}
+
 .tt-out__empty {
 	border-top: 1px solid var(--ng-line-soft);
 }

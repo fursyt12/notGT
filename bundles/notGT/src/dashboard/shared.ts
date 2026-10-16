@@ -13,6 +13,7 @@ import { getNodecg, type ClientReplicant } from "../shared/client";
 import { TEAM_BASE, type TeamMe } from "../shared/team";
 import { ServerClock, type Timer, timerTickMs, timerWithin, timersVars, withTimers } from "../shared/timer";
 import type { ExampleLang, GalleryExample } from "../shared/examples/gallery";
+import type { NdiStatus } from "../shared/ndi";
 import {
 	createDefaultOut,
 	createDefaultTemplate,
@@ -49,6 +50,7 @@ export interface Db {
 	selection: ClientReplicant<VariableSelection>;
 	sources: ClientReplicant<DataSource[]>;
 	timers: ClientReplicant<Timer[]>;
+	ndi: ClientReplicant<NdiStatus>;
 }
 
 let db: Db | undefined;
@@ -99,6 +101,9 @@ export function getDb(): Db {
 		timers: nodecg.Replicant<Timer[]>(REPLICANTS.timers, BUNDLE_NAME, {
 			defaultValue: [],
 		}) as ClientReplicant<Timer[]>,
+		ndi: nodecg.Replicant<NdiStatus>(REPLICANTS.ndi, BUNDLE_NAME, {
+			defaultValue: {},
+		}) as ClientReplicant<NdiStatus>,
 	};
 	return db;
 }
@@ -360,6 +365,16 @@ export function updateItem(
 			item.id === itemId ? { ...item, ...patch } : item,
 		),
 	});
+}
+
+/**
+ * Changes an out's NDI settings from what the store holds now, so two changes
+ * made quickly one after the other both stay.
+ */
+export function updateOutNdi(outId: string, patch: Partial<NonNullable<Out["ndi"]>>): void {
+	const out = getOut(outId);
+	if (!out) return;
+	saveOut({ ...clone(out), ndi: { enabled: false, ...out.ndi, ...patch } });
 }
 
 export function updateItemPlayback(
@@ -640,6 +655,11 @@ export function useRuntime(): RuntimeState {
 }
 export function useSelection(): VariableSelection {
 	return useReplicantValue(() => getDb().selection, EMPTY_SELECTION);
+}
+const EMPTY_NDI: NdiStatus = {};
+/** What the NDI senders report, sender by sender. */
+export function useNdiStatus(): NdiStatus {
+	return useReplicantValue(() => getDb().ndi, EMPTY_NDI);
 }
 const EMPTY_SOURCES: DataSource[] = [];
 /** The workbooks connected to the variable store. */

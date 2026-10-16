@@ -44,6 +44,8 @@ interface TeamFile {
 	users: StoredUser[];
 	groups: StoredGroup[];
 	outKeys: Record<string, string>;
+	/** The key of the NDI senders; made on first use. */
+	ndiKey?: string;
 }
 
 /** A request the team refuses, with the HTTP status that says why. */
@@ -89,6 +91,13 @@ export interface Team {
 	 */
 	outKey(outId: string): string | undefined;
 	regenerateOutKey(outId: string): string;
+	/**
+	 * The key an NDI sender presents to `/api/ndi`; made on first use.
+	 * `undefined` while the sign-in is off: the API needs no key then, or
+	 * takes `apiToken`.
+	 */
+	ndiKey(): string | undefined;
+	regenerateNdiKey(): string;
 	/** The out an OBS key opens. */
 	findOut(key: string): string | undefined;
 	/** The group a WebSocket key belongs to. */
@@ -146,6 +155,7 @@ export function createTeam(nodecg: ServerAPI, store: Store, file: string): Team 
 			users: Array.isArray(parsed.users) ? parsed.users : [],
 			groups: Array.isArray(parsed.groups) ? parsed.groups : [],
 			outKeys: parsed.outKeys && typeof parsed.outKeys === "object" ? parsed.outKeys : {},
+			...(typeof parsed.ndiKey === "string" && parsed.ndiKey ? { ndiKey: parsed.ndiKey } : {}),
 		};
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -235,6 +245,15 @@ export function createTeam(nodecg: ServerAPI, store: Store, file: string): Team 
 			save();
 		}
 		return data.outKeys[outId];
+	}
+
+	function ndiKey(): string | undefined {
+		if (!loginEnabled) return undefined;
+		if (!data.ndiKey) {
+			data.ndiKey = newKey("ndi");
+			save();
+		}
+		return data.ndiKey;
 	}
 
 	function validName(value: unknown, what: string): string {
@@ -329,6 +348,7 @@ export function createTeam(nodecg: ServerAPI, store: Store, file: string): Team 
 					.map((group) => ({ id: group.id, name: group.name })),
 				allGroups: data.groups.map((group) => ({ id: group.id, name: group.name })),
 				outKeys,
+				...(role === "admin" && loginEnabled ? { ndiKey: ndiKey() } : {}),
 				defaultPassword: Boolean(user?.defaultPassword),
 			};
 		},
@@ -353,6 +373,7 @@ export function createTeam(nodecg: ServerAPI, store: Store, file: string): Team 
 				],
 				groups: data.groups.map(publicGroup),
 				outKeys,
+				...(loginEnabled ? { ndiKey: ndiKey() } : {}),
 			};
 		},
 
@@ -451,6 +472,13 @@ export function createTeam(nodecg: ServerAPI, store: Store, file: string): Team 
 			data.outKeys[outId] = newKey("out");
 			save();
 			return data.outKeys[outId]!;
+		},
+		ndiKey,
+		regenerateNdiKey() {
+			if (!loginEnabled) throw new TeamError(409, "conflict", "The NDI senders need no key while the sign-in is off");
+			data.ndiKey = newKey("ndi");
+			save();
+			return data.ndiKey;
 		},
 		findOut(key) {
 			for (const [outId, outKeyValue] of Object.entries(data.outKeys)) {

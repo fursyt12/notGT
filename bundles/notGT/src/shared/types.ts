@@ -4,6 +4,7 @@
  * This module is imported by the extension (Node), the dashboard panels (browser)
  * and the graphics runtime (browser/CEF). Keep it free of any runtime dependency.
  */
+import type { OutNdi } from "./ndi";
 
 export const BUNDLE_NAME = "notGT";
 
@@ -38,6 +39,8 @@ export const REPLICANTS = {
 	teamRevision: "teamRevision",
 	/** Countdowns and stopwatches (`Timer[]`, see `shared/timer.ts`). Persistent. */
 	timers: "timers",
+	/** What the NDI senders report (`NdiStatus`, see `shared/ndi.ts`). Not persistent. */
+	ndi: "ndi",
 } as const;
 
 /**
@@ -355,6 +358,8 @@ export interface Out {
 	width: number;
 	height: number;
 	items: OutItem[];
+	/** Also sent as an NDI source (see `shared/ndi.ts`). */
+	ndi?: OutNdi;
 	createdAt: number;
 	updatedAt: number;
 }

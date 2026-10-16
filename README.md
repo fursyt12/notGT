@@ -67,6 +67,10 @@ ready to use the moment it starts.
   the library — from Companion, a script or `curl`.
 - **WebSocket API.** The same verbs on `/api/ws`, with the state pushed when it changes —
   what a Companion module connects to, no polling.
+- **NDI outputs.** For Resolume Arena, vMix and everything else that takes NDI and not a
+  web page: switch NDI on for an out and a small sender — on the server or on a Raspberry
+  Pi — sends it with its transparency, at the out's size or smaller. It draws only what
+  moves and sends nothing while nobody watches. See [ndi/](ndi/README.md).
 - **Sign-in.** The dashboard asks for a username and a password — `admin` / `admin` on a
   new server, to be changed on the first day — and the API is not open to the whole
   network. It can be switched off for a closed show LAN.
@@ -193,6 +197,10 @@ Add a Browser Source to OBS (or a Web Browser input to vMix) at the size of the 
 http://<host>:9090/bundles/notGT/graphics/out.html?out=main
 ```
 
+For Resolume Arena and other programs that take NDI, switch **NDI** on for the out in
+**Titles & Outs** and start the sender the panel shows the command for — see
+[ndi/README.md](ndi/README.md).
+
 Then show a title — from the Control panel, or from anywhere else:
 
 ```bash
@@ -256,6 +264,7 @@ bundles/notGT/          the application
 workspaces/nodecg/      NodeCG core, with the notGT shell
 workspaces/…            the rest of the NodeCG monorepo (CLI, database adapters)
 launcher/               the control panel of the Windows and macOS builds
+ndi/                    the NDI sender: outs as NDI sources, for Resolume and the like
 media/brand/            logo, mark and the brandbook
 docs/                   the Windows and macOS builds, notes on the core
 ```

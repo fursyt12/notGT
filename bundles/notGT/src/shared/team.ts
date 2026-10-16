@@ -47,6 +47,8 @@ export interface TeamState {
 	groups: TeamGroupInfo[];
 	/** outId -> the key of its OBS link. */
 	outKeys: Record<string, string>;
+	/** The key an NDI sender presents (`--token`); absent while the sign-in is off. */
+	ndiKey?: string;
 }
 
 /** What the signed-in operator is and may see. */
@@ -61,6 +63,8 @@ export interface TeamMe {
 	allGroups: Array<{ id: string; name: string }>;
 	/** Keys of the OBS links of the outs this operator sees. */
 	outKeys: Record<string, string>;
+	/** The key of the NDI senders — for an administrator, while the sign-in is on. */
+	ndiKey?: string;
 	/** This operator still signs in with the password everybody knows. */
 	defaultPassword: boolean;
 }

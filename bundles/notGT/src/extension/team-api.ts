@@ -81,6 +81,8 @@ export function createTeamRouter(nodecg: ServerAPI, team: Team, sessionCheck: Ha
 
 	// A new key for an out's OBS link; the old link stops working at once.
 	router.post("/outs/:id/key", answer(200, (req) => ({ key: team.regenerateOutKey(req.params["id"]!) })));
+	// A new key for the NDI senders; a sender with the old one is refused at once.
+	router.post("/ndi/key", answer(200, () => ({ key: team.regenerateNdiKey() })));
 
 	return router;
 }

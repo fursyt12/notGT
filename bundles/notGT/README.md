@@ -31,6 +31,7 @@ draw what they are sent, so the state in the API always matches what is on scree
 - [WebSocket API](#websocket-api)
 - [Bitfocus Companion](#bitfocus-companion)
 - [OBS Studio](#obs-studio)
+- [NDI](#ndi)
 - [Persistence](#persistence)
 - [Writing a code animation](#writing-a-code-animation)
   - [Transitions: entrance and exit](#transitions-entrance-and-exit)
@@ -369,6 +370,9 @@ The make-up of the show: which outs exist, which animations, and what sits on wh
   delete). **`+ New animation`** creates an animation from layers or from code, or adds a
   ready-made one — **“From an example”** opens the [gallery](#ready-made-examples).
 
+Under an out's address sits its **NDI** switch, with the source name, the picture size
+and the frame rate — see [NDI](#ndi).
+
 A placement's position, scale and crop are set on the canvas in Editor, and its mode and
 duration there or in Control: they are left out of this panel on purpose.
 
@@ -698,6 +702,8 @@ In all the examples below `$NOTGT_TOKEN` is the value of `apiToken`, and
 | `GET` `PUT` `PATCH`  | `/api/timers/:timer`                        | Read / change a timer (by id or key). A running timer keeps running.                           |
 | `DELETE`             | `/api/timers/:timer`                        | Delete a timer.                                                                                 |
 | `POST`               | `/api/timers/:timer/:command`               | `start` · `pause` · `toggle` · `reset` · `restart` · `set {value: "1:30"}` · `adjust {delta: 10}` (seconds, or `"-1:00"`). |
+| `GET`                | `/api/ndi`                                  | The outs with NDI switched on, as the NDI sender takes them (see [NDI](#ndi)). Also with the senders' key. |
+| `POST`               | `/api/ndi/status`                           | A sender's report: `{id, host, platform, version, ndi, outs: [{id, state, connections, fps, …}]}`. Also with the senders' key. |
 
 ### `GET /api/state`
 
@@ -1265,6 +1271,41 @@ template it also rebuilds the iframe. If it seems “not to update”, look at t
 overlay and at `GET /api/state` first.
 
 ---
+
+## NDI
+
+An out can also go out as an **NDI source** — for Resolume Arena, vMix, TriCaster and
+the rest of what takes NDI and not a web page. The pictures are made by the NDI sender
+in [`ndi/`](../../ndi/README.md), a separate program that runs on this machine or on
+another one (a Raspberry Pi will do); the bundle keeps the settings and shows what the
+senders report.
+
+- **Per out** (Titles & Outs, under the address): the **NDI** switch, and next to it a
+  line that sums up how the out goes out. A click on it opens the **NDI settings**: the
+  source name (`notGT <out>` unless given), the picture size — the out's own, ¾, ⅔, ½ or
+  ⅓ of it — the frame rate (23.976, 24, 25, 29.97, 30, 50, 59.94 or 60), the NDI groups
+  and the transparency (off: opaque, over black — lighter to send and to receive). Under
+  it, what the senders say: sent from where, to how many receivers, at how many frames a
+  second, or what went wrong. Stored in the out as
+  `ndi: { enabled, name?, fps?, scale?, alpha?, groups? }`, so `PATCH /api/outs/:id`
+  sets it too.
+- **NDI senders** (below the outs, once one out has NDI or a sender reports): the senders
+  that report, and for an administrator the command that starts one, with this server's
+  address and the senders' key.
+- **The senders' key** — made on first use while the sign-in is on. It opens
+  `GET /api/ndi` and `POST /api/ndi/status` and nothing else; an administrator replaces
+  it from the `⋯` menu of NDI senders. With the sign-in off the API takes `apiToken`, or
+  nothing.
+
+```bash
+# switch NDI on for an out, at 1280×720 and 25 fps
+curl -X PATCH http://localhost:9090/api/outs/main -H 'content-type: application/json' \
+     -d '{"ndi": {"enabled": true, "scale": 0.6667, "fps": 25}}'
+# what a sender is told to send
+curl http://localhost:9090/api/ndi
+```
+
+A sender that stops reporting drops out of the dashboard after ten seconds.
 
 ## Persistence
 

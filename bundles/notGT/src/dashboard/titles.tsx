@@ -1,8 +1,8 @@
 /**
  * notGT — Titles & Outs dashboard panel (fullbleed): setup only.
  *
- * Left: the outs — name, size, the OBS address and which animations sit on
- * each. Right: the animation library. Where a placement sits and how it plays
+ * Left: the outs — name, size, the OBS address, whether it also goes out over
+ * NDI, and which animations sit on each. Right: the animation library. Where a placement sits and how it plays
  * is edited where it can be seen: on the canvas in the Editor, and next to the
  * on-air switch in Control.
  */
@@ -10,6 +10,21 @@ import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 
 import { collectBindingPaths } from "../shared/binding";
+import {
+	NDI_FPS,
+	NDI_SCALES,
+	type NdiOutStatus,
+	type NdiSenderStatus,
+	cleanNdiGroups,
+	ndiAlpha,
+	ndiFps,
+	ndiFpsLabel,
+	ndiReportsFor,
+	ndiScale,
+	ndiSize,
+	ndiSourceName,
+} from "../shared/ndi";
+import { TEAM_BASE } from "../shared/team";
 import type { Out, OutItem, TitleTemplate } from "../shared/types";
 import { N_, getLang, t, tr, useLang, type Phrase } from "./i18n";
 import {
@@ -28,7 +43,10 @@ import {
 	saveTemplate,
 	triggerItem,
 	updateItem,
+	updateOutNdi,
 	useIsAdmin,
+	useMe,
+	useNdiStatus,
 	useOutUrl,
 	useOuts,
 	useRuntime,
@@ -42,6 +60,7 @@ import {
 	ThemeSwitch,
 	Menu,
 	NameInput,
+	Switch,
 	exampleMenuItem,
 	playbackSummary,
 	type MenuItem,
@@ -89,6 +108,287 @@ function SizeInput({
 				if (event.key === "Enter") event.currentTarget.blur();
 			}}
 		/>
+	);
+}
+
+// ---------------------------------------------------------------------- ndi
+
+function ndiReport(sender: NdiSenderStatus, out: NdiOutStatus): { text: string; tone: "ok" | "warn" | "muted" } {
+	const where = sender.host;
+	if (out.state === "error") return { text: `${where}: ${out.error ?? t("error")}`, tone: "warn" };
+	if (out.state === "loading") return { text: t("Opening on {host}…", { host: where }), tone: "muted" };
+	if (out.state === "idle") return { text: t("Ready on {host}, nobody receives it", { host: where }), tone: "muted" };
+	return {
+		text: t("Sending from {host} · receivers: {count} · {fps} fps", {
+			host: where,
+			count: String(out.connections),
+			fps: String(out.fps),
+		}),
+		tone: "ok",
+	};
+}
+
+/** Free text that commits on blur / Enter and may be left empty. */
+function TextField({
+	value,
+	label,
+	placeholder,
+	onCommit,
+}: {
+	value: string;
+	label: string;
+	placeholder?: string;
+	onCommit: (next: string) => void;
+}) {
+	const [draft, setDraft] = useState(value);
+	const [focused, setFocused] = useState(false);
+
+	useEffect(() => {
+		if (!focused) setDraft(value);
+	}, [value, focused]);
+
+	return (
+		<input
+			aria-label={label}
+			placeholder={placeholder}
+			value={draft}
+			onFocus={() => setFocused(true)}
+			onChange={(event) => setDraft(event.target.value)}
+			onBlur={() => {
+				setFocused(false);
+				if (draft.trim() !== value) onCommit(draft.trim());
+			}}
+			onKeyDown={(event) => {
+				if (event.key === "Enter") event.currentTarget.blur();
+				if (event.key === "Escape") {
+					setDraft(value);
+					event.currentTarget.blur();
+				}
+			}}
+		/>
+	);
+}
+
+type NdiPatch = Partial<NonNullable<Out["ndi"]>>;
+
+/** Everything about how an out goes out over NDI. A change restarts the source. */
+function NdiSettings({ out, set }: { out: Out; set: (patch: NdiPatch) => void }) {
+	const fallbackName = `notGT ${out.name}`;
+	// An API client may have written 0.6667 for ⅔: show the nearest choice.
+	const scale = ndiScale(out);
+	const chosenScale = NDI_SCALES.reduce<number>(
+		(best, candidate) => (Math.abs(candidate - scale) < Math.abs(best - scale) ? candidate : best),
+		NDI_SCALES[0],
+	);
+	const fps = ndiFps(out);
+	const rates: number[] = (NDI_FPS as readonly number[]).includes(fps)
+		? [...NDI_FPS]
+		: [...NDI_FPS, fps].sort((a, b) => a - b);
+
+	return (
+		<div className="tt-ndi__settings" data-ndi-settings={out.id}>
+			<div className="tt-ndi__grid">
+				<label className="field tt-ndi__wide">
+					{t("NDI source name")}
+					<NameInput
+						className="tt-ndi__name"
+						label={t("NDI source name")}
+						value={ndiSourceName(out)}
+						onCommit={(name) => set({ name: name === fallbackName ? undefined : name })}
+					/>
+				</label>
+				<label className="field">
+					{t("Picture size")}
+					<select
+						aria-label={t("NDI picture size")}
+						data-ndi-scale
+						value={String(chosenScale)}
+						onChange={(event) => set({ scale: Number(event.target.value) })}
+					>
+						{NDI_SCALES.map((option) => {
+							const size = ndiSize({ ...out, ndi: { enabled: true, scale: option } });
+							return (
+								<option key={option} value={String(option)}>
+									{size.width}×{size.height}
+									{option === 1 ? ` — ${t("the out's size")}` : ""}
+								</option>
+							);
+						})}
+					</select>
+				</label>
+				<label className="field">
+					{t("Frame rate")}
+					<select
+						aria-label={t("NDI frame rate")}
+						data-ndi-fps
+						value={String(fps)}
+						onChange={(event) => set({ fps: Number(event.target.value) })}
+					>
+						{rates.map((rate) => (
+							<option key={rate} value={String(rate)}>
+								{t("{fps} fps", { fps: ndiFpsLabel(rate) })}
+							</option>
+						))}
+					</select>
+				</label>
+				<label className="field">
+					{t("NDI groups")}
+					<TextField
+						label={t("NDI groups")}
+						placeholder="public"
+						value={out.ndi?.groups ?? ""}
+						onCommit={(groups) => set({ groups: cleanNdiGroups(groups) || undefined })}
+					/>
+				</label>
+				<div className="field tt-ndi__alpha">
+					<Switch
+						checked={ndiAlpha(out)}
+						label={t("Transparency")}
+						title={t("Off: the picture goes out opaque, over black — lighter to send and to receive")}
+						data-ndi-alpha={out.id}
+						onChange={(alpha) => set({ alpha: alpha ? undefined : false })}
+					/>
+				</div>
+			</div>
+			<span className="hint">
+				{t(
+					"Receivers list it as “<computer> (name)”. A smaller picture and a lower rate cost much less — on a Raspberry Pi start with 1280×720 or 960×540. A change restarts the source for a moment.",
+				)}
+			</span>
+		</div>
+	);
+}
+
+/** The out as an NDI source: on or off, how it goes, and its settings behind a button. */
+function NdiRow({ out }: { out: Out }) {
+	const status = useNdiStatus();
+	const [open, setOpen] = useState(false);
+	const ndi = out.ndi ?? { enabled: false };
+	const set = (patch: NdiPatch) => updateOutNdi(out.id, patch);
+	const reports = ndiReportsFor(status, out.id);
+	const size = ndiSize(out);
+	const summary = [
+		ndiSourceName(out),
+		`${size.width}×${size.height}`,
+		t("{fps} fps", { fps: ndiFpsLabel(ndiFps(out)) }),
+		ndiAlpha(out) ? "" : t("no transparency"),
+	]
+		.filter(Boolean)
+		.join(" · ");
+
+	return (
+		<div className={`tt-ndi${ndi.enabled ? " is-on" : ""}`} data-ndi={out.id}>
+			<div className="tt-ndi__line">
+				<Switch
+					checked={ndi.enabled}
+					label="NDI"
+					title={t("Also send this out as an NDI source")}
+					onChange={(enabled) => set({ enabled })}
+				/>
+				<button
+					type="button"
+					className="ghost small tt-ndi__open grow"
+					aria-expanded={open}
+					data-ndi-open={out.id}
+					title={t("NDI settings")}
+					onClick={() => setOpen((value) => !value)}
+				>
+					<Icon name="sliders" size={14} />
+					<span className="truncate grow">
+						{ndi.enabled ? summary : t("For Resolume Arena, vMix and other programs that take NDI")}
+					</span>
+					<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
+				</button>
+			</div>
+			{open ? <NdiSettings out={out} set={set} /> : null}
+			{ndi.enabled ? (
+				<div className="tt-ndi__status">
+					{reports.length === 0 ? (
+						<span className="tt-ndi__state is-warn">{t("No NDI sender has picked it up yet — see “NDI senders” below")}</span>
+					) : (
+						reports.map(({ sender, out: report }) => {
+							const { text, tone } = ndiReport(sender, report);
+							return (
+								<span key={sender.id} className={`tt-ndi__state is-${tone}`} title={`${report.ndiName} · ${report.width}×${report.height}`}>
+									{text}
+								</span>
+							);
+						})
+					)}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+/** The senders that report, and how to start one. */
+function NdiSenders({ outs }: { outs: Out[] }) {
+	const status = useNdiStatus();
+	const me = useMe();
+	const admin = useIsAdmin();
+	const senders = Object.values(status);
+	const wanted = outs.some((out) => out.ndi?.enabled);
+	if (!wanted && senders.length === 0) return null;
+
+	const key = me?.ndiKey;
+	const command = `cd ndi && npm start -- --server ${window.location.origin}${key ? ` --token ${key}` : ""}`;
+
+	const renew = () => {
+		if (!window.confirm(t("Make a new key for the NDI senders? Senders started with the old one stop."))) return;
+		void fetch(`${TEAM_BASE}/ndi/key`, { method: "POST", headers: { accept: "application/json" } });
+	};
+
+	return (
+		<section className="panel tt-ndi-senders">
+			<header className="panel__head">
+				<h3 className="grow">{t("NDI senders")}</h3>
+				{admin && key ? (
+					<Menu
+						label={t("Actions: {name}", { name: t("NDI senders") })}
+						items={[{ label: t("Make a new sender key"), icon: "swap", onSelect: renew }]}
+					/>
+				) : null}
+			</header>
+			{senders.length === 0 ? (
+				<div className="tt-ndi-senders__row hint">{t("None is running.")}</div>
+			) : (
+				senders.map((sender) => (
+					<div key={sender.id} className="tt-ndi-senders__row" data-sender={sender.id}>
+						<span className="tally is-live" aria-hidden="true" />
+						<span className="grow truncate">
+							<strong>{sender.host}</strong>
+							<span className="hint">
+								{" "}
+								· {sender.platform} · NDI {sender.ndi.replace(/^.*?(\d+\.\d+\.\d+).*$/, "$1")}
+							</span>
+						</span>
+						<span className="hint">{t("outs: {count}", { count: String(sender.outs.length) })}</span>
+					</div>
+				))
+			)}
+			{admin ? (
+				<div className="tt-ndi-senders__how">
+					<span className="hint">
+						{t(
+							"A sender renders the outs with NDI switched on and sends them to the network. Run it on this computer or another one — a Raspberry Pi will do — with the NDI runtime installed:",
+						)}
+					</span>
+					<div className="tt-url">
+						<input
+							readOnly
+							className="mono"
+							aria-label={t("Command that starts an NDI sender")}
+							value={command}
+							onFocus={(event) => event.target.select()}
+						/>
+						<CopyButton text={command} label={t("Copy")} className="small" />
+					</div>
+					{!key ? (
+						<span className="hint">{t("When the server has an `apiToken`, add `--token <apiToken>`.")}</span>
+					) : null}
+				</div>
+			) : null}
+		</section>
 	);
 }
 
@@ -236,6 +536,8 @@ function OutCard({ out }: { out: Out }) {
 				/>
 				<CopyButton text={url} label={t("Copy")} className="small" />
 			</div>
+
+			<NdiRow out={out} />
 
 			{items.length === 0 ? (
 				<div className="empty tt-out__empty">
@@ -416,6 +718,7 @@ function App() {
 				) : (
 					outs.map((out) => <OutCard key={out.id} out={out} />)
 				)}
+				<NdiSenders outs={outs} />
 			</div>
 			<Library />
 		</div>

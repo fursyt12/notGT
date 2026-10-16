@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>notGT NDI fixture</title>
+		<style>
+			html,
+			body {
+				margin: 0;
+				width: 100%;
+				height: 100%;
+				background: transparent;
+				overflow: hidden;
+			}
+			div {
+				position: absolute;
+			}
+			/* Known pixels: opaque red, and white at half alpha (straight 255/128). */
+			#red {
+				left: 0;
+				top: 0;
+				width: 200px;
+				height: 200px;
+				background: rgb(255, 0, 0);
+			}
+			#half {
+				left: 200px;
+				top: 0;
+				width: 200px;
+				height: 200px;
+				background: rgba(255, 255, 255, 0.5);
+			}
+			/* Something that moves, so frames keep coming. */
+			#mover {
+				left: 0;
+				top: 900px;
+				width: 120px;
+				height: 120px;
+				background: rgb(0, 128, 255);
+				animation: slide 2s linear infinite alternate;
+			}
+			@keyframes slide {
+				to {
+					transform: translateX(1700px);
+				}
+			}
+			body.still #mover {
+				animation: none;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="red"></div>
+		<div id="half"></div>
+		<div id="mover"></div>
+		<script>
+			if (location.hash === "#still") document.body.classList.add("still");
+		</script>
+	</body>
+</html>

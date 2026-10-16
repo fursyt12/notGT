@@ -4,6 +4,7 @@ import { BUNDLE_NAME, MESSAGES } from "../shared/types";
 import { createApiRouter } from "./api";
 import { createAccess, type Handler } from "./auth";
 import { createMediaRouter } from "./media";
+import { createNdiHub } from "./ndi";
 import { probeDurationMs } from "./video-duration";
 import { syncFileAnimations } from "./file-animations";
 import { createSources } from "./sources";
@@ -95,11 +96,14 @@ export default function notGTExtension(nodecg: ServerAPI): {
 
 	// One answer to "who may drive the show" for both APIs.
 	const access = createAccess(nodecg, team);
+	// The outs that also go out over NDI, for the senders to pick up.
+	const ndi = createNdiHub(nodecg, store);
 	const router = createApiRouter(nodecg, store, scheduler, {
 		access,
 		syncAnimations,
 		videoDuration,
 		timers,
+		ndi,
 	});
 	mount("/api", router);
 	mount(`/bundles/${BUNDLE_NAME}/api`, router);
@@ -173,6 +177,7 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	nodecg.listenFor("serverStopping", (() => {
 		scheduler.dispose();
 		timers.dispose();
+		ndi.dispose();
 		ws?.close();
 	}) as any);
 
@@ -180,7 +185,7 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	store.outs.on("change", () => scheduler.sync());
 
 	nodecg.log.info(
-		"notGT ready — REST API on /api (state, titles/show|hide|toggle|trigger, data, templates, outs, timers, animations)",
+		"notGT ready — REST API on /api (state, titles/show|hide|toggle|trigger, data, templates, outs, timers, animations, ndi)",
 	);
 	if (ws) nodecg.log.info("WebSocket API on %s (state push, the same verbs)", ws.paths[0]);
 	if (access.loginEnabled) {
