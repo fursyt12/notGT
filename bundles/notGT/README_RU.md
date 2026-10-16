@@ -947,7 +947,7 @@ curl -sS -X POST http://<host>/api/outs/interview/stop \
 ### Как идёт разговор
 
 ```
-сервер → {"type":"hello","protocol":1,"bundle":"notGT","version":"0.10.0",
+сервер → {"type":"hello","protocol":1,"bundle":"notGT","version":"0.11.0",
           "authRequired":true,"authenticated":false,"login":["token","password"]}
 клиент → {"type":"login","id":1,"token":"<wsToken>"}
 сервер → {"type":"reply","id":1,"command":"login","ok":true,"result":{"user":null}}
