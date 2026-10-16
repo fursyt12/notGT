@@ -4,7 +4,8 @@
  *
  * What it costs is kept to what is seen:
  *  - Chromium paints only when something on the page moves, so a still title
- *    or an empty out sends nothing;
+ *    or an empty out costs no drawing and no converting; the last frame is
+ *    sent again at the out's rate, because receivers want a steady one;
  *  - only the changed rectangle of a frame is converted (see `frame.mjs`);
  *  - with nobody receiving the source, the page is painted once a second at
  *    most and nothing is converted or sent — it keeps running, so a title on
@@ -16,8 +17,6 @@
 import { BrowserWindow } from "electron";
 import { FramePair } from "./frame.mjs";
 
-/** While nothing moves, the last frame is sent again this often, for receivers that time out. */
-const KEEPALIVE_MS = 1000;
 const WATCH_MS = 500;
 /** Painting rate while nobody receives: the lowest Chromium takes. */
 const IDLE_FPS = 1;
@@ -40,7 +39,6 @@ export class Output {
 		this.watching = false;
 		this.sent = 0;
 		this.fps = 0;
-		this.lastSend = 0;
 		this.frames = new FramePair(config.width, config.height, {
 			alpha: config.alpha,
 		});
@@ -244,15 +242,9 @@ export class Output {
 		} else if (this.connections === 0 && this.watching) {
 			this.debug(`${this.config.ndiName}: no receivers, resting`);
 			this.watching = false;
+			clearTimeout(this.repeat);
 			contents.setFrameRate(IDLE_FPS);
 			if (this.state === "sending") this.state = "idle";
-		}
-		if (
-			this.watching &&
-			this.frames.current &&
-			Date.now() - this.lastSend >= KEEPALIVE_MS
-		) {
-			this.send(this.frames.current);
 		}
 	}
 
@@ -303,12 +295,43 @@ export class Output {
 		}, 100);
 	}
 
+	/** A newly painted frame. */
 	send(buffer) {
+		this.transmit(buffer);
+		// Half a frame of grace, so a paint a little late is not sent twice.
+		this.repeatSoon(1.5);
+	}
+
+	/**
+	 * Receivers want a steady frame rate: OBS, Resolume and NDI Studio Monitor
+	 * take a source that sends one frame a second for a 1 fps source, and
+	 * stutter when it starts to move. So while someone watches and nothing is
+	 * painted, the last frame goes out again at the out's rate — NDI compresses
+	 * it again, nothing is drawn or converted.
+	 */
+	repeatSoon(frames) {
+		clearTimeout(this.repeat);
+		if (this.stopped || !this.watching) return;
+		const frameMs = 1000 / this.config.fps;
+		// Each repeat is due a frame after the last one was due, not after it
+		// ran: timers run late, and a late timer must not slow the rate down.
+		this.repeatDue =
+			(frames === 1 ? this.repeatDue : performance.now()) + frames * frameMs;
+		this.repeat = setTimeout(
+			() => {
+				if (this.stopped || !this.watching || !this.frames.current) return;
+				this.transmit(this.frames.current);
+				this.repeatSoon(1);
+			},
+			Math.max(0, this.repeatDue - performance.now()),
+		);
+	}
+
+	transmit(buffer) {
 		this.sender.sendAsync(buffer, this.frames.width, this.frames.height, {
 			fps: this.config.fps,
 			opaque: !this.config.alpha,
 		});
-		this.lastSend = Date.now();
 		this.sent++;
 	}
 
@@ -331,6 +354,7 @@ export class Output {
 		for (const timer of this.timers) clearInterval(timer);
 		clearTimeout(this.retry);
 		clearTimeout(this.repaint);
+		clearTimeout(this.repeat);
 		if (this.window && !this.window.isDestroyed()) this.window.destroy();
 		this.window = undefined;
 		// Destroying the sender waits for NDI to let go of the last frame.

@@ -23,8 +23,9 @@ display, and every painted frame goes straight to the NDI library. The sender do
 little as it can:
 
 - **Nothing moves, nothing is drawn.** Chromium only paints when something on the page
-  changes, so a title that is standing still, or an empty out, sends nothing — just one
-  repeat a second, so receivers do not take the source for gone.
+  changes, so a title that is standing still, or an empty out, is neither drawn nor
+  converted. The last frame still goes out at the out's frame rate, because receivers —
+  OBS, Resolume, NDI Studio Monitor — want a steady one; only NDI's compression runs.
 - **Nobody watches, nothing is sent.** Until a receiver connects the page paints at most
   once a second and no frame is converted or sent. The page keeps running all the same,
   so whatever is on air is there the moment Resolume connects.
@@ -39,7 +40,8 @@ little as it can:
 Measured on an x86-64 desktop (Linux, a 1920×1080 page with something moving all the
 time, sent at 30 fps to one receiver): the sender took about a quarter of one CPU core,
 of which the sender's own work was about 0.5% — the rest is NDI compressing the picture.
-With nobody receiving, or nothing moving, it is next to nothing.
+With nobody receiving it is next to nothing; a still picture to a receiver costs NDI's
+compression of it and hardly anything else.
 
 So what decides the cost is **the size and the frame rate of the picture**, and both are
 set per out in the dashboard. Half the size is a quarter of the work.
