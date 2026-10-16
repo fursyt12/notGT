@@ -9,6 +9,8 @@
  *     notGT.cmd               fallback bootstrap (always works)
  *     launcher/index.mjs      control UI + server supervisor
  *     launcher/ui.html
+ *     ndi/                    the NDI sender (Electron for Windows), started by
+ *                             the launcher with the server (--no-ndi: left out)
  *     node/node.exe           official Windows Node runtime (nothing else of it)
  *     app/                    NodeCG runtime root
  *       index.js, package.json
@@ -61,6 +63,7 @@ const PACKAGE_DIR_NAME = "notGT-win-x64";
 const LAUNCHER_EXE_NAME = "notGT Launcher.exe";
 const BUNDLE_DIR = path.join(REPO_ROOT, "bundles", "notGT");
 const LAUNCHER_DIR = path.join(REPO_ROOT, "launcher");
+const NDI_DIR = path.join(REPO_ROOT, "ndi");
 const LAUNCHER_C_SRC = path.join(LAUNCHER_DIR, "win", "notGT-launcher.c");
 /** The NodeCG server, relative to the root of an installed tree. */
 const SERVER_ENTRY = path.join(
@@ -81,6 +84,7 @@ function parseArgs(argv) {
 		smoke: false,
 		appOnly: false,
 		prodRoot: null,
+		ndi: true,
 		help: false,
 	};
 	for (let i = 0; i < argv.length; i++) {
@@ -111,6 +115,9 @@ function parseArgs(argv) {
 				break;
 			case "--prod-root":
 				opts.prodRoot = path.resolve(take());
+				break;
+			case "--no-ndi":
+				opts.ndi = false;
 				break;
 			case "--help":
 			case "-h":
@@ -490,7 +497,8 @@ function bundleRuntimeFile(full, name) {
 		return !["src", "package-lock.json", "tsconfig.json"].includes(name);
 	}
 	// The one script the running server calls is the alpha-video converter.
-	if (parent === path.join(BUNDLE_DIR, "scripts")) return name === "convert-alpha.mjs";
+	if (parent === path.join(BUNDLE_DIR, "scripts"))
+		return name === "convert-alpha.mjs";
 	return true;
 }
 
@@ -544,11 +552,15 @@ async function assembleApp(stage) {
 	});
 	log(
 		`  ${human(server.bytes)} from ${server.packages.length} packages` +
-			(server.warnings.length > 0 ? `, ${server.warnings.length} bundler warning(s)` : ""),
+			(server.warnings.length > 0
+				? `, ${server.warnings.length} bundler warning(s)`
+				: ""),
 	);
 	if (process.env.NOTGT_DEBUG) {
 		for (const text of server.warnings) console.log(`    warning: ${text}`);
-		log(`  not installed, left as run-time requires: ${server.absent.join(", ")}`);
+		log(
+			`  not installed, left as run-time requires: ${server.absent.join(", ")}`,
+		);
 		for (const [name, bytes] of server.largest) {
 			console.log(`    ${human(bytes).padStart(10)}  ${name}`);
 		}
@@ -565,7 +577,9 @@ async function assembleApp(stage) {
 		externals: server.externals,
 		copyTree,
 	});
-	log(`  kept on disk (native addons and what they need): ${kept.join(", ") || "nothing"}`);
+	log(
+		`  kept on disk (native addons and what they need): ${kept.join(", ") || "nothing"}`,
+	);
 	if (kept.length === 0) {
 		throw new Error(
 			"No native addon was found in the dependency tree — the database driver should be one.",
@@ -576,7 +590,9 @@ async function assembleApp(stage) {
 		path.join(app, "THIRD-PARTY-LICENSES.txt"),
 		server.packages,
 	);
-	log(`  licences of ${licences.packages} bundled packages → app/THIRD-PARTY-LICENSES.txt`);
+	log(
+		`  licences of ${licences.packages} bundled packages → app/THIRD-PARTY-LICENSES.txt`,
+	);
 
 	// Built notGT bundle — no sources, no node_modules, no test artifacts.
 	fs.mkdirSync(path.join(app, "bundles"), { recursive: true });
@@ -679,7 +695,9 @@ async function ensureNodeRuntime(destDir, version) {
 			fs.copyFileSync(path.join(inner, file), path.join(destDir, file));
 		}
 	}
-	log(`Node runtime placed in ${path.relative(REPO_ROOT, destDir)} (node.exe only)`);
+	log(
+		`Node runtime placed in ${path.relative(REPO_ROOT, destDir)} (node.exe only)`,
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -820,6 +838,75 @@ function writeCmdFallback() {
 	fs.writeFileSync(path.join(PACKAGE_DIR, "notGT.cmd"), cmd, "utf8");
 }
 
+/**
+ * The NDI sender, ready to run on Windows x64: its sources, its production
+ * dependencies (koffi's Windows binary among them) and Electron for Windows.
+ * Works from any build host: npm and Electron's installer are told the
+ * target. The NDI runtime itself is not shipped — it is NDI's (NDI Tools).
+ */
+function assembleNdiSender() {
+	const dest = path.join(PACKAGE_DIR, "ndi");
+	fs.mkdirSync(dest, { recursive: true });
+	for (const name of ["bin", "src", "scripts"]) {
+		copyTree(path.join(NDI_DIR, name), path.join(dest, name));
+	}
+	for (const name of [
+		"main.mjs",
+		"package.json",
+		"package-lock.json",
+		"README.md",
+		"README_RU.md",
+	]) {
+		fs.copyFileSync(path.join(NDI_DIR, name), path.join(dest, name));
+	}
+	const target = {
+		npm_config_platform: "win32",
+		npm_config_arch: "x64",
+		ELECTRON_INSTALL_PLATFORM: "win32",
+		ELECTRON_INSTALL_ARCH: "x64",
+	};
+	run(
+		"npm",
+		[
+			"ci",
+			"--omit=dev",
+			"--no-audit",
+			"--no-fund",
+			...(IS_WINDOWS ? [] : ["--os=win32", "--cpu=x64"]),
+		],
+		{ cwd: dest, env: target },
+	);
+	// Electron's own binary; `npm ci` leaves it for the first start otherwise.
+	run(process.execPath, [path.join("node_modules", "electron", "install.js")], {
+		cwd: dest,
+		env: target,
+	});
+	// Chromium's interface strings: an offscreen page shows none of them, so
+	// two languages are kept of the fifty-odd (about 47 MB).
+	const locales = path.join(
+		dest,
+		"node_modules",
+		"electron",
+		"dist",
+		"locales",
+	);
+	for (const file of fs.existsSync(locales) ? fs.readdirSync(locales) : []) {
+		if (!["en-US.pak", "ru.pak"].includes(file))
+			fs.rmSync(path.join(locales, file));
+	}
+	for (const required of [
+		path.join("node_modules", "electron", "dist", "electron.exe"),
+		path.join("node_modules", "@koromix", "koffi-win32-x64"),
+	]) {
+		if (!exists(path.join(dest, required))) {
+			throw new Error(
+				`The NDI sender is incomplete: ndi\\${required} is missing`,
+			);
+		}
+	}
+	log(`NDI sender: ${human(dirSize(dest))}`);
+}
+
 // ---------------------------------------------------------------------------
 // 6. README.txt / cfg/README.txt (Russian)
 // ---------------------------------------------------------------------------
@@ -884,6 +971,17 @@ function readmeText() {
 		"",
 		"У каждого выхода (out) своя ссылка — её тоже берут в панели.",
 		"",
+		"NDI (Resolume Arena, vMix и др.)",
+		"--------------------------------",
+		"Установите NDI Tools или NDI Runtime (https://ndi.video/tools/) — сам",
+		"NDI в сборку не входит. Лаунчер вместе с сервером запускает отправителя",
+		"NDI (папка ndi\\). В панели «Titles & Outs» включите NDI у out'а — он",
+		"появится в Resolume как «<имя компьютера> (notGT Main)». Под out'ом",
+		"видно, отправляется ли он и сколько приёмников его смотрят; если NDI",
+		"не установлен, там так и будет написано. Брандмауэр Windows должен",
+		"пропускать NDI (mDNS UDP 5353 и TCP с 5960) — NDI Tools обычно сам",
+		"добавляет правила.",
+		"",
 		"Где что лежит",
 		"-------------",
 		"app\\cfg\\      — конфигурация. nodecg.json (host/port) и notGT.json",
@@ -894,6 +992,7 @@ function readmeText() {
 		"                 Сохраняются между обновлениями программы.",
 		"app\\logs\\     — журналы работы сервера.",
 		"launcher\\      — код лаунчера и его веб-интерфейс.",
+		"ndi\\           — отправитель NDI (Electron); запускается лаунчером.",
 		"node\\          — официальный Node.js для Windows (менять не нужно).",
 		"",
 		"Обновление",
@@ -1042,7 +1141,8 @@ async function main() {
 				"  --smoke      start the packaged server and check that it works\n" +
 				"  --app-only   assemble app/ only: no Node runtime, launcher or zip\n" +
 				"  --prod-root  use an already installed production tree instead of\n" +
-				"               running `npm ci --omit=dev` in a staging directory",
+				"               running `npm ci --omit=dev` in a staging directory\n" +
+				"  --no-ndi     leave the NDI sender (and its Electron) out of the package",
 		);
 		return;
 	}
@@ -1091,6 +1191,11 @@ async function main() {
 	}
 
 	await ensureNodeRuntime(path.join(PACKAGE_DIR, "node"), opts.nodeVersion);
+
+	if (opts.ndi) {
+		log("Assembling ndi/ (the NDI sender)…");
+		assembleNdiSender();
+	} else log("--no-ndi: the NDI sender is left out");
 
 	const exeBuilt = buildLauncherExe();
 	writeCmdFallback();

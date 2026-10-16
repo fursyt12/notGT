@@ -350,7 +350,11 @@ function NdiSenders({ outs }: { outs: Out[] }) {
 				) : null}
 			</header>
 			{senders.length === 0 ? (
-				<div className="tt-ndi-senders__row hint">{t("None is running.")}</div>
+				<div className="tt-ndi-senders__row hint">
+					{t(
+						"None is running. The notGT launcher on Windows and Docker Compose with the ndi profile start one together with the server; on another machine, run the command below.",
+					)}
+				</div>
 			) : (
 				senders.map((sender) => (
 					<div key={sender.id} className="tt-ndi-senders__row" data-sender={sender.id}>

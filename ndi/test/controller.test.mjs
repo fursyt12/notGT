@@ -111,6 +111,30 @@ test("a source that cannot start is reported, not dropped", () => {
 	assert.deepEqual(outputs.log, ["start main 1280"]);
 });
 
+test("a source that failed is tried again every round, and said once", () => {
+	const lines = [];
+	let broken = true;
+	const controller = new Controller({
+		create: (config) => {
+			if (broken) throw new Error("no NDI here");
+			return {
+				start() {},
+				stop() {},
+				status: () => ({ id: config.id, state: "idle" }),
+			};
+		},
+		log: (line) => lines.push(line),
+	});
+	const [main] = configsFromServer(answer, SERVER);
+	controller.apply([main]);
+	controller.apply([main]);
+	assert.equal(lines.filter((line) => line.includes("no NDI here")).length, 1);
+	broken = false;
+	controller.apply([main]);
+	assert.equal(controller.status()[0].state, "idle");
+	assert.ok(lines.at(-1).startsWith("sending"));
+});
+
 test("the client brings the key and explains a refusal", async () => {
 	const calls = [];
 	const fetch = async (url, init) => {

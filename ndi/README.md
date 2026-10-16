@@ -60,6 +60,11 @@ set per out in the dashboard. Half the size is a quarter of the work.
 
 ## Starting it
 
+**With the Windows package** there is nothing to start: the launcher starts the sender
+together with the server. Install [NDI Tools](https://ndi.video/tools/) (or the NDI
+runtime) and go straight to step 1. **With Docker Compose** on Linux, see
+[Docker](#docker). Anywhere else:
+
 1. In **Titles & Outs**, switch **NDI** on for an out. The line next to the switch sums
    up how it goes out; click it for the **NDI settings**:
 

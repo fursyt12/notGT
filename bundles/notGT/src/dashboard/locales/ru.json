@@ -496,7 +496,6 @@
 	"NDI senders": "Отправители NDI",
 	"NDI source name": "Имя источника NDI",
 	"No NDI sender has picked it up yet — see “NDI senders” below": "Ни один отправитель NDI его ещё не взял — см. «Отправители NDI» ниже",
-	"None is running.": "Ни один не запущен.",
 	"Opening on {host}…": "Открывается на {host}…",
 	"outs: {count}": "out: {count}",
 	"Ready on {host}, nobody receives it": "Готов на {host}, никто не принимает",
@@ -510,5 +509,6 @@
 	"Picture size": "Размер картинки",
 	"Receivers list it as “<computer> (name)”. A smaller picture and a lower rate cost much less — on a Raspberry Pi start with 1280×720 or 960×540. A change restarts the source for a moment.": "Приёмники показывают его как «<компьютер> (имя)». Картинка поменьше и частота пониже обходятся намного дешевле — на Raspberry Pi начните с 1280×720 или 960×540. После изменения источник на мгновение перезапускается.",
 	"the out's size": "размер out'а",
-	"Transparency": "Прозрачность"
+	"Transparency": "Прозрачность",
+	"None is running. The notGT launcher on Windows and Docker Compose with the ndi profile start one together with the server; on another machine, run the command below.": "Ни один не запущен. Лаунчер notGT на Windows и Docker Compose с профилем ndi запускают его вместе с сервером; на другой машине выполните команду ниже."
 }

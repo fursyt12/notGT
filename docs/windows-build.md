@@ -20,6 +20,7 @@ notGT-win-x64/
     index.mjs             what the window drives: NodeCG supervisor (spawns app/index.js)
     ui.html
   node/                   official Windows Node runtime: node.exe and its licence
+  ndi/                    the NDI sender: its sources, koffi and Electron for Windows
   app/                    NodeCG runtime root
     index.js              loads the bundled server
     package.json          (nodecgRoot: true → monorepo layout)
@@ -41,6 +42,27 @@ start slower still, with the antivirus looking at each one.
 
 `dist/notGT-win-x64.zip` contains the folder above with `notGT-win-x64/` as the
 single top-level entry.
+
+### The NDI sender
+
+`ndi/` is the NDI sender of the repository, installed for Windows x64 at build
+time (`npm ci --omit=dev --os=win32 --cpu=x64`, then Electron's own installer
+with `ELECTRON_INSTALL_PLATFORM=win32`), so it builds the same on any host. It
+is most of the package's size — Electron is a whole Chromium, about 330 MB
+unpacked once Chromium's interface languages but English and Russian are
+dropped. `--no-ndi` leaves it out.
+
+The launcher starts it once the server answers — `node ndi\bin\notgt-ndi.mjs
+--server http://127.0.0.1:<port> --token-file app\db\notGT-ndi.key` — and
+stops it with the server; the server keeps the senders' key in that file
+(`NOTGT_NDI_KEY_FILE`). Its lines go to the launcher's log with `[notgt-ndi]`
+in front. It needs the NDI runtime, which is NDI's and not in the package:
+NDI Tools or the NDI runtime installer. Without it the sender keeps running,
+the dashboard says under each out with NDI on that the runtime is missing, and
+it picks the runtime up as soon as it is installed — also from
+`C:\Program Files\NDI\…` when the launcher was started before NDI Tools was
+installed and does not see `NDI_RUNTIME_DIR_V6`. `--no-ndi` on the launcher
+(or `NOTGT_NDI=off`) does not start it.
 
 ## How the package is built
 

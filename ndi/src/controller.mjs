@@ -86,6 +86,8 @@ export class Controller {
 		this.log = log;
 		/** @type {Map<string, { config: OutputConfig, output: ReturnType<typeof create> | null, error?: string }>} */
 		this.outputs = new Map();
+		/** The last failure of each out, so a retry that fails the same way stays quiet. */
+		this.failures = new Map();
 	}
 
 	/** Starts what is new, restarts what changed, stops what is gone. */
@@ -93,10 +95,14 @@ export class Controller {
 		const wanted = new Map(configs.map((config) => [config.id, config]));
 		for (const [id, entry] of this.outputs) {
 			const next = wanted.get(id);
-			if (next && sameSource(entry.config, next)) continue;
+			// A source that could not start is tried again on every round.
+			if (next && entry.output && sameSource(entry.config, next)) continue;
 			entry.output?.stop();
 			this.outputs.delete(id);
-			if (!next) this.log(`stopped “${entry.config.ndiName}”`);
+			if (!next) {
+				this.failures.delete(id);
+				if (entry.output) this.log(`stopped “${entry.config.ndiName}”`);
+			}
 		}
 		for (const config of configs) {
 			if (this.outputs.has(config.id)) continue;
@@ -104,17 +110,21 @@ export class Controller {
 				const output = this.create(config);
 				output.start();
 				this.outputs.set(config.id, { config, output });
+				this.failures.delete(config.id);
 				this.log(
 					`sending “${config.ndiName}” ${config.width}×${config.height} @ ${config.fps} fps`,
 				);
 			} catch (error) {
-				// Kept, so the dashboard hears why; tried again when the config changes.
+				// Kept, so the dashboard hears why; tried again next round.
 				this.outputs.set(config.id, {
 					config,
 					output: null,
 					error: error.message,
 				});
-				this.log(`“${config.ndiName}”: ${error.message}`);
+				if (this.failures.get(config.id) !== error.message) {
+					this.log(`“${config.ndiName}”: ${error.message}`);
+				}
+				this.failures.set(config.id, error.message);
 			}
 		}
 	}

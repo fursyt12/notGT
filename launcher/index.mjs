@@ -62,6 +62,7 @@ function parseArgs(argv) {
 		settings: null,
 		background: false,
 		runtime: null,
+		ndi: true,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -75,6 +76,7 @@ function parseArgs(argv) {
 		else if (arg === "--settings") out.settings = argv[++i];
 		else if (arg === "--background") out.background = true;
 		else if (arg === "--runtime") out.runtime = argv[++i];
+		else if (arg === "--no-ndi") out.ndi = false;
 	}
 	return out;
 }
@@ -99,6 +101,22 @@ if (Number.isFinite(args.readyTimeout) && args.readyTimeout > 0) {
 
 // Default app dir is the repo root (one level above launcher/).
 const appDir = path.resolve(args.app ?? path.join(__dirname, ".."));
+
+/**
+ * The NDI sender (`ndi/` next to `launcher/`, in the repository and in the
+ * packages). Started with the server and stopped with it, so the outs with
+ * NDI switched on in the dashboard go out with nothing else to run. The
+ * server keeps the senders' key in NDI_KEY_FILE for it.
+ */
+const ndiDir = path.resolve(__dirname, "..", "ndi");
+const NDI_ENTRY = path.join(ndiDir, "bin", "notgt-ndi.mjs");
+const NDI_KEY_FILE = path.join(appDir, "db", "notGT-ndi.key");
+const NDI_RESTART_MS = 5000;
+const ndiWanted =
+	args.ndi &&
+	!["off", "false", "no", "0"].includes(
+		String(process.env.NOTGT_NDI ?? "").toLowerCase(),
+	);
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -485,6 +503,7 @@ const state = {
 	warning: "", // set when the server is up but unreachable on the chosen address
 	reach: null, // last { dialHost, port, chosenOk, loopbackOk }
 	child: null,
+	sender: null, // the NDI sender, while the server runs
 	logs: [], // ring buffer of the last LOG_BUFFER_MAX lines
 	logCount: 0, // total number of lines ever produced (monotonic)
 };
@@ -1064,7 +1083,11 @@ function killTree(child) {
 
 /** Best-effort synchronous kill used from the `exit` handler. */
 function hardKillChild() {
-	const child = state.child;
+	hardKill(state.sender);
+	hardKill(state.child);
+}
+
+function hardKill(child) {
 	if (!child || child.exitCode !== null || child.signalCode !== null) return;
 	try {
 		if (process.platform === "win32") {
@@ -1335,6 +1358,7 @@ async function startServer(requestedHost, requestedPort) {
 			cwd: appDir,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
+			env: { ...process.env, NOTGT_NDI_KEY_FILE: NDI_KEY_FILE },
 		});
 	} catch (err) {
 		state.status = "error";
@@ -1360,6 +1384,7 @@ async function startServer(requestedHost, requestedPort) {
 	child.on("exit", (code, signal) => {
 		if (state.child !== child) return;
 		state.child = null;
+		void stopSender();
 		state.warning = "";
 		state.reach = null;
 		if (state.status === "stopping") {
@@ -1408,6 +1433,7 @@ async function startServer(requestedHost, requestedPort) {
 			pushLog(
 				`[launcher] ${T("Сервер отвечает", "The server answers")}: ${guiUrlFor(reach.dialHost, port)}`,
 			);
+			startSender(port);
 			break;
 		}
 		if (reach.loopbackOk) {
@@ -1444,6 +1470,7 @@ async function startServer(requestedHost, requestedPort) {
 					`The server is running (127.0.0.1:${port}), but ${reach.dialHost}:${port} cannot be reached.`,
 				);
 				pushLog(`[launcher] ${say(state.warning)}`);
+				startSender(port);
 				break;
 			}
 		} else {
@@ -1484,6 +1511,95 @@ async function startServer(requestedHost, requestedPort) {
 	return { http: 200, body: statePayload() };
 }
 
+// ---------------------------------------------------------------------------
+// The NDI sender
+// ---------------------------------------------------------------------------
+
+/** Whether this tree carries a sender that can run (its Electron installed). */
+function senderInstalled() {
+	return (
+		fs.existsSync(NDI_ENTRY) &&
+		fs.existsSync(path.join(ndiDir, "node_modules", "electron", "package.json"))
+	);
+}
+
+let senderNoticeShown = false;
+
+/**
+ * Starts the sender against the server on this machine. It asks the server
+ * what to send and idles while no out has NDI switched on; without the NDI
+ * runtime it stays up and tells the dashboard so.
+ */
+function startSender(port) {
+	if (!ndiWanted || state.sender) return;
+	if (!senderInstalled()) {
+		if (!senderNoticeShown) {
+			senderNoticeShown = true;
+			pushLog(
+				T(
+					`[launcher] Отправителя NDI нет в ${ndiDir} — выходы NDI не будут отправляться (в репозитории: cd ndi && npm install).`,
+					`[launcher] No NDI sender in ${ndiDir} — the NDI outputs will not be sent (in the repository: cd ndi && npm install).`,
+				),
+			);
+		}
+		return;
+	}
+	let sender;
+	try {
+		sender = spawn(
+			process.execPath,
+			[
+				NDI_ENTRY,
+				"--server",
+				`http://127.0.0.1:${port}`,
+				"--token-file",
+				NDI_KEY_FILE,
+			],
+			{ cwd: ndiDir, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+		);
+	} catch (err) {
+		pushLog(`[launcher] NDI: ${err.message}`);
+		return;
+	}
+	state.sender = sender;
+	attachLogs(sender);
+	pushLog(
+		T(
+			"[launcher] Отправитель NDI запущен.",
+			"[launcher] The NDI sender is started.",
+		),
+	);
+	sender.on("error", (err) => pushLog(`[launcher] NDI: ${err.message}`));
+	sender.on("exit", (code, signal) => {
+		if (state.sender !== sender) return;
+		state.sender = null;
+		if (state.status !== "running") return;
+		pushLog(
+			T(
+				`[launcher] Отправитель NDI завершился (код ${code}${signal ? `, сигнал ${signal}` : ""}); перезапуск через ${NDI_RESTART_MS / 1000} с.`,
+				`[launcher] The NDI sender ended (code ${code}${signal ? `, signal ${signal}` : ""}); restarting in ${NDI_RESTART_MS / 1000} s.`,
+			),
+		);
+		setTimeout(() => {
+			if (state.status === "running" && state.port === port) startSender(port);
+		}, NDI_RESTART_MS);
+	});
+}
+
+async function stopSender() {
+	const sender = state.sender;
+	state.sender = null;
+	if (!sender || sender.exitCode !== null || sender.signalCode !== null) return;
+	await killTree(sender);
+	if (!(await waitExit(sender, KILL_GRACE_MS))) {
+		try {
+			sender.kill("SIGKILL");
+		} catch {
+			/* ignore */
+		}
+	}
+}
+
 async function stopChild(child) {
 	if (!child) return;
 	await killTree(child);
@@ -1513,6 +1629,7 @@ async function stopServer() {
 
 	state.status = "stopping";
 	state.statusText = tr("Остановка сервера…", "Stopping the server…");
+	await stopSender();
 	await stopChild(child);
 	state.status = "stopped";
 	state.statusText = tr("Сервер остановлен.", "The server is stopped.");

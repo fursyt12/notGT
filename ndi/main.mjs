@@ -100,24 +100,47 @@ app
 	});
 
 async function start() {
-	const { loadNdi, NdiMissingError } = await import("./src/ndi.mjs");
+	const { loadNdi, NdiMissingError, REDIST_URL } = await import(
+		"./src/ndi.mjs"
+	);
 	const { Output } = await import("./src/output.mjs");
 
 	let ndi;
-	try {
-		ndi = loadNdi();
-	} catch (error) {
-		log(error.message);
-		if (error instanceof NdiMissingError && error.details?.length) {
-			for (const line of error.details) log(`  ${line}`);
+	let missing = "";
+	/** Opens the NDI library; says why not, once per reason. */
+	const tryLoad = () => {
+		try {
+			ndi = loadNdi();
+			log(`NDI ${ndi.version} (${ndi.file})`);
+			missing = "";
+			return true;
+		} catch (error) {
+			if (error.message !== missing) {
+				log(error.message);
+				if (error instanceof NdiMissingError && error.details?.length) {
+					for (const line of error.details) log(`  ${line}`);
+				}
+			}
+			missing = error.message;
+			return false;
 		}
+	};
+	tryLoad();
+	if (!ndi && typeof args.url === "string") {
 		app.exit(2);
 		return;
 	}
-	log(`NDI ${ndi.version} (${ndi.file})`);
+	// Without the library the sender keeps following the server, so the
+	// dashboard can say what is missing — and tries again, so installing NDI
+	// is enough, without a restart.
+	const missingText = () =>
+		`the NDI runtime is not installed on this computer — install NDI Tools or the NDI runtime (${REDIST_URL[process.platform] ?? REDIST_URL.linux})`;
 
 	const controller = new Controller({
-		create: (config) => new Output({ ndi, config, log }),
+		create: (config) => {
+			if (!ndi && !tryLoad()) throw new Error(missingText());
+			return new Output({ ndi, config, log });
+		},
 		log,
 	});
 
@@ -126,7 +149,7 @@ async function start() {
 		if (stopping) return;
 		stopping = true;
 		controller.stopAll();
-		ndi.destroy();
+		ndi?.destroy();
 		app.exit(0);
 	}
 	process.on("SIGINT", shutdown);
@@ -191,7 +214,7 @@ async function start() {
 					host: os.hostname(),
 					platform: `${process.platform}-${process.arch}`,
 					version,
-					ndi: ndi.version,
+					ndi: ndi?.version ?? "",
 					outs: controller.status(),
 				});
 				if (lastProblem) log("the server answers again");

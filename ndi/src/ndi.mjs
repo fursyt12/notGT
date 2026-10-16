@@ -69,11 +69,18 @@ export function libraryCandidates(
 				? "Processing.NDI.Lib.x86.dll"
 				: "Processing.NDI.Lib.x64.dll";
 		for (const dir of runtimeDirs) list.push(path.join(dir, name));
-		list.push(
-			path.join("C:\\Program Files\\NDI\\NDI 6 Runtime\\v6", name),
-			path.join("C:\\Program Files\\NDI\\NDI 6 SDK\\Bin\\x64", name),
-			name,
-		);
+		// NDI Tools and the runtime set NDI_RUNTIME_DIR_V6, but a program
+		// started before they were installed does not see it: look where they
+		// put the library too.
+		const programFiles = [
+			env.ProgramFiles,
+			env["ProgramFiles(x86)"],
+			"C:\\Program Files",
+		];
+		for (const base of new Set(programFiles.filter(Boolean))) {
+			list.push(...findFiles(path.join(base, "NDI"), name, 4));
+		}
+		list.push(name);
 	} else if (platform === "darwin") {
 		for (const dir of runtimeDirs) list.push(path.join(dir, "libndi.dylib"));
 		list.push(
@@ -92,6 +99,25 @@ export function libraryCandidates(
 		);
 	}
 	return list;
+}
+
+/** Files called `name` under `dir`, at most `depth` folders down; newest NDI first. */
+function findFiles(dir, name, depth) {
+	const found = [];
+	let entries;
+	try {
+		entries = fs.readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return found;
+	}
+	for (const entry of entries) {
+		const full = path.join(dir, entry.name);
+		if (entry.isFile() && entry.name.toLowerCase() === name.toLowerCase())
+			found.push(full);
+		else if (entry.isDirectory() && depth > 0)
+			found.push(...findFiles(full, name, depth - 1));
+	}
+	return found.sort().reverse();
 }
 
 /** Which folder of the Linux SDK holds the library for this machine. */
