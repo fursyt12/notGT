@@ -79,3 +79,8 @@ tmp_node_modules
 
 # Local compose settings: passwords and keys live there.
 /.env
+
+# ffmpeg the launcher downloads (launcher/index.mjs, «Install ffmpeg»)
+/ffmpeg/
+/ffmpeg.new/
+/ffmpeg.download.zip

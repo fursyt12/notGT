@@ -5,6 +5,8 @@
  * pick a network interface and a port, start the server, open the dashboard.
  * Signing in, the firewall and the server log each have a small window of
  * their own, and the program sits in the notification area while it runs.
+ * ffmpeg, which the server needs to convert .mp4/.mov uploads, is installed
+ * from here with one button.
  *
  * Closing the launcher does not stop the server: it keeps running in the
  * background, and the next time the launcher is started its window shows it.
@@ -108,6 +110,7 @@ enum {
 	ID_TRAY_STOP_QUIT,
 	ID_LANG_RU,
 	ID_LANG_EN,
+	ID_FFMPEG,
 	ID_IFACE_FIRST = 2000,
 };
 
@@ -141,6 +144,9 @@ typedef struct {
 	BOOL fwRuleExists;
 	int fwPort;
 	wchar_t fwRuleName[96];
+	BOOL ffInstalled, ffCanInstall, ffInstalling, ffFailed;
+	double ffProgress; /* 0..1 while installing */
+	wchar_t ffText[640];
 	Interface interfaces[MAX_INTERFACES];
 	int interfaceCount;
 	int lang; /* 0 = Russian, 1 = English */
@@ -158,6 +164,7 @@ typedef enum {
 	ACT_FW_REMOVE,
 	ACT_DIAGNOSE,
 	ACT_LANG,
+	ACT_FFMPEG_INSTALL,
 } ActionKind;
 
 typedef struct Action {
@@ -513,6 +520,7 @@ static wchar_t *join_logs(const JVal *lines) {
 static AppState *state_from_json(const JVal *root) {
 	AppState *state = (AppState *)calloc(1, sizeof(AppState));
 	const JVal *login = json_get(root, L"login"), *firewall = json_get(root, L"firewall");
+	const JVal *ffmpeg = json_get(root, L"ffmpeg");
 	const JVal *interfaces = json_get(root, L"interfaces");
 	if (!state) return NULL;
 	copy_str(state->version, 32, json_str(root, L"version"));
@@ -531,6 +539,12 @@ static AppState *state_from_json(const JVal *root) {
 	state->fwRuleExists = json_bool(firewall, L"ruleExists");
 	state->fwPort = (int)json_num(firewall, L"port", state->port);
 	copy_str(state->fwRuleName, 96, json_str(firewall, L"ruleName"));
+	state->ffInstalled = json_bool(ffmpeg, L"installed");
+	state->ffCanInstall = json_bool(ffmpeg, L"canInstall");
+	state->ffInstalling = json_bool(ffmpeg, L"installing");
+	state->ffFailed = json_bool(ffmpeg, L"failed");
+	state->ffProgress = json_num(ffmpeg, L"progress", 0);
+	copy_str(state->ffText, 640, json_str(ffmpeg, L"text"));
 	for (const JVal *item = interfaces ? interfaces->child : NULL; item && state->interfaceCount < MAX_INTERFACES;
 		item = item->next) {
 		Interface *entry = &state->interfaces[state->interfaceCount];
@@ -644,6 +658,11 @@ static DWORD WINAPI action_thread(LPVOID unused) {
 				path = L"/api/diagnostics";
 				patient = TRUE;
 				break;
+			case ACT_FFMPEG_INSTALL:
+				/* Answers at once; the download goes on in the backend. */
+				path = L"/api/ffmpeg/install";
+				strcpy(body, "{}");
+				break;
 			}
 
 			result = (ActionResult *)calloc(1, sizeof(ActionResult));
@@ -739,7 +758,7 @@ static void login_summary(wchar_t *out, size_t len) {
 /* ------------------------------------------------------------- main window */
 
 #define MAIN_W 480
-#define MAIN_H 544
+#define MAIN_H 600
 
 static void paint_main(HDC dc) {
 	RECT all = R(0, 0, MAIN_W, MAIN_H), r;
@@ -816,6 +835,22 @@ static void paint_main(HDC dc) {
 	text(dc, line, R(22, 452, 436, 34), g_fontSmall,
 		g_state && g_state->loginEnabled && g_state->loginDefaultPassword ? C_AMBER : C_MUTED,
 		DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS | DT_EDITCONTROL);
+
+	/* ffmpeg: what there is, and the button that installs it */
+	card(dc, 20, 494, 440, 56);
+	if (g_state) {
+		BOOL button = !g_state->ffInstalled && (g_state->ffCanInstall || g_state->ffInstalling);
+		text(dc, g_state->ffText, R(34, 500, button ? 272 : 412, 44), g_fontSmall,
+			g_state->ffFailed ? C_AMBER : g_state->ffInstalled ? C_MUTED : C_TEXT,
+			DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS | DT_EDITCONTROL);
+		if (g_state->ffInstalling) {
+			RECT track = R(34, 542, 412, 3), done = track;
+			double part = g_state->ffProgress < 0 ? 0 : g_state->ffProgress > 1 ? 1 : g_state->ffProgress;
+			fill(dc, &track, C_CONTROL);
+			done.right = done.left + (int)((track.right - track.left) * part);
+			fill(dc, &done, C_SIGNAL);
+		}
+	}
 }
 
 static void relabel(void);
@@ -849,6 +884,16 @@ static void apply_state(void) {
 	EnableWindow(GetDlgItem(g_main, ID_STOP), status_is(L"running") || status_is(L"starting"));
 	EnableWindow(GetDlgItem(g_main, ID_OPEN), status_is(L"running"));
 	EnableWindow(GetDlgItem(g_main, ID_COPY), g_state != NULL);
+	{
+		/* Shown while there is no ffmpeg; pressed, it waits for the backend. */
+		HWND ff = GetDlgItem(g_main, ID_FFMPEG);
+		BOOL offered = g_state && !g_state->ffInstalled && (g_state->ffCanInstall || g_state->ffInstalling);
+		set_text(ff, g_state && g_state->ffInstalling ? T(L"Установка…", L"Installing…")
+					 : g_state && g_state->ffFailed	  ? T(L"Повторить", L"Try again")
+													  : T(L"Установить ffmpeg", L"Install ffmpeg"));
+		EnableWindow(ff, offered && g_state->ffCanInstall);
+		ShowWindow(ff, offered ? SW_SHOWNA : SW_HIDE);
+	}
 	/* Once the server is up, the choice is what it runs with again. */
 	if (g_state && !idle) g_userTouched = FALSE;
 
@@ -952,6 +997,7 @@ static void relabel(void) {
 	SetDlgItemTextW(g_main, ID_SHOW_LOGIN, T(L"Вход по паролю…", L"Sign-in…"));
 	SetDlgItemTextW(g_main, ID_SHOW_NETWORK, T(L"Сеть и брандмауэр…", L"Network and firewall…"));
 	SetDlgItemTextW(g_main, ID_SHOW_LOG, T(L"Журнал сервера…", L"Server log…"));
+	SetDlgItemTextW(g_main, ID_FFMPEG, T(L"Установить ffmpeg", L"Install ffmpeg"));
 	InvalidateRect(g_main, NULL, TRUE);
 	if (g_loginWnd) {
 		SetWindowTextW(g_loginWnd, TITLE_LOGIN);
@@ -1349,6 +1395,12 @@ static void handle_result(ActionResult *result) {
 		update_network_window();
 		break;
 	}
+	case ACT_FFMPEG_INSTALL:
+		/* The progress shows in the state; only a refusal needs words. */
+		if (result->status == 0 || (result->status >= 400 && result->status != 409)) {
+			MessageBoxW(g_main, result->status == 0 ? silent : message, L"notGT", MB_OK | MB_ICONWARNING);
+		}
+		break;
 	}
 	json_free(result->json);
 	free(result);
@@ -1454,9 +1506,10 @@ static LRESULT CALLBACK main_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 		make_button(hwnd, ID_OPEN, L"", BTN_NORMAL, 314, 268, 132, 36);
 		make_edit(hwnd, ID_URL, ES_READONLY | ES_AUTOHSCROLL, 44, 368, 284, 20, g_font);
 		make_button(hwnd, ID_COPY, L"", BTN_NORMAL, 346, 360, 100, 34);
-		make_button(hwnd, ID_SHOW_LOGIN, L"", BTN_GHOST, 20, 496, 140, 30);
-		make_button(hwnd, ID_SHOW_NETWORK, L"", BTN_GHOST, 164, 496, 160, 30);
-		make_button(hwnd, ID_SHOW_LOG, L"", BTN_GHOST, 328, 496, 132, 30);
+		make_button(hwnd, ID_FFMPEG, L"", BTN_NORMAL, 314, 506, 132, 32);
+		make_button(hwnd, ID_SHOW_LOGIN, L"", BTN_GHOST, 20, 556, 140, 30);
+		make_button(hwnd, ID_SHOW_NETWORK, L"", BTN_GHOST, 164, 556, 160, 30);
+		make_button(hwnd, ID_SHOW_LOG, L"", BTN_GHOST, 328, 556, 132, 30);
 		make_button(hwnd, ID_LANG_RU, L"RU", BTN_LANG, 384, 29, 36, 22);
 		make_button(hwnd, ID_LANG_EN, L"EN", BTN_LANG, 424, 29, 36, 22);
 		relabel();
@@ -1531,6 +1584,10 @@ static LRESULT CALLBACK main_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 		case ID_SHOW_LOG:
 			open_tool_window(&g_logWnd, L"notGTLauncherLog", TITLE_LOG, 640, 420, WS_OVERLAPPEDWINDOW);
 			break;
+		case ID_FFMPEG:
+			EnableWindow((HWND)lp, FALSE);
+			enqueue(ACT_FFMPEG_INSTALL, L"", L"", 0);
+			break;
 		case ID_TRAY_SHOW:
 			show_window(hwnd);
 			break;
@@ -1553,7 +1610,10 @@ static LRESULT CALLBACK main_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 		}
 		return 0;
 	case WM_DRAWITEM:
-		draw_button((const DRAWITEMSTRUCT *)lp, ((const DRAWITEMSTRUCT *)lp)->CtlID >= ID_SHOW_LOGIN ? C_BG : C_CARD);
+		draw_button((const DRAWITEMSTRUCT *)lp,
+			((const DRAWITEMSTRUCT *)lp)->CtlID >= ID_SHOW_LOGIN && ((const DRAWITEMSTRUCT *)lp)->CtlID != ID_FFMPEG
+				? C_BG
+				: C_CARD);
 		return TRUE;
 	case WM_CTLCOLOREDIT:
 	case WM_CTLCOLORSTATIC:

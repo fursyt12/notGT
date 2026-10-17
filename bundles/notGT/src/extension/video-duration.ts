@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { BUNDLE_NAME } from "../shared/types";
+import { mediaToolEnv } from "./media-tools";
 
 /** Where served URLs live on disk. */
 export interface MediaRoots {
@@ -82,8 +83,10 @@ export function probeDurationMs(
 			"-of", "default=noprint_wrappers=1:nokey=1",
 			file,
 		],
-		{ encoding: "utf8", timeout: 20_000 },
+		{ encoding: "utf8", timeout: 20_000, env: mediaToolEnv() },
 	);
+	// No ffprobe yet (it can be installed while the server runs): ask again next time.
+	if (res.error) return undefined;
 	const seconds = Number((res.stdout ?? "").trim());
 	const durationMs =
 		Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : undefined;

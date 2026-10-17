@@ -21,6 +21,7 @@ notGT-win-x64/
     ui.html
   node/                   official Windows Node runtime: node.exe and its licence
   ndi/                    the NDI sender: its sources, koffi and Electron for Windows
+  ffmpeg/                 not in the package: made by «Install ffmpeg» in the launcher
   app/                    NodeCG runtime root
     index.js              loads the bundled server
     package.json          (nodecgRoot: true → monorepo layout)
@@ -63,6 +64,20 @@ it picks the runtime up as soon as it is installed — also from
 `C:\Program Files\NDI\…` when the launcher was started before NDI Tools was
 installed and does not see `NDI_RUNTIME_DIR_V6`. `--no-ndi` on the launcher
 (or `NOTGT_NDI=off`) does not start it.
+
+### ffmpeg
+
+The server converts `.mp4`/`.mov` uploads with ffmpeg and measures clips with
+ffprobe. The package does not carry them (they would double its download for
+something not everyone uses); the launcher's window offers **Install ffmpeg**
+while there is none — neither in `ffmpeg\` nor on `PATH`. One press downloads
+the newest LGPL shared build for win64 from
+[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (about 75 MB),
+checks it against the release's `checksums.sha256`, and unpacks `bin\` (without
+ffplay) and the licence into `ffmpeg\` next to `launcher\`. The server is
+started with `NOTGT_FFMPEG_DIR` pointing there and looks at it on every
+conversion, so a server that is already running uses the new ffmpeg at once.
+LGPL is enough: the converter only needs VP9 (libvpx) and WebP (libwebp).
 
 ## How the package is built
 

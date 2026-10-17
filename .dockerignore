@@ -35,3 +35,8 @@ node_modules
 
 # Local compose settings (passwords) — never baked into an image.
 /.env
+
+# ffmpeg the launcher downloads (launcher/index.mjs, «Install ffmpeg»)
+/ffmpeg/
+/ffmpeg.new/
+/ffmpeg.download.zip

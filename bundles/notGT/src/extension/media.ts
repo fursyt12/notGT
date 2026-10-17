@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { newId } from "../shared/types";
 import type { ApiRequest, ApiResponse, Handler, NextFn } from "./auth";
+import { mediaToolEnv } from "./media-tools";
 import type { ServerAPI } from "./store";
 
 interface Router {
@@ -75,7 +76,7 @@ function fileSize(file: string): number {
 }
 
 function ffmpegAvailable(): boolean {
-	const res = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" });
+	const res = spawnSync("ffmpeg", ["-version"], { stdio: "ignore", env: mediaToolEnv() });
 	return res.status === 0;
 }
 
@@ -272,8 +273,8 @@ export function createMediaRouter(
 
 			if (!ffmpegAvailable()) {
 				throw new Error(
-					"ffmpeg не найден на сервере. Установите его в образ (Dockerfile уже " +
-						"ставит ffmpeg) либо конвертируйте файл локально командой " +
+					"ffmpeg не найден на сервере. В Windows его ставит кнопка «Установить ffmpeg» " +
+						"в лончере; в Docker он уже есть в образе. Либо конвертируйте файл локально командой " +
 						"`node scripts/convert-alpha.mjs` и загрузите готовый .webm/.webp.",
 				);
 			}
@@ -348,8 +349,10 @@ export function createMediaRouter(
 				urlPrefix,
 			];
 			if (forceFormat) args.push("--format", forceFormat);
+			// The converter runs ffmpeg by name: it inherits the PATH that finds it.
 			const child = spawn(process.execPath, args, {
 				stdio: ["ignore", "pipe", "pipe"],
+				env: mediaToolEnv(),
 			});
 			let buffer = "";
 			let done: { file: string; format: string } | undefined;

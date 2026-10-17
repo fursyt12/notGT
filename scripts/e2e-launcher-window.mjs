@@ -390,7 +390,7 @@ async function main() {
 		);
 
 		// The sign-in window opens over the main one, so it comes after the click above.
-		await click(window.id, 90, 511); // «Вход по паролю…»
+		await click(window.id, 90, 571); // «Вход по паролю…»
 		const login = await waitFor("the sign-in window", () =>
 			xdo("search", "--name", "Вход по паролю")
 				.split("\n")

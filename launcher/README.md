@@ -90,6 +90,21 @@ including a warning when a **system proxy** is enabled and the chosen address is
 `ProxyOverride` — loopback is normally on the browser bypass list, which is the other
 classic reason for "everything except 127.0.0.1 hangs".
 
+## ffmpeg
+
+The server needs ffmpeg to convert `.mp4`/`.mov` uploads. `GET /api/state` carries
+`ffmpeg`: `{ installed, source: "launcher" | "system" | "", version, canInstall,
+installing, progress, failed, text }`. While there is none — neither in `ffmpeg/` next
+to `launcher/` nor on `PATH` — both faces offer **Install ffmpeg**; `POST
+/api/ffmpeg/install` downloads the newest LGPL shared win64 build from BtbN/FFmpeg-Builds,
+checks its SHA-256 against the release's `checksums.sha256`, unpacks `bin/` (without
+ffplay) with a small zip reader of its own, and writes `ffmpeg/notgt-ffmpeg.json`. The
+server is always started with `NOTGT_FFMPEG_DIR=<that folder>` and puts it first on
+`PATH` for each conversion, so no restart is needed. The install is offered on Windows
+only; elsewhere ffmpeg comes from the system. `NOTGT_FFMPEG_DIR` moves the folder, and
+`NOTGT_FFMPEG_URL` (+ `NOTGT_FFMPEG_SHA256`) installs from another zip on any system —
+that is what the tests use.
+
 ## Sign-in («Вход по паролю»)
 
 The sign-in is on unless `cfg/nodecg.json` switches it off. With no `login` block there —
@@ -172,6 +187,7 @@ section above («Разрешить порт»).
 | `GET`  | `/api/diagnostics`     | fresh probe + `verdict[]`, firewall rule state, Windows proxy settings             |
 | `POST` | `/api/firewall/allow`  | body `{ port? }`; adds the inbound rule (UAC), then re-probes                      |
 | `POST` | `/api/firewall/remove` | body `{ port? }`; deletes the rule                                                 |
+| `POST` | `/api/ffmpeg/install`  | downloads ffmpeg into `ffmpeg/` in the background (`202`); progress in `ffmpeg`    |
 | `POST` | `/api/login`           | body `{ username, password }`; switches the dashboard sign-in on for that operator |
 | `POST` | `/api/login/disable`   | switches the sign-in off; the stored operator is kept                              |
 | `POST` | `/api/login/default`   | removes the `login` block: sign-in on, users kept in the dashboard's Team tab      |

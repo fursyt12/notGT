@@ -26,6 +26,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -120,6 +121,369 @@ const ndiWanted =
 	!["off", "false", "no", "0"].includes(
 		String(process.env.NOTGT_NDI ?? "").toLowerCase(),
 	);
+
+// ---------------------------------------------------------------------------
+// ffmpeg
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the launcher keeps an ffmpeg of its own (`ffmpeg/` next to
+ * `launcher/`). The server is told about it through NOTGT_FFMPEG_DIR and looks
+ * there on every conversion, so an ffmpeg installed while it runs is used at
+ * once, without a restart.
+ */
+const FFMPEG_DIR = path.resolve(
+	process.env.NOTGT_FFMPEG_DIR ?? path.join(__dirname, "..", "ffmpeg"),
+);
+const FFMPEG_META = path.join(FFMPEG_DIR, "notgt-ffmpeg.json");
+/**
+ * BtbN's Windows builds: LGPL (no x264 and friends — the converter only needs
+ * VP9 and WebP), shared (the DLLs make the archive half as large). The newest
+ * release branch is picked from the release; the master build is the fallback
+ * when GitHub's API does not answer.
+ */
+const FFMPEG_RELEASE_API =
+	"https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest";
+const FFMPEG_DOWNLOAD_BASE =
+	"https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/";
+const FFMPEG_FALLBACK_ASSET = "ffmpeg-master-latest-win64-lgpl-shared.zip";
+/** A zip to install from instead (tests); offers the install on any system. */
+const FFMPEG_URL_OVERRIDE = process.env.NOTGT_FFMPEG_URL ?? "";
+/** How long a look for an ffmpeg on PATH is trusted. */
+const FFMPEG_SYSTEM_CACHE_MS = 60_000;
+
+const ffmpegState = {
+	installing: false,
+	progress: 0, // 0..1 while installing
+	stage: null, // tr() pair: what the install is doing, or how it ended
+	failed: false,
+	systemCheckedAt: 0,
+	system: false,
+};
+
+/** The ffmpeg the launcher installed: `{ version, asset, installedAt }` or null. */
+function ffmpegBundled() {
+	const hasExe = (name) =>
+		fs.existsSync(path.join(FFMPEG_DIR, `${name}.exe`)) ||
+		fs.existsSync(path.join(FFMPEG_DIR, name));
+	if (!hasExe("ffmpeg") || !hasExe("ffprobe")) return null;
+	try {
+		return JSON.parse(fs.readFileSync(FFMPEG_META, "utf8"));
+	} catch {
+		return { version: "", asset: "", installedAt: 0 };
+	}
+}
+
+/** Whether ffmpeg and ffprobe answer from PATH (looked up at most once a minute). */
+function ffmpegOnPath({ force = false } = {}) {
+	if (
+		force ||
+		Date.now() - ffmpegState.systemCheckedAt > FFMPEG_SYSTEM_CACHE_MS
+	) {
+		const answers = (cmd) => {
+			try {
+				return (
+					spawnSync(cmd, ["-version"], {
+						stdio: "ignore",
+						windowsHide: true,
+						timeout: 10_000,
+					}).status === 0
+				);
+			} catch {
+				return false;
+			}
+		};
+		ffmpegState.system = answers("ffmpeg") && answers("ffprobe");
+		ffmpegState.systemCheckedAt = Date.now();
+	}
+	return ffmpegState.system;
+}
+
+function ffmpegInfo() {
+	const bundled = ffmpegBundled();
+	const system = !bundled && ffmpegOnPath();
+	const installed = Boolean(bundled) || system;
+	let text;
+	if (ffmpegState.installing || ffmpegState.failed) {
+		text = ffmpegState.stage;
+	} else if (bundled) {
+		const version = bundled.version ? ` ${bundled.version}` : "";
+		text = tr(
+			`ffmpeg${version} установлен — видео .mp4 и .mov конвертируются при загрузке.`,
+			`ffmpeg${version} is installed — .mp4 and .mov videos are converted on upload.`,
+		);
+	} else if (system) {
+		text = tr(
+			"ffmpeg найден в системе — видео .mp4 и .mov конвертируются при загрузке.",
+			"ffmpeg is found on this system — .mp4 and .mov videos are converted on upload.",
+		);
+	} else {
+		text = tr(
+			"ffmpeg не установлен: загруженные .mp4 и .mov не конвертируются (видеослой играет только .webm).",
+			"ffmpeg is not installed: uploaded .mp4 and .mov cannot be converted (a video layer plays .webm only).",
+		);
+	}
+	return {
+		installed,
+		source: bundled ? "launcher" : system ? "system" : "",
+		version: bundled?.version ?? "",
+		dir: FFMPEG_DIR,
+		canInstall:
+			!installed &&
+			!ffmpegState.installing &&
+			(process.platform === "win32" || Boolean(FFMPEG_URL_OVERRIDE)),
+		installing: ffmpegState.installing,
+		progress: ffmpegState.progress,
+		failed: ffmpegState.failed,
+		text: say(text),
+	};
+}
+
+function megabytes(bytes) {
+	return (bytes / 1024 / 1024).toFixed(0);
+}
+
+/** The archive to download: `{ url, name, version, sha256 }` (sha256 may be ""). */
+async function pickFfmpegArchive() {
+	if (FFMPEG_URL_OVERRIDE) {
+		return {
+			url: FFMPEG_URL_OVERRIDE,
+			name: path.basename(new URL(FFMPEG_URL_OVERRIDE).pathname),
+			version: "",
+			sha256: process.env.NOTGT_FFMPEG_SHA256 ?? "",
+		};
+	}
+	const headers = { "User-Agent": `notGT-launcher/${VERSION}` };
+	let name = FFMPEG_FALLBACK_ASSET;
+	let version = "master";
+	try {
+		const res = await fetch(FFMPEG_RELEASE_API, {
+			headers: { ...headers, Accept: "application/vnd.github+json" },
+			signal: AbortSignal.timeout(20_000),
+		});
+		if (res.ok) {
+			const release = await res.json();
+			let best = null;
+			for (const asset of release.assets ?? []) {
+				const match =
+					/^ffmpeg-n(\d+)\.(\d+)-latest-win64-lgpl-shared-[\d.]+\.zip$/.exec(
+						asset.name ?? "",
+					);
+				if (!match) continue;
+				const rank = Number(match[1]) * 1000 + Number(match[2]);
+				if (!best || rank > best.rank)
+					best = { rank, name: asset.name, version: `${match[1]}.${match[2]}` };
+			}
+			if (best) {
+				name = best.name;
+				version = best.version;
+			}
+		}
+	} catch {
+		// The fallback archive below is in the same release.
+	}
+	let sha256 = "";
+	try {
+		const res = await fetch(`${FFMPEG_DOWNLOAD_BASE}checksums.sha256`, {
+			headers,
+			signal: AbortSignal.timeout(20_000),
+		});
+		if (res.ok) {
+			for (const line of (await res.text()).split("\n")) {
+				const [hash, file] = line.trim().split(/\s+/);
+				if (file === name && /^[0-9a-f]{64}$/i.test(hash))
+					sha256 = hash.toLowerCase();
+			}
+		}
+	} catch {
+		// Checked below: an archive with no checksum is not installed.
+	}
+	if (!sha256) {
+		throw new Error(
+			T(
+				"не удалось получить контрольную сумму архива с GitHub",
+				"the archive's checksum could not be fetched from GitHub",
+			),
+		);
+	}
+	return { url: `${FFMPEG_DOWNLOAD_BASE}${name}`, name, version, sha256 };
+}
+
+/** Streams `url` into `file`, reporting progress, and returns the SHA-256. */
+async function downloadTo(url, file, onProgress) {
+	const res = await fetch(url, {
+		headers: { "User-Agent": `notGT-launcher/${VERSION}` },
+		signal: AbortSignal.timeout(30 * 60_000),
+	});
+	if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} — ${url}`);
+	const total = Number(res.headers.get("content-length")) || 0;
+	const hash = crypto.createHash("sha256");
+	const out = fs.createWriteStream(file);
+	let received = 0;
+	try {
+		for await (const chunk of res.body) {
+			hash.update(chunk);
+			received += chunk.length;
+			if (!out.write(chunk))
+				await new Promise((resolve) => out.once("drain", resolve));
+			onProgress(received, total);
+		}
+	} finally {
+		await new Promise((resolve, reject) => {
+			out.once("error", reject);
+			out.end(resolve);
+		});
+	}
+	return hash.digest("hex");
+}
+
+/**
+ * Takes `<top>/bin/*` (but ffplay) and `<top>/LICENSE.txt` out of a zip
+ * archive into `dir`, flat. A plain reader of the zip format with
+ * `zlib.inflateRawSync`: Node has no unzip of its own, and Windows' tar.exe is
+ * not on every Windows 10.
+ */
+function unzipFfmpeg(zipFile, dir) {
+	const zip = fs.readFileSync(zipFile);
+	const bad = (why) =>
+		new Error(T(`архив повреждён (${why})`, `the archive is damaged (${why})`));
+	let eocd = -1;
+	for (let i = zip.length - 22; i >= Math.max(0, zip.length - 65_557); i--) {
+		if (zip.readUInt32LE(i) === 0x06054b50) {
+			eocd = i;
+			break;
+		}
+	}
+	if (eocd < 0) throw bad("no end of central directory");
+	const count = zip.readUInt16LE(eocd + 10);
+	let at = zip.readUInt32LE(eocd + 16);
+	if (count === 0xffff || at === 0xffffffff) throw bad("zip64");
+	const wanted = [];
+	for (let i = 0; i < count; i++) {
+		if (zip.readUInt32LE(at) !== 0x02014b50) throw bad("central directory");
+		const method = zip.readUInt16LE(at + 10);
+		const crc = zip.readUInt32LE(at + 16);
+		const packed = zip.readUInt32LE(at + 20);
+		const size = zip.readUInt32LE(at + 24);
+		const nameLen = zip.readUInt16LE(at + 28);
+		const extraLen = zip.readUInt16LE(at + 30);
+		const commentLen = zip.readUInt16LE(at + 32);
+		const local = zip.readUInt32LE(at + 42);
+		const name = zip.toString("utf8", at + 46, at + 46 + nameLen);
+		at += 46 + nameLen + extraLen + commentLen;
+		const parts = name.split("/");
+		const base = parts.at(-1);
+		const take =
+			(parts.length === 3 &&
+				parts[1] === "bin" &&
+				/^[\w.+-]+$/.test(base) &&
+				!/^ffplay(\.exe)?$/i.test(base)) ||
+			(parts.length === 2 && base === "LICENSE.txt");
+		if (take) wanted.push({ name: base, method, crc, packed, size, local });
+	}
+	if (!wanted.some((entry) => /^ffmpeg(\.exe)?$/i.test(entry.name)))
+		throw bad("no bin/ffmpeg");
+	fs.mkdirSync(dir, { recursive: true });
+	for (const entry of wanted) {
+		if (zip.readUInt32LE(entry.local) !== 0x04034b50) throw bad(entry.name);
+		const start =
+			entry.local +
+			30 +
+			zip.readUInt16LE(entry.local + 26) +
+			zip.readUInt16LE(entry.local + 28);
+		const raw = zip.subarray(start, start + entry.packed);
+		let data;
+		if (entry.method === 0) data = raw;
+		else if (entry.method === 8) data = zlib.inflateRawSync(raw);
+		else throw bad(`${entry.name}: method ${entry.method}`);
+		if (data.length !== entry.size) throw bad(`${entry.name}: size`);
+		if (typeof zlib.crc32 === "function" && zlib.crc32(data) !== entry.crc)
+			throw bad(`${entry.name}: CRC`);
+		fs.writeFileSync(path.join(dir, entry.name), data);
+	}
+	return wanted.length;
+}
+
+/**
+ * Downloads ffmpeg into FFMPEG_DIR: the newest LGPL build for Windows, checked
+ * against the release's checksum, unpacked next to the launcher. What it is
+ * doing shows in `ffmpegInfo()` while it runs.
+ */
+async function installFfmpeg() {
+	ffmpegState.installing = true;
+	ffmpegState.failed = false;
+	ffmpegState.progress = 0;
+	ffmpegState.stage = tr("Ищем сборку ffmpeg…", "Looking for an ffmpeg build…");
+	const zipFile = `${FFMPEG_DIR}.download.zip`;
+	const fresh = `${FFMPEG_DIR}.new`;
+	try {
+		const archive = await pickFfmpegArchive();
+		pushLog(
+			`[launcher] ${T("Загрузка ffmpeg", "Downloading ffmpeg")}: ${archive.url}`,
+		);
+		fs.mkdirSync(path.dirname(FFMPEG_DIR), { recursive: true });
+		let lastPercent = -1;
+		const sha256 = await downloadTo(archive.url, zipFile, (received, total) => {
+			const percent = total ? Math.floor((received / total) * 100) : 0;
+			if (percent === lastPercent) return;
+			lastPercent = percent;
+			ffmpegState.progress = total ? (received / total) * 0.9 : 0;
+			ffmpegState.stage = total
+				? tr(
+						`Загрузка ffmpeg… ${percent} % (${megabytes(received)} из ${megabytes(total)} МБ)`,
+						`Downloading ffmpeg… ${percent} % (${megabytes(received)} of ${megabytes(total)} MB)`,
+					)
+				: tr(
+						`Загрузка ffmpeg… ${megabytes(received)} МБ`,
+						`Downloading ffmpeg… ${megabytes(received)} MB`,
+					);
+		});
+		if (archive.sha256 && sha256 !== archive.sha256) {
+			throw new Error(
+				T(
+					"контрольная сумма архива не совпала — загрузка испорчена",
+					"the archive's checksum does not match — the download is corrupt",
+				),
+			);
+		}
+		ffmpegState.progress = 0.92;
+		ffmpegState.stage = tr("Распаковка ffmpeg…", "Unpacking ffmpeg…");
+		fs.rmSync(fresh, { recursive: true, force: true });
+		const files = unzipFfmpeg(zipFile, fresh);
+		fs.writeFileSync(
+			path.join(fresh, "notgt-ffmpeg.json"),
+			`${JSON.stringify(
+				{
+					version: archive.version,
+					asset: archive.name,
+					sha256,
+					installedAt: new Date().toISOString(),
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		fs.rmSync(FFMPEG_DIR, { recursive: true, force: true });
+		fs.renameSync(fresh, FFMPEG_DIR);
+		ffmpegState.progress = 1;
+		ffmpegState.stage = null;
+		pushLog(
+			`[launcher] ${T("ffmpeg установлен", "ffmpeg is installed")}: ${FFMPEG_DIR} (${files} ${T("файлов", "files")})`,
+		);
+	} catch (err) {
+		const why = String(err?.message ?? err);
+		ffmpegState.failed = true;
+		ffmpegState.stage = tr(
+			`Не удалось установить ffmpeg: ${why}. Проверьте интернет и нажмите ещё раз — или установите ffmpeg сами (winget install Gyan.FFmpeg) и перезапустите сервер.`,
+			`ffmpeg could not be installed: ${why}. Check the internet connection and press again — or install ffmpeg yourself (winget install Gyan.FFmpeg) and restart the server.`,
+		);
+		pushLog(`[launcher] ${say(ffmpegState.stage)}`);
+		fs.rmSync(fresh, { recursive: true, force: true });
+	} finally {
+		fs.rmSync(zipFile, { force: true });
+		ffmpegState.installing = false;
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -573,6 +937,7 @@ function statePayload() {
 		...urls,
 		configPath: path.join(appDir, "cfg", "nodecg.json"),
 		login: loginInfo(),
+		ffmpeg: ffmpegInfo(),
 		interfaces: listInterfaces(),
 		logs: state.logs.slice(),
 		logCount: state.logCount,
@@ -1361,7 +1726,11 @@ async function startServer(requestedHost, requestedPort) {
 			cwd: appDir,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
-			env: { ...process.env, NOTGT_NDI_KEY_FILE: NDI_KEY_FILE },
+			env: {
+				...process.env,
+				NOTGT_NDI_KEY_FILE: NDI_KEY_FILE,
+				NOTGT_FFMPEG_DIR: FFMPEG_DIR,
+			},
 		});
 	} catch (err) {
 		state.status = "error";
@@ -1849,6 +2218,45 @@ async function handleRequest(req, res) {
 			reach: state.reach,
 			warning: say(state.warning),
 		});
+		return;
+	}
+
+	// One press in the window: download ffmpeg and unpack it next to the
+	// launcher. It runs in the background; GET /api/state shows how far it is.
+	if (method === "POST" && pathname === "/api/ffmpeg/install") {
+		if (!isJsonRequest(req)) {
+			sendJson(res, 415, {
+				ok: false,
+				message: T(
+					"Нужен запрос в формате JSON.",
+					"The request has to be JSON.",
+				),
+			});
+			return;
+		}
+		const info = ffmpegInfo();
+		if (ffmpegState.installing) {
+			sendJson(res, 409, { ok: false, message: info.text, ffmpeg: info });
+			return;
+		}
+		if (info.installed) {
+			sendJson(res, 200, { ok: true, message: info.text, ffmpeg: info });
+			return;
+		}
+		if (!info.canInstall) {
+			sendJson(res, 400, {
+				ok: false,
+				message: T(
+					"Здесь ffmpeg ставится средствами системы (brew install ffmpeg, apt install ffmpeg).",
+					"Here ffmpeg is installed with the system's tools (brew install ffmpeg, apt install ffmpeg).",
+				),
+				ffmpeg: info,
+			});
+			return;
+		}
+		void installFfmpeg();
+		const started = ffmpegInfo();
+		sendJson(res, 202, { ok: true, message: started.text, ffmpeg: started });
 		return;
 	}
 

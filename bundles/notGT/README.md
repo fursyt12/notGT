@@ -1846,7 +1846,9 @@ only video format with alpha that Chromium plays). So the same `.mov` gives diff
 files in a video layer and in an image layer, and that is fine.
 
 **ffmpeg is needed on the server.** The Dockerfile installs it
-(`--build-arg INSTALL_FFMPEG=false` if you do not need it). Without ffmpeg, uploading
+(`--build-arg INSTALL_FFMPEG=false` if you do not need it). In the Windows package the
+launcher installs it with one button, «Install ffmpeg», and the running server picks it up
+without a restart (`NOTGT_FFMPEG_DIR`). Without ffmpeg, uploading
 ready `.webm`/`.webp` files keeps working, and an attempt to convert returns a clear error
 with a hint.
 
