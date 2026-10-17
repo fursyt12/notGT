@@ -238,16 +238,19 @@ jobs:
           ls -l packages
 
           # The notes live in docs/release-notes: English first, then Russian,
-          # with links to both at the top. `<tag>.en.md` / `<tag>.ru.md` say
-          # what is new (optional); install.*.md is the guide every release has.
+          # with links to both at the top. `<tag>.en.md` / `<tag>.ru.md` say what
+          # is new (optional); install.*.md is the guide every release has. A
+          # release page gives its headings no anchors, so each section has one
+          # of its own (GitHub keeps it as `user-content-<id>`, which is what the
+          # links point at).
           NOTES=docs/release-notes
           {
             printf '# notGT %s\n\n' "$TAG"
-            printf '**[English](#english) · [Русский](#русский)**\n\n'
-            printf '## English\n\n'
+            printf '**[English](#user-content-english) · [Русский](#user-content-russian)**\n\n'
+            printf '<a id="english"></a>\n\n## English\n\n'
             if [ -f "$NOTES/$TAG.en.md" ]; then cat "$NOTES/$TAG.en.md"; printf '\n'; fi
             cat "$NOTES/install.en.md"
-            printf '\n---\n\n## Русский\n\n'
+            printf '\n---\n\n<a id="russian"></a>\n\n## Русский\n\n'
             if [ -f "$NOTES/$TAG.ru.md" ]; then cat "$NOTES/$TAG.ru.md"; printf '\n'; fi
             cat "$NOTES/install.ru.md"
           } > release-body.md
