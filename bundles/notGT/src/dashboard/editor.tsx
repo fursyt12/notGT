@@ -2300,9 +2300,13 @@ export function EditorApp() {
 	);
 
 	// A clip picked from the list or just uploaded becomes the layer's `src`,
-	// then the box takes the clip's proportions (keeping its width) once the
-	// metadata is in — otherwise the out letterboxes the clip inside a box of
-	// another shape and the editor shows it stretched.
+	// then, once the metadata is in, the box takes the clip's shape —
+	// otherwise the out letterboxes the clip inside a box of another shape and
+	// the editor shows it stretched. A clip that is the animation's only layer
+	// is the whole animation: the animation's box becomes the clip's own size
+	// (no larger than the out) and the clip fills it. With other layers the
+	// animation's box stays, since they are laid out in percents of it, and the
+	// clip's layer takes the clip's proportions inside it.
 	const pickLayerMedia = useCallback(
 		(id: string, src: string) => {
 			updateLayer(id, { src });
@@ -2310,27 +2314,38 @@ export function EditorApp() {
 			if (!url || src.includes("{{")) return;
 			void probeVideoSize(url).then((size) => {
 				if (!size) return;
-				mutate((template) => ({
-					...template,
-					layers: template.layers.map((layer) =>
-						layer.id === id && layer.src === src
-							? {
-									...layer,
-									...fitBoxToMedia(
-										layer.width ?? 32,
-										layer.y,
-										size.width,
-										size.height,
-										template.width,
-										template.height,
-									),
-								}
-							: layer,
-					),
-				}));
+				mutate((template) => {
+					const layer = template.layers.find((item) => item.id === id);
+					if (!layer || layer.src !== src) return template;
+					if (template.layers.length === 1) {
+						const k = Math.min(
+							1,
+							(out?.width ?? size.width) / size.width,
+							(out?.height ?? size.height) / size.height,
+						);
+						return {
+							...template,
+							width: Math.max(16, Math.round(size.width * k)),
+							height: Math.max(16, Math.round(size.height * k)),
+							layers: [{ ...layer, x: 0, y: 0, width: 100, height: 100 }],
+						};
+					}
+					const box = fitBoxToMedia(
+						layer.width ?? 32,
+						layer.y,
+						size.width,
+						size.height,
+						template.width,
+						template.height,
+					);
+					return {
+						...template,
+						layers: template.layers.map((item) => (item.id === id ? { ...item, ...box } : item)),
+					};
+				});
 			});
 		},
-		[mutate, updateLayer],
+		[mutate, out, updateLayer],
 	);
 
 	const updateStyle = useCallback(
