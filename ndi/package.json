@@ -1,6 +1,6 @@
 {
   "name": "notgt-ndi",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "private": true,
   "description": "notGT NDI sender: renders the outs of a notGT server off screen and sends each one as an NDI source.",
   "license": "MIT",
