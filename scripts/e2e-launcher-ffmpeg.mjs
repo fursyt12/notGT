@@ -15,6 +15,12 @@
  *   4. Pressed again, it answers that ffmpeg is installed (200).
  *   5. A wrong checksum ends in `failed`, offers the install again and leaves
  *      no folder behind.
+ *   6. A folder it may not write to (the package unpacked somewhere protected,
+ *      the launcher not run as administrator) ends in `failed` with that
+ *      reason — 0.12.4 crashed there.
+ *   7. Without administrator rights it installs through an elevated copy of
+ *      itself (the UAC prompt) and shows that copy's progress and log; a
+ *      refused prompt ends in `failed`.
  */
 
 import { spawn } from "node:child_process";
@@ -108,7 +114,7 @@ await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const zipUrl = `http://127.0.0.1:${server.address().port}/${top}.zip`;
 
 /** Starts a launcher that installs into `dir`; resolves with its control URL. */
-function startLauncher(dir, checksum) {
+function startLauncher(dir, checksum, { env = {} } = {}) {
 	const child = spawn(
 		process.execPath,
 		[
@@ -122,7 +128,7 @@ function startLauncher(dir, checksum) {
 			"--settings",
 			path.join(tmp, "settings.json"),
 			"--runtime",
-			path.join(tmp, `runtime-${path.basename(dir)}.json`),
+			path.join(tmp, `runtime-${path.basename(dir ?? "default")}.json`),
 			"--lang",
 			"en",
 		],
@@ -134,9 +140,10 @@ function startLauncher(dir, checksum) {
 				...process.env,
 				PATH: path.join(tmp, "no-such-dir"),
 				Path: path.join(tmp, "no-such-dir"),
-				NOTGT_FFMPEG_DIR: dir,
+				NOTGT_FFMPEG_DIR: dir ?? "",
 				NOTGT_FFMPEG_URL: zipUrl,
 				NOTGT_FFMPEG_SHA256: checksum,
+				...env,
 			},
 		},
 	);
@@ -278,6 +285,87 @@ try {
 		!fs.existsSync(badDir) &&
 			!fs.existsSync(`${badDir}.new`) &&
 			!fs.existsSync(`${badDir}.download.zip`),
+	);
+
+	// --- a folder it may not write to (not on Windows, nor as root: chmod
+	// does not stop either)
+	if (process.platform !== "win32" && process.getuid?.() !== 0) {
+		const locked = path.join(tmp, "locked");
+		fs.mkdirSync(locked);
+		fs.chmodSync(locked, 0o555);
+		const denied = await startLauncher(path.join(locked, "ffmpeg"), sha256);
+		launchers.push(denied.child);
+		let exited = false;
+		denied.child.on("exit", () => {
+			exited = true;
+		});
+		await install(denied.url);
+		const deniedEnd = exited ? null : await waitSettled(denied.url);
+		check(
+			"a folder it may not write to ends in failed, not in a crash",
+			!exited &&
+				deniedEnd?.failed &&
+				deniedEnd.canInstall &&
+				/no permission to write/.test(deniedEnd.text),
+			exited ? "the launcher exited" : JSON.stringify(deniedEnd),
+		);
+		fs.chmodSync(locked, 0o755);
+	}
+
+	// --- without administrator rights: through an elevated copy of the launcher
+	// (NOTGT_ELEVATE=direct starts that copy without UAC, which Linux lacks)
+	const elevDir = path.join(tmp, "ffmpeg-elevated");
+	const elev = await startLauncher(elevDir, sha256, {
+		env: { NOTGT_ELEVATE: "direct" },
+	});
+	launchers.push(elev.child);
+	const elevBefore = await ffmpegState(elev.url);
+	check(
+		"without administrator rights it says Windows will ask for them",
+		elevBefore?.needsAdmin && /administrator rights/.test(elevBefore.text),
+		JSON.stringify(elevBefore),
+	);
+	const elevStart = await install(elev.url);
+	const elevEnd = await waitSettled(elev.url);
+	check(
+		"the elevated copy installs it and the launcher shows that",
+		elevStart.status === 202 &&
+			elevEnd.installed &&
+			!elevEnd.failed &&
+			fs.existsSync(path.join(elevDir, "ffmpeg.exe")),
+		JSON.stringify(elevEnd),
+	);
+	const elevLog = await (await fetch(`${elev.url}/api/logs`)).json();
+	check(
+		"…with the copy's log lines in the launcher's log",
+		elevLog.lines.some((line) => /ffmpeg is installed/.test(line)),
+		JSON.stringify(elevLog.lines),
+	);
+	check(
+		"…and no status file left behind",
+		!fs
+			.readdirSync(os.tmpdir())
+			.some((name) => name.startsWith(`notgt-ffmpeg-${elev.child.pid}-`)),
+	);
+
+	// --- the UAC prompt refused
+	const declined = await startLauncher(
+		path.join(tmp, "ffmpeg-declined"),
+		sha256,
+		{
+			env: { NOTGT_ELEVATE: "decline" },
+		},
+	);
+	launchers.push(declined.child);
+	await install(declined.url);
+	const declinedEnd = await waitSettled(declined.url);
+	check(
+		"a refused prompt ends in failed, asking to allow it",
+		declinedEnd.failed &&
+			!declinedEnd.installed &&
+			declinedEnd.canInstall &&
+			/Administrator rights were not given/.test(declinedEnd.text),
+		JSON.stringify(declinedEnd),
 	);
 } catch (err) {
 	check("the test ran to the end", false, String(err?.stack ?? err));

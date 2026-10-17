@@ -16,6 +16,7 @@ yarn-error.log
 /launcher/launcher-config.json
 # …and, while it runs, how to reach it.
 /launcher/launcher-runtime.json
+/launcher/launcher-crash.log
 
 # Local bundles
 /bundles/*

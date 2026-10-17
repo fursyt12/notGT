@@ -25,7 +25,10 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import zlib from "node:zlib";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -64,6 +67,8 @@ function parseArgs(argv) {
 		background: false,
 		runtime: null,
 		ndi: true,
+		installFfmpeg: null, // status file: this process is the elevated installer
+		ffmpegDir: null,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -78,6 +83,8 @@ function parseArgs(argv) {
 		else if (arg === "--background") out.background = true;
 		else if (arg === "--runtime") out.runtime = argv[++i];
 		else if (arg === "--no-ndi") out.ndi = false;
+		else if (arg === "--install-ffmpeg") out.installFfmpeg = argv[++i];
+		else if (arg === "--ffmpeg-dir") out.ffmpegDir = argv[++i];
 	}
 	return out;
 }
@@ -130,10 +137,13 @@ const ndiWanted =
  * Where the launcher keeps an ffmpeg of its own (`ffmpeg/` next to
  * `launcher/`). The server is told about it through NOTGT_FFMPEG_DIR and looks
  * there on every conversion, so an ffmpeg installed while it runs is used at
- * once, without a restart.
+ * once, without a restart. Writing there can take administrator rights (a
+ * package unpacked somewhere protected): see installFfmpegElevated.
  */
 const FFMPEG_DIR = path.resolve(
-	process.env.NOTGT_FFMPEG_DIR ?? path.join(__dirname, "..", "ffmpeg"),
+	args.ffmpegDir ||
+		process.env.NOTGT_FFMPEG_DIR ||
+		path.join(__dirname, "..", "ffmpeg"),
 );
 const FFMPEG_META = path.join(FFMPEG_DIR, "notgt-ffmpeg.json");
 /**
@@ -151,6 +161,33 @@ const FFMPEG_FALLBACK_ASSET = "ffmpeg-master-latest-win64-lgpl-shared.zip";
 const FFMPEG_URL_OVERRIDE = process.env.NOTGT_FFMPEG_URL ?? "";
 /** How long a look for an ffmpeg on PATH is trusted. */
 const FFMPEG_SYSTEM_CACHE_MS = 60_000;
+/**
+ * Tests only, for the way through an elevated process where there is no UAC:
+ * `direct` runs that process without elevation, `decline` acts as if the
+ * prompt was refused.
+ */
+const ELEVATE_OVERRIDE = process.env.NOTGT_ELEVATE ?? "";
+
+/**
+ * Whether this process has administrator rights. `fltmc` lists the filter
+ * drivers and is refused without them; it needs no service running, which
+ * `net session` does. Asked once: a process does not change its rights.
+ */
+const IS_ELEVATED = (() => {
+	if (ELEVATE_OVERRIDE) return false;
+	if (process.platform !== "win32") return true;
+	try {
+		return (
+			spawnSync("fltmc", [], {
+				stdio: "ignore",
+				windowsHide: true,
+				timeout: 10_000,
+			}).status === 0
+		);
+	} catch {
+		return false;
+	}
+})();
 
 const ffmpegState = {
 	installing: false,
@@ -217,6 +254,11 @@ function ffmpegInfo() {
 			"ffmpeg найден в системе — видео .mp4 и .mov конвертируются при загрузке.",
 			"ffmpeg is found on this system — .mp4 and .mov videos are converted on upload.",
 		);
+	} else if (!IS_ELEVATED) {
+		text = tr(
+			"ffmpeg не установлен: загруженные .mp4 и .mov не конвертируются. Для установки Windows попросит права администратора.",
+			"ffmpeg is not installed: uploaded .mp4 and .mov cannot be converted. To install it, Windows asks for administrator rights.",
+		);
 	} else {
 		text = tr(
 			"ffmpeg не установлен: загруженные .mp4 и .mov не конвертируются (видеослой играет только .webm).",
@@ -235,6 +277,7 @@ function ffmpegInfo() {
 		installing: ffmpegState.installing,
 		progress: ffmpegState.progress,
 		failed: ffmpegState.failed,
+		needsAdmin: !IS_ELEVATED,
 		text: say(text),
 	};
 }
@@ -318,33 +361,39 @@ async function downloadTo(url, file, onProgress) {
 	if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} — ${url}`);
 	const total = Number(res.headers.get("content-length")) || 0;
 	const hash = crypto.createHash("sha256");
-	const out = fs.createWriteStream(file);
 	let received = 0;
-	try {
-		for await (const chunk of res.body) {
-			hash.update(chunk);
-			received += chunk.length;
-			if (!out.write(chunk))
-				await new Promise((resolve) => out.once("drain", resolve));
-			onProgress(received, total);
-		}
-	} finally {
-		await new Promise((resolve, reject) => {
-			out.once("error", reject);
-			out.end(resolve);
-		});
-	}
+	// A pipeline: an error of the file (a full disk, an antivirus) rejects
+	// here instead of being an unhandled "error" event that ends the process.
+	await pipeline(
+		Readable.fromWeb(res.body),
+		new Transform({
+			transform(chunk, _encoding, done) {
+				hash.update(chunk);
+				received += chunk.length;
+				onProgress(received, total);
+				done(null, chunk);
+			},
+		}),
+		fs.createWriteStream(file),
+	);
 	return hash.digest("hex");
 }
+
+const inflateRaw = promisify(zlib.inflateRaw);
 
 /**
  * Takes `<top>/bin/*` (but ffplay) and `<top>/LICENSE.txt` out of a zip
  * archive into `dir`, flat. A plain reader of the zip format with
- * `zlib.inflateRawSync`: Node has no unzip of its own, and Windows' tar.exe is
+ * `zlib.inflateRaw`: Node has no unzip of its own, and Windows' tar.exe is
  * not on every Windows 10.
+ *
+ * Asynchronous all the way: the archive is ~75 MB and unpacks to ~150 MB,
+ * which Windows Defender scans file by file as it is written. Done in one
+ * go, that held the event loop long enough for the window's polls to go
+ * unanswered and the idle exit to end the process.
  */
-function unzipFfmpeg(zipFile, dir) {
-	const zip = fs.readFileSync(zipFile);
+async function unzipFfmpeg(zipFile, dir, onEntry) {
+	const zip = await fsp.readFile(zipFile);
 	const bad = (why) =>
 		new Error(T(`архив повреждён (${why})`, `the archive is damaged (${why})`));
 	let eocd = -1;
@@ -383,7 +432,8 @@ function unzipFfmpeg(zipFile, dir) {
 	}
 	if (!wanted.some((entry) => /^ffmpeg(\.exe)?$/i.test(entry.name)))
 		throw bad("no bin/ffmpeg");
-	fs.mkdirSync(dir, { recursive: true });
+	await fsp.mkdir(dir, { recursive: true });
+	let done = 0;
 	for (const entry of wanted) {
 		if (zip.readUInt32LE(entry.local) !== 0x04034b50) throw bad(entry.name);
 		const start =
@@ -394,20 +444,54 @@ function unzipFfmpeg(zipFile, dir) {
 		const raw = zip.subarray(start, start + entry.packed);
 		let data;
 		if (entry.method === 0) data = raw;
-		else if (entry.method === 8) data = zlib.inflateRawSync(raw);
+		else if (entry.method === 8) data = await inflateRaw(raw);
 		else throw bad(`${entry.name}: method ${entry.method}`);
 		if (data.length !== entry.size) throw bad(`${entry.name}: size`);
 		if (typeof zlib.crc32 === "function" && zlib.crc32(data) !== entry.crc)
 			throw bad(`${entry.name}: CRC`);
-		fs.writeFileSync(path.join(dir, entry.name), data);
+		await fsp.writeFile(path.join(dir, entry.name), data);
+		onEntry?.(++done, wanted.length);
 	}
 	return wanted.length;
 }
 
 /**
+ * Windows keeps a file that was just written busy for a moment (the
+ * antivirus reads it): removing or renaming it then fails with EBUSY or
+ * EPERM. Both are tried again for a while before giving up.
+ */
+const FS_RETRY = { maxRetries: 30, retryDelay: 300 };
+const BUSY_CODES = new Set(["EBUSY", "EPERM", "EACCES", "ENOTEMPTY"]);
+
+async function renamePatiently(from, to) {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			await fsp.rename(from, to);
+			return;
+		} catch (err) {
+			if (!BUSY_CODES.has(err?.code) || attempt >= FS_RETRY.maxRetries)
+				throw err;
+			await delay(FS_RETRY.retryDelay);
+		}
+	}
+}
+
+/** Removes what an install leaves behind; a leftover is not worth an error. */
+async function removeQuietly(target) {
+	try {
+		await fsp.rm(target, { recursive: true, force: true, ...FS_RETRY });
+	} catch (err) {
+		pushLog(
+			`[launcher] ${T("Не удалось удалить", "Could not remove")} ${target}: ${err?.message ?? err}`,
+		);
+	}
+}
+
+/**
  * Downloads ffmpeg into FFMPEG_DIR: the newest LGPL build for Windows, checked
- * against the release's checksum, unpacked next to the launcher. What it is
- * doing shows in `ffmpegInfo()` while it runs.
+ * against the release's checksum, unpacked into FFMPEG_DIR. What it is
+ * doing shows in `ffmpegInfo()` while it runs. It never rejects: whatever
+ * goes wrong ends as `failed` with the reason, not as a crash.
  */
 async function installFfmpeg() {
 	ffmpegState.installing = true;
@@ -421,7 +505,7 @@ async function installFfmpeg() {
 		pushLog(
 			`[launcher] ${T("Загрузка ffmpeg", "Downloading ffmpeg")}: ${archive.url}`,
 		);
-		fs.mkdirSync(path.dirname(FFMPEG_DIR), { recursive: true });
+		await fsp.mkdir(path.dirname(FFMPEG_DIR), { recursive: true });
 		let lastPercent = -1;
 		const sha256 = await downloadTo(archive.url, zipFile, (received, total) => {
 			const percent = total ? Math.floor((received / total) * 100) : 0;
@@ -446,11 +530,17 @@ async function installFfmpeg() {
 				),
 			);
 		}
-		ffmpegState.progress = 0.92;
+		ffmpegState.progress = 0.9;
 		ffmpegState.stage = tr("Распаковка ffmpeg…", "Unpacking ffmpeg…");
-		fs.rmSync(fresh, { recursive: true, force: true });
-		const files = unzipFfmpeg(zipFile, fresh);
-		fs.writeFileSync(
+		await fsp.rm(fresh, { recursive: true, force: true, ...FS_RETRY });
+		const files = await unzipFfmpeg(zipFile, fresh, (done, total) => {
+			ffmpegState.progress = 0.9 + (done / total) * 0.09;
+			ffmpegState.stage = tr(
+				`Распаковка ffmpeg… ${done} из ${total}`,
+				`Unpacking ffmpeg… ${done} of ${total}`,
+			);
+		});
+		await fsp.writeFile(
 			path.join(fresh, "notgt-ffmpeg.json"),
 			`${JSON.stringify(
 				{
@@ -463,26 +553,171 @@ async function installFfmpeg() {
 				2,
 			)}\n`,
 		);
-		fs.rmSync(FFMPEG_DIR, { recursive: true, force: true });
-		fs.renameSync(fresh, FFMPEG_DIR);
+		await fsp.rm(FFMPEG_DIR, { recursive: true, force: true, ...FS_RETRY });
+		await renamePatiently(fresh, FFMPEG_DIR);
 		ffmpegState.progress = 1;
 		ffmpegState.stage = null;
 		pushLog(
 			`[launcher] ${T("ffmpeg установлен", "ffmpeg is installed")}: ${FFMPEG_DIR} (${files} ${T("файлов", "files")})`,
 		);
 	} catch (err) {
-		const why = String(err?.message ?? err);
+		const denied = ["EPERM", "EACCES", "EROFS"].includes(err?.code);
+		const why = denied
+			? T(
+					`нет прав на запись в ${path.dirname(FFMPEG_DIR)}`,
+					`no permission to write to ${path.dirname(FFMPEG_DIR)}`,
+				)
+			: String(err?.message ?? err);
 		ffmpegState.failed = true;
-		ffmpegState.stage = tr(
-			`Не удалось установить ffmpeg: ${why}. Проверьте интернет и нажмите ещё раз — или установите ffmpeg сами (winget install Gyan.FFmpeg) и перезапустите сервер.`,
-			`ffmpeg could not be installed: ${why}. Check the internet connection and press again — or install ffmpeg yourself (winget install Gyan.FFmpeg) and restart the server.`,
-		);
+		ffmpegState.stage = denied
+			? tr(
+					`Не удалось установить ffmpeg: ${why}. Нажмите ещё раз и разрешите запрос Windows — или установите ffmpeg сами (winget install Gyan.FFmpeg) и перезапустите сервер.`,
+					`ffmpeg could not be installed: ${why}. Press again and allow the Windows prompt — or install ffmpeg yourself (winget install Gyan.FFmpeg) and restart the server.`,
+				)
+			: tr(
+					`Не удалось установить ffmpeg: ${why}. Проверьте интернет и нажмите ещё раз — или установите ffmpeg сами (winget install Gyan.FFmpeg) и перезапустите сервер.`,
+					`ffmpeg could not be installed: ${why}. Check the internet connection and press again — or install ffmpeg yourself (winget install Gyan.FFmpeg) and restart the server.`,
+				);
 		pushLog(`[launcher] ${say(ffmpegState.stage)}`);
-		fs.rmSync(fresh, { recursive: true, force: true });
+		await removeQuietly(fresh);
 	} finally {
-		fs.rmSync(zipFile, { force: true });
+		await removeQuietly(zipFile);
 		ffmpegState.installing = false;
 	}
+}
+
+/** Quotes for PowerShell: a single-quoted string, its quotes doubled. */
+function psQuote(value) {
+	return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+/**
+ * Without administrator rights: the install runs in a copy of this script
+ * started through UAC (`--install-ffmpeg <status file>`), which reports how
+ * far it is in that file; this process shows it as its own. The command goes
+ * to PowerShell as UTF-16, so a folder with Cyrillic in its name gets there
+ * whole (a .cmd file would not).
+ */
+async function installFfmpegElevated() {
+	ffmpegState.installing = true;
+	ffmpegState.failed = false;
+	ffmpegState.progress = 0;
+	ffmpegState.stage = tr(
+		"Разрешите установку в запросе Windows (права администратора)…",
+		"Allow the install in the Windows prompt (administrator rights)…",
+	);
+	const statusFile = path.join(
+		os.tmpdir(),
+		`notgt-ffmpeg-${process.pid}-${Date.now()}.json`,
+	);
+	const workerArgs = [
+		fileURLToPath(import.meta.url),
+		"--install-ffmpeg",
+		statusFile,
+		"--ffmpeg-dir",
+		FFMPEG_DIR,
+		"--lang",
+		lang,
+	];
+	let seenLines = 0;
+	let status = null;
+	const readStatus = () => {
+		try {
+			status = JSON.parse(fs.readFileSync(statusFile, "utf8"));
+		} catch {
+			return; // not written yet
+		}
+		ffmpegState.progress = status.progress ?? 0;
+		if (status.stage) ffmpegState.stage = status.stage;
+		for (const line of (status.log ?? []).slice(seenLines)) pushLog(line);
+		seenLines = Math.max(seenLines, status.log?.length ?? 0);
+	};
+	try {
+		const code = await new Promise((resolve) => {
+			if (ELEVATE_OVERRIDE === "decline") {
+				resolve(1);
+				return;
+			}
+			const argLine = workerArgs.map((arg) => `"${arg}"`).join(" ");
+			const child =
+				ELEVATE_OVERRIDE === "direct"
+					? spawn(process.execPath, workerArgs, {
+							stdio: "ignore",
+							windowsHide: true,
+						})
+					: spawn(
+							"powershell",
+							[
+								"-NoProfile",
+								"-NonInteractive",
+								// Base64 of UTF-16: no quoting between here and PowerShell
+								// can bend a quote or a Cyrillic path on the way.
+								"-EncodedCommand",
+								Buffer.from(
+									`$p = Start-Process -FilePath ${psQuote(process.execPath)} -ArgumentList ${psQuote(argLine)} -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode`,
+									"utf16le",
+								).toString("base64"),
+							],
+							{ stdio: "ignore", windowsHide: true },
+						);
+			const timer = setInterval(readStatus, 400);
+			child.once("error", () => {
+				clearInterval(timer);
+				resolve(-1);
+			});
+			child.once("close", (exitCode) => {
+				clearInterval(timer);
+				resolve(exitCode ?? -1);
+			});
+		});
+		readStatus();
+		if (status?.done) {
+			ffmpegState.failed = Boolean(status.failed);
+			ffmpegState.stage = status.failed ? status.stage : null;
+			if (!status.failed) ffmpegState.progress = 1;
+		} else {
+			// The worker never ran: the prompt was refused (or did not come up).
+			ffmpegState.failed = true;
+			ffmpegState.stage = tr(
+				`Права администратора не получены — ffmpeg не установлен. Нажмите ещё раз и разрешите запрос Windows (код ${code}).`,
+				`Administrator rights were not given — ffmpeg is not installed. Press again and allow the Windows prompt (code ${code}).`,
+			);
+			pushLog(`[launcher] ${say(ffmpegState.stage)}`);
+		}
+	} finally {
+		ffmpegState.installing = false;
+		await removeQuietly(statusFile);
+	}
+}
+
+/**
+ * The elevated copy: installs, writing its progress (and its log lines) to
+ * the status file the launcher reads, and ends.
+ */
+async function runFfmpegWorker(statusFile) {
+	const log = [];
+	logSink = (line) => log.push(line);
+	const write = (done = false) => {
+		const status = {
+			progress: ffmpegState.progress,
+			stage: ffmpegState.stage,
+			failed: ffmpegState.failed,
+			done,
+			log,
+		};
+		try {
+			// Whole or not at all: the launcher may read it at any moment.
+			fs.writeFileSync(`${statusFile}.tmp`, JSON.stringify(status));
+			fs.renameSync(`${statusFile}.tmp`, statusFile);
+		} catch {
+			/* the launcher shows the last status it could read */
+		}
+	};
+	const timer = setInterval(write, 300);
+	await installFfmpeg();
+	clearInterval(timer);
+	write(true);
+	return ffmpegState.failed ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -875,7 +1110,11 @@ const state = {
 	logCount: 0, // total number of lines ever produced (monotonic)
 };
 
+/** Where log lines also go: the elevated ffmpeg installer collects them. */
+let logSink = null;
+
 function pushLog(line) {
+	logSink?.(line);
 	state.logs.push(line);
 	state.logCount++;
 	if (state.logs.length > LOG_BUFFER_MAX) state.logs.shift();
@@ -2254,7 +2493,9 @@ async function handleRequest(req, res) {
 			});
 			return;
 		}
-		void installFfmpeg();
+		(IS_ELEVATED ? installFfmpeg() : installFfmpegElevated()).catch((err) =>
+			pushLog(`[launcher] ffmpeg: ${String(err?.stack ?? err)}`),
+		);
 		const started = ffmpegInfo();
 		sendJson(res, 202, { ok: true, message: started.text, ffmpeg: started });
 		return;
@@ -2440,6 +2681,25 @@ async function gracefulShutdown(code) {
 	process.exit(code);
 }
 
+// The window starts this process with its stderr going nowhere, so a crash
+// left no trace but "the service process has ended". A promise that fails
+// unhandled is logged instead of ending the process, and what does end it is
+// written to launcher-crash.log next to the settings.
+const CRASH_LOG = path.join(path.dirname(PERSIST_PATH), "launcher-crash.log");
+process.on("unhandledRejection", (err) => {
+	pushLog(`[launcher] ${String(err?.stack ?? err)}`);
+});
+process.on("uncaughtException", (err) => {
+	try {
+		fs.appendFileSync(
+			CRASH_LOG,
+			`${new Date().toISOString()} launcher ${VERSION}\n${String(err?.stack ?? err)}\n\n`,
+		);
+	} catch {
+		/* nowhere to write it */
+	}
+	process.exit(1);
+});
 process.on("SIGINT", () => void gracefulShutdown(0));
 process.on("SIGTERM", () => void gracefulShutdown(0));
 process.on("exit", () => {
@@ -2471,7 +2731,10 @@ let lastSeenAt = Date.now();
 if (args.background) {
 	setInterval(() => {
 		const busy =
-			state.child || state.status === "starting" || state.status === "stopping";
+			state.child ||
+			state.status === "starting" ||
+			state.status === "stopping" ||
+			ffmpegState.installing;
 		if (!busy && Date.now() - lastSeenAt > IDLE_EXIT_MS) {
 			void gracefulShutdown(0);
 		}
@@ -2481,6 +2744,11 @@ if (args.background) {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
+
+// Started through UAC to install ffmpeg: that is all this process does.
+if (args.installFfmpeg) {
+	process.exit(await runFfmpegWorker(path.resolve(args.installFfmpeg)));
+}
 
 const listenPort =
 	isValidPort(args.controlPort) || args.controlPort === 0

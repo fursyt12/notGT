@@ -94,12 +94,21 @@ classic reason for "everything except 127.0.0.1 hangs".
 
 The server needs ffmpeg to convert `.mp4`/`.mov` uploads. `GET /api/state` carries
 `ffmpeg`: `{ installed, source: "launcher" | "system" | "", version, canInstall,
-installing, progress, failed, text }`. While there is none — neither in `ffmpeg/` next
-to `launcher/` nor on `PATH` — both faces offer **Install ffmpeg**; `POST
+installing, progress, failed, needsAdmin, text, dir }`. While there is none — neither in its folder
+nor on `PATH` — both faces offer **Install ffmpeg**; `POST
 /api/ffmpeg/install` downloads the newest LGPL shared win64 build from BtbN/FFmpeg-Builds,
 checks its SHA-256 against the release's `checksums.sha256`, unpacks `bin/` (without
-ffplay) with a small zip reader of its own, and writes `ffmpeg/notgt-ffmpeg.json`. The
-server is always started with `NOTGT_FFMPEG_DIR=<that folder>` and puts it first on
+ffplay) asynchronously with a small zip reader of its own, and writes
+`notgt-ffmpeg.json` next to it, in `ffmpeg/` next to `launcher/`. A launcher without
+administrator rights (checked once with `fltmc`) does not write there itself: it starts a
+copy of itself through UAC — PowerShell `Start-Process -Verb RunAs`, the command passed
+as `-EncodedCommand` so Cyrillic paths survive — with `--install-ffmpeg <status file>
+--ffmpeg-dir <folder>`; the copy installs and writes its progress and log lines to that
+file, which the launcher reads and shows as its own. A refused prompt ends as `failed`.
+`NOTGT_ELEVATE=direct|decline` stands in for UAC in the tests. Whatever goes wrong (no
+network, a bad checksum, a folder it may not write to, a file the antivirus holds)
+ends as `failed` with the reason; the backend does not exit, and `--background` does not
+idle out while an install runs. The server is always started with `NOTGT_FFMPEG_DIR=<that folder>` and puts it first on
 `PATH` for each conversion, so no restart is needed. The install is offered on Windows
 only; elsewhere ffmpeg comes from the system. `NOTGT_FFMPEG_DIR` moves the folder, and
 `NOTGT_FFMPEG_URL` (+ `NOTGT_FFMPEG_SHA256`) installs from another zip on any system —
@@ -187,7 +196,7 @@ section above («Разрешить порт»).
 | `GET`  | `/api/diagnostics`     | fresh probe + `verdict[]`, firewall rule state, Windows proxy settings             |
 | `POST` | `/api/firewall/allow`  | body `{ port? }`; adds the inbound rule (UAC), then re-probes                      |
 | `POST` | `/api/firewall/remove` | body `{ port? }`; deletes the rule                                                 |
-| `POST` | `/api/ffmpeg/install`  | downloads ffmpeg into `ffmpeg/` in the background (`202`); progress in `ffmpeg`    |
+| `POST` | `/api/ffmpeg/install`  | downloads ffmpeg in the background (`202`); progress in `ffmpeg` of the state      |
 | `POST` | `/api/login`           | body `{ username, password }`; switches the dashboard sign-in on for that operator |
 | `POST` | `/api/login/disable`   | switches the sign-in off; the stored operator is kept                              |
 | `POST` | `/api/login/default`   | removes the `login` block: sign-in on, users kept in the dashboard's Team tab      |

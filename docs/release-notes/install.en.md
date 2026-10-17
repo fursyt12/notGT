@@ -59,8 +59,9 @@ To upload `.mp4` and `.mov` into a video layer, the server needs ffmpeg —
 it converts them. It is not in the package: while there is none, the
 launcher's window has an “Install ffmpeg” button. One press downloads ffmpeg
 (about 75 MB), checks it and puts it into an `ffmpeg` folder next to the
-launcher; the server picks it up without a restart. Ready `.webm` files
-upload without ffmpeg.
+launcher; the server picks it up without a restart. If the launcher was not
+started as administrator, Windows asks for the rights first (UAC).
+Ready `.webm` files upload without ffmpeg.
 
 #### Data
 
