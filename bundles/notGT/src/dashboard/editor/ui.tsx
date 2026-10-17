@@ -32,6 +32,60 @@ export function round(value: number, digits = 2): number {
 	return Math.round(value * factor) / factor;
 }
 
+/**
+ * A layer box (percent of the stage) with the proportions of a picture of
+ * `mediaW x mediaH` px. The width is kept; when the matching height would not
+ * fit the stage, the height is capped and the width follows. A box that would
+ * hang below the stage is moved up (`y`) until it fits.
+ */
+export function fitBoxToMedia(
+	width: number,
+	y: number,
+	mediaW: number,
+	mediaH: number,
+	stageW: number,
+	stageH: number,
+): { width: number; height: number; y: number } {
+	const ratio = (mediaH / mediaW) * (stageW / stageH);
+	let w = width > 0 ? width : 32;
+	let h = w * ratio;
+	if (h > 100) {
+		h = 100;
+		w = h / ratio;
+	}
+	return { width: round(w), height: round(h), y: round(Math.max(0, Math.min(y, 100 - h))) };
+}
+
+/**
+ * The picture size of a video, read from its metadata only. `null` when it
+ * cannot be loaded in time (404, a format the browser cannot play, a slow
+ * server).
+ */
+export function probeVideoSize(
+	url: string,
+	timeoutMs = 15000,
+): Promise<{ width: number; height: number } | null> {
+	return new Promise((resolve) => {
+		const el = document.createElement("video");
+		let timer = 0;
+		const done = (size: { width: number; height: number } | null) => {
+			window.clearTimeout(timer);
+			el.onloadedmetadata = null;
+			el.onerror = null;
+			el.removeAttribute("src");
+			el.load();
+			resolve(size);
+		};
+		timer = window.setTimeout(() => done(null), timeoutMs);
+		el.onloadedmetadata = () =>
+			done(el.videoWidth > 0 && el.videoHeight > 0 ? { width: el.videoWidth, height: el.videoHeight } : null);
+		el.onerror = () => done(null);
+		el.preload = "metadata";
+		el.muted = true;
+		el.src = url;
+	});
+}
+
 /** Human-readable byte size for the media list / upload result ("13,5 КБ"). */
 export function formatBytes(bytes: number): string {
 	if (!Number.isFinite(bytes) || bytes <= 0) return t("0 B");

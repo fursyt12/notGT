@@ -58,8 +58,10 @@ import {
 	SelectField,
 	TextField,
 	clamp,
+	fitBoxToMedia,
 	formatBytes,
 	layerDisplayName,
+	probeVideoSize,
 	resolveAssetUrl,
 	round,
 	sortByZ,
@@ -229,7 +231,7 @@ function normalizeZ(layers: Layer[]): Layer[] {
 	return sortByZ(layers).map((layer, index) => ({ ...layer, z: index + 1 }));
 }
 
-function makeLayer(type: LayerType, z: number): Layer {
+function makeLayer(type: LayerType, z: number, stageW = 1920, stageH = 1080): Layer {
 	const base: Layer = {
 		id: newId("layer"),
 		type,
@@ -269,12 +271,13 @@ function makeLayer(type: LayerType, z: number): Layer {
 	if (type === "video") {
 		// A fresh video layer has a visible 16:9 box and the runtime defaults
 		// spelled out, so it is selectable/visible even before a `src` is set.
+		// Width and height are percents of a stage that is rarely square, so
+		// 16:9 has to be worked out against the stage's own proportions.
 		return {
 			...base,
 			name: t("Video"),
 			src: "",
-			width: 32,
-			height: 18,
+			...fitBoxToMedia(32, base.y, 16, 9, stageW, stageH),
 			style: {
 				...base.style,
 				videoLoop: true,
@@ -1168,6 +1171,7 @@ function LayerInspector({
 	onTogglePreview,
 	onRestartPreview,
 	onUploaded,
+	onPickMedia,
 }: {
 	layer: Layer;
 	data: TitleData;
@@ -1175,6 +1179,8 @@ function LayerInspector({
 	dataPaths: string[];
 	previewPlaying: boolean;
 	onPatch: (patch: Partial<Layer>) => void;
+	/** Sets a picked or uploaded clip as `src` and fits the box to it. */
+	onPickMedia: (src: string) => void;
 	onStyle: (patch: Partial<LayerStyle>) => void;
 	onTogglePreview: () => void;
 	onRestartPreview: () => void;
@@ -1498,7 +1504,7 @@ function LayerInspector({
 				<Section title={t("Video")}>
 					<MediaDropZone
 						currentSrc={layer.src ?? ""}
-						onPick={(src) => onPatch({ src })}
+						onPick={onPickMedia}
 						onUploaded={onUploaded}
 					/>
 					<TextField
@@ -2293,6 +2299,40 @@ export function EditorApp() {
 		[mutate],
 	);
 
+	// A clip picked from the list or just uploaded becomes the layer's `src`,
+	// then the box takes the clip's proportions (keeping its width) once the
+	// metadata is in — otherwise the out letterboxes the clip inside a box of
+	// another shape and the editor shows it stretched.
+	const pickLayerMedia = useCallback(
+		(id: string, src: string) => {
+			updateLayer(id, { src });
+			const url = resolveAssetUrl(src);
+			if (!url || src.includes("{{")) return;
+			void probeVideoSize(url).then((size) => {
+				if (!size) return;
+				mutate((template) => ({
+					...template,
+					layers: template.layers.map((layer) =>
+						layer.id === id && layer.src === src
+							? {
+									...layer,
+									...fitBoxToMedia(
+										layer.width ?? 32,
+										layer.y,
+										size.width,
+										size.height,
+										template.width,
+										template.height,
+									),
+								}
+							: layer,
+					),
+				}));
+			});
+		},
+		[mutate, updateLayer],
+	);
+
 	const updateStyle = useCallback(
 		(id: string, patch: Partial<LayerStyle>) => {
 			mutate((template) => ({
@@ -2512,7 +2552,8 @@ export function EditorApp() {
 			if (!started) return;
 			working = started.template;
 		}
-		const layer = shape ? shape(makeLayer(type, 1)) : makeLayer(type, 1);
+		const fresh = makeLayer(type, 1, working.width, working.height);
+		const layer = shape ? shape(fresh) : fresh;
 		const layers = normalizeZ(working.layers ?? []);
 		layer.z = layers.length + 1;
 		const next = { ...working, layers: [...layers, layer] };
@@ -3052,6 +3093,7 @@ export function EditorApp() {
 										onTogglePreview={togglePreview}
 										onRestartPreview={restartPreview}
 										onUploaded={handleUploaded}
+										onPickMedia={(src) => pickLayerMedia(selectedLayer.id, src)}
 									/>
 								) : (
 									<p className="ed-hint ed-pad">
