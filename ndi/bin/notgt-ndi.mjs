@@ -127,6 +127,9 @@ async function launch(how) {
 				args.push(...found.args);
 				Object.assign(childEnv, found.env);
 				say(`GPU: ${found.label}`);
+			} else if (mode === "gpu") {
+				// Asked for: the headless platform's GPU, an emulated one.
+				say(`${found.why}; drawing on an emulated GPU, as --render gpu asks`);
 			} else {
 				// The headless platform's GPU is an emulated one: the CPU is cheaper.
 				say(`${found.why}; drawing on the CPU`);

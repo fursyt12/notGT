@@ -139,10 +139,13 @@ async function start() {
 			log(`${found.why}: starting again on the CPU`);
 			app.exit(EXIT_USE_CPU);
 			return;
-		} else
+		} else {
+			// --render gpu: on the GPU even if it is emulated, as asked.
+			if (render === "gpu") gpu = true;
 			log(
-				`${found.why}${render === "gpu" ? "" : " — --render cpu is cheaper here"}`,
+				`${found.why}${render === "gpu" ? "; drawing on it all the same (--render gpu)" : " — --render cpu is cheaper here"}`,
 			);
+		}
 	}
 
 	// The GPU converters, best first; the CPU always comes after them.

@@ -238,3 +238,24 @@ test("a still picture goes out at exactly the out's rate, however late the timer
 	const r = play({ still: true, seconds: 600, late: 1.3 });
 	assert.ok(Math.abs(r.rate - 60) < 0.01, `${r.rate} fps`);
 });
+
+test("its own timers work where setTimeout insists on its `this`, as in a page", async () => {
+	// A page's setTimeout throws "Illegal invocation" unless called as itself.
+	const real = globalThis.setTimeout;
+	const strict = function (fn, ms) {
+		if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+		return real(fn, ms);
+	};
+	globalThis.setTimeout = strict;
+	try {
+		const sent = [];
+		const c = new FrameClock({ fps: 60, transmit: (slot) => sent.push(slot) > 0 });
+		c.setWatching(true);
+		c.frameReady(0);
+		await new Promise((resolve) => real(resolve, 60));
+		c.stop();
+		assert.ok(sent.length >= 2, `${sent.length} frames: the repeats ran`);
+	} finally {
+		globalThis.setTimeout = real;
+	}
+});

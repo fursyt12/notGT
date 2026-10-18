@@ -280,6 +280,8 @@ let watching = false;
 let connections = 0;
 /** When frames go out: the out's frame clock (../clock.mjs). */
 let clock;
+/** What the frames cost, since the last stats. */
+const totals = { frames: 0, gpuMs: 0, readMs: 0 };
 
 function transmit(index) {
 	sender.sendAsync(
@@ -363,7 +365,8 @@ async function chooseConverter() {
 		return webgpu;
 	}
 	const webgl = WebglConverter.create();
-	if (webgl.software)
+	// NOTGT_NDI_SOFTWARE_GL=1: tests only, to run this page with no GPU.
+	if (webgl.software && !process.env.NOTGT_NDI_SOFTWARE_GL)
 		throw new Error(`the GPU is emulated in software (${webgl.name})`);
 	return webgl;
 }

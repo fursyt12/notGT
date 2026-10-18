@@ -55,7 +55,12 @@ export class FrameClock {
 		fps,
 		transmit,
 		now = () => performance.now(),
-		timers = { set: setTimeout, clear: clearTimeout },
+		// Called as functions, not as methods of this object: a page's
+		// setTimeout throws "Illegal invocation" when its `this` is not the page.
+		timers = {
+			set: (fn, ms) => setTimeout(fn, ms),
+			clear: (timer) => clearTimeout(timer),
+		},
 	}) {
 		this.frameMs = 1000 / fps;
 		this.transmit = transmit;

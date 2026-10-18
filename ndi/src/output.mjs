@@ -335,9 +335,19 @@ export class Output {
 		if (this.sink.shared) return;
 		if (image.isEmpty()) {
 			// The page has no picture yet.
-			if (this.watching) this.repaintSoon();
+			if (this.watching) {
+				this.repaintSoon();
+				// Never a picture at all, though: say so, rather than send nothing.
+				this.emptyPaints = (this.emptyPaints ?? 0) + 1;
+				if (this.emptyPaints === 50) {
+					this.warning = "Chromium paints this out with no picture in it: nothing is sent — NOTGT_NDI_DEBUG=1 shows the sender's messages";
+					this.log(`${this.config.ndiName}: ${this.warning}`);
+				}
+			}
 			return;
 		}
+		if (this.emptyPaints >= 50) this.warning = undefined;
+		this.emptyPaints = 0;
 		this.checkSize(image.getSize());
 		if (!this.sink.shared) this.sink.paint(dirty, image);
 	}
@@ -358,12 +368,35 @@ export class Output {
 		if (this.stopped || this.fallingBack || !this.sink.shared) return;
 		this.fallingBack = true;
 		this.giveUp(this.sinkKind, reason);
-		await this.sink.stop();
+		try {
+			await this.sink.stop();
+		} catch (error) {
+			this.log(`${this.config.ndiName}: the converter given up did not stop cleanly: ${error.message}`);
+		}
 		this.fallingBack = false;
 		if (this.stopped) return;
-		this.sink = this.nextSink();
-		this.sink.setWatching(this.watching);
-		this.openWindow();
+		this.replaceSink();
+	}
+
+	/**
+	 * The next converter, and a window that hands it frames as it takes them.
+	 * Never quiet when it fails: the out shows why, and it is tried again.
+	 */
+	replaceSink() {
+		try {
+			this.sink = this.nextSink();
+			this.sink.setWatching(this.watching);
+			this.emptyPaints = 0;
+			this.openWindow();
+			this.debug(`${this.config.ndiName}: now converting with ${this.sink.name}`);
+		} catch (error) {
+			const message = `no converter could take over: ${error.message}`;
+			this.log(`${this.config.ndiName}: ${message}; trying again`);
+			this.state = "error";
+			this.error = message;
+			clearTimeout(this.retrySink);
+			this.retrySink = setTimeout(() => !this.stopped && this.replaceSink(), RETRY_MS);
+		}
 	}
 
 	status() {
@@ -390,6 +423,7 @@ export class Output {
 		this.stopped = true;
 		for (const timer of this.timers) clearInterval(timer);
 		clearTimeout(this.retry);
+		clearTimeout(this.retrySink);
 		clearTimeout(this.repaint);
 		if (this.window && !this.window.isDestroyed()) this.window.destroy();
 		this.window = undefined;
