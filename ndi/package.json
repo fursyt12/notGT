@@ -1,21 +1,23 @@
 {
-  "name": "notgt-ndi",
-  "version": "0.12.7",
-  "private": true,
-  "description": "notGT NDI sender: renders the outs of a notGT server off screen and sends each one as an NDI source.",
-  "license": "MIT",
-  "type": "module",
-  "main": "main.mjs",
-  "bin": {
-    "notgt-ndi": "bin/notgt-ndi.mjs"
-  },
-  "scripts": {
-    "start": "node bin/notgt-ndi.mjs",
-    "probe": "node scripts/probe.mjs",
-    "test": "node --test test/"
-  },
-  "dependencies": {
-    "electron": "^44.8.0",
-    "koffi": "^3.3.3"
-  }
+	"name": "notgt-ndi",
+	"version": "0.12.7",
+	"private": true,
+	"description": "notGT NDI sender: renders the outs of a notGT server off screen and sends each one as an NDI source.",
+	"license": "MIT",
+	"type": "module",
+	"main": "main.mjs",
+	"bin": {
+		"notgt-ndi": "bin/notgt-ndi.mjs"
+	},
+	"scripts": {
+		"start": "node bin/notgt-ndi.mjs",
+		"probe": "node scripts/probe.mjs",
+		"test": "node --test test/*.test.mjs",
+		"build:wasm": "clang --target=wasm32 -O3 -msimd128 -nostdlib -Wl,--no-entry -Wl,--import-memory -Wl,--stack-first -Wl,-z,stack-size=4096 -Wl,--export=unpremultiply -Wl,--export=opaque -o src/convert.wasm src/convert.c",
+		"build:native": "node scripts/build-native.mjs"
+	},
+	"dependencies": {
+		"electron": "^44.8.0",
+		"koffi": "^3.3.3"
+	}
 }

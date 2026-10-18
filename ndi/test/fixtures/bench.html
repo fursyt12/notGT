@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>notGT NDI benchmark</title>
+		<!--
+			What scripts/bench.mjs sends and checks. #still, #lower or #full:
+			- known colour patches, top left, never covered: checked against
+			  what the receiver gets (straight alpha);
+			- a time stamp below them, as 32 black or white blocks: 24 bits of
+			  Date.now() and an 8-bit check sum, read back for the latency;
+			- #lower: a lower third sliding in and out, as titles do;
+			- #full: also the whole picture under it moving (the most there is).
+			#still draws once and never again.
+		-->
+		<style>
+			html,
+			body {
+				margin: 0;
+				width: 1920px;
+				height: 1080px;
+				background: transparent;
+				overflow: hidden;
+				font-family: "DejaVu Sans", sans-serif;
+			}
+			.patch {
+				position: absolute;
+				top: 40px;
+				width: 64px;
+				height: 64px;
+			}
+			#stamp {
+				position: absolute;
+				left: 40px;
+				top: 128px;
+				display: flex;
+			}
+			#stamp i {
+				width: 16px;
+				height: 16px;
+				background: #000;
+			}
+			#stamp i.on {
+				background: #fff;
+			}
+			.wash {
+				position: absolute;
+				left: 0;
+				right: 0;
+				top: 200px;
+				bottom: 0;
+				background: linear-gradient(
+					120deg,
+					rgba(255, 0, 80, 0.4),
+					rgba(0, 120, 255, 0.6),
+					rgba(0, 255, 120, 0.4)
+				);
+				background-size: 300% 300%;
+				animation: wash 4s linear infinite alternate;
+			}
+			@keyframes wash {
+				to {
+					background-position: 100% 100%;
+				}
+			}
+			.third {
+				position: absolute;
+				left: 120px;
+				bottom: 110px;
+				width: 900px;
+				height: 150px;
+				box-sizing: border-box;
+				padding: 24px 36px;
+				border-radius: 12px;
+				color: #fff;
+				background: linear-gradient(
+					90deg,
+					rgba(20, 40, 120, 0.92),
+					rgba(60, 20, 120, 0.75)
+				);
+				box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+				animation: slide 3s ease-in-out infinite alternate;
+			}
+			.third h1 {
+				margin: 0;
+				font-size: 52px;
+			}
+			.third p {
+				margin: 6px 0 0;
+				font-size: 30px;
+				opacity: 0.85;
+			}
+			@keyframes slide {
+				from {
+					transform: translateX(-1100px);
+				}
+				to {
+					transform: translateX(0);
+				}
+			}
+			body.still .third {
+				animation: none;
+			}
+			body:not(.moving) .wash {
+				display: none;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="wash"></div>
+		<div class="third">
+			<h1>Ivan Petrov</h1>
+			<p>Chief engineer, notGT broadcast</p>
+		</div>
+		<div id="stamp"></div>
+		<script>
+			// The same list is in scripts/bench.mjs: straight RGBA.
+			const PATCHES = [
+				[255, 0, 0, 255],
+				[0, 255, 0, 255],
+				[0, 0, 255, 255],
+				[255, 255, 255, 255],
+				[128, 128, 128, 255],
+				[32, 32, 32, 255],
+				[255, 128, 0, 255],
+				[255, 255, 255, 128],
+				[255, 0, 0, 64],
+				[0, 0, 255, 191],
+				[0, 0, 0, 128],
+			];
+			PATCHES.forEach(([r, g, b, a], i) => {
+				const div = document.createElement("div");
+				div.className = "patch";
+				div.style.left = `${40 + i * 96}px`;
+				div.style.background = `rgba(${r}, ${g}, ${b}, ${a / 255})`;
+				document.body.append(div);
+			});
+			const mode = location.hash.slice(1) || "lower";
+			if (mode === "still") document.body.classList.add("still");
+			if (mode === "full") document.body.classList.add("moving");
+			const stamp = document.getElementById("stamp");
+			const bits = Array.from({ length: 32 }, () =>
+				stamp.appendChild(document.createElement("i")),
+			);
+			function show() {
+				const t = Date.now() % 2 ** 24;
+				const sum = ((t & 255) + ((t >> 8) & 255) + ((t >> 16) & 255)) & 255;
+				const word = t * 256 + sum;
+				for (let i = 0; i < 32; i++)
+					bits[i].className = Math.floor(word / 2 ** (31 - i)) % 2 ? "on" : "";
+			}
+			show();
+			if (mode !== "still")
+				requestAnimationFrame(function tick() {
+					show();
+					requestAnimationFrame(tick);
+				});
+		</script>
+	</body>
+</html>

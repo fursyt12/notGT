@@ -1,0 +1,17 @@
+[package]
+name = "notgt-ndi-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3", features = ["napi6"] }
+napi-derive = "3"
+notgt-ndi-core = { path = "../core" }
+
+[build-dependencies]
+napi-build = "2"

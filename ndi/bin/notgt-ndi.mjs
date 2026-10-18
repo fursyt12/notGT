@@ -3,11 +3,15 @@
  * Starts the NDI sender in Electron with the switches Chromium has to see on
  * its command line — set from inside the app they come too late:
  *
- *  - `--ozone-platform=headless` on Linux, desktop or not, with a screen big
- *    enough for any out: windows are cut to the screen, and the headless one
- *    is 1×1 unless told otherwise;
+ *  - on Linux, desktop or not, a display of its own with a screen big enough
+ *    for any out (windows are cut to the screen): a headless compositor on
+ *    the GPU when there is one to use (see src/display.mjs), otherwise
+ *    `--ozone-platform=headless`, whose screen is 1×1 unless told otherwise;
  *  - `--no-sandbox` when Chromium's sandbox cannot start here: running as
  *    root, or neither the setuid helper nor user namespaces are available.
+ *
+ * When the app finds the GPU unusable it ends with EXIT_USE_CPU, and is
+ * started again on the CPU.
  *
  * Every argument is passed on; see `--help`.
  */
@@ -16,6 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { startCompositor } from "../src/display.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -58,52 +63,103 @@ if (tokenFile !== -1 && user[tokenFile + 1] !== undefined) {
 	env.NOTGT_TOKEN_FILE = user[tokenFile + 1];
 	user.splice(tokenFile, 2);
 }
-const chromium = [];
+/** main.mjs's EXIT_USE_CPU: the GPU is not worth it here. */
+const EXIT_USE_CPU = 75;
+const say = (line) => process.stdout.write(`[notgt-ndi] ${line}\n`);
+
+// How to draw is decided here and handed on as one --render.
+let render = String(process.env.NOTGT_NDI_RENDER || "auto");
+for (let i = 0; i < user.length; i++) {
+	if (user[i] === "--gpu" || user[i] === "--cpu") {
+		render = user[i].slice(2);
+		user.splice(i--, 1);
+	} else if (user[i] === "--render" && user[i + 1] !== undefined) {
+		render = user[i + 1];
+		user.splice(i--, 2);
+	} else if (user[i].startsWith("--render=")) {
+		render = user[i].slice(9);
+		user.splice(i--, 1);
+	}
+}
+env.NOTGT_NDI_LAUNCHER = "1";
+
+const common = [];
 if (process.platform === "linux") {
-	// Always, not only without a desktop: a desktop cuts windows to its screen,
-	// offscreen ones included, and the sender never shows a window anyway.
-	// NOTGT_NDI_DISPLAY=1 (or an --ozone-platform of one's own) keeps it.
-	if (
-		!process.env.NOTGT_NDI_DISPLAY &&
-		!user.some((a) => a.startsWith("--ozone-platform"))
-	) {
-		chromium.push(
-			"--ozone-platform=headless",
-			"--ozone-override-screen-size=7680,4320",
-		);
-	}
 	if (!user.includes("--no-sandbox") && !sandboxWorks())
-		chromium.push("--no-sandbox");
+		common.push("--no-sandbox");
+	// Chromium's own complaints on Linux — no D-Bus on a Pi without a desktop,
+	// and the like — are noise; NOTGT_NDI_DEBUG lets them through. Elsewhere
+	// they are what there is to read when it does not start.
+	if (!process.env.NOTGT_NDI_DEBUG) common.push("--log-level=3");
 }
+/** Where Linux draws is ours to choose: not when told to keep the desktop. */
+const ownDisplay =
+	process.platform === "linux" &&
+	!process.env.NOTGT_NDI_DISPLAY &&
+	!user.some((a) => a.startsWith("--ozone-platform"));
+const HEADLESS = [
+	"--ozone-platform=headless",
+	"--ozone-override-screen-size=7680,4320",
+];
 
-// Chromium's own complaints on Linux — no D-Bus on a Pi without a desktop,
-// and the like — are noise; NOTGT_NDI_DEBUG lets them through. Elsewhere
-// they are what there is to read when it does not start.
-if (process.platform === "linux" && !process.env.NOTGT_NDI_DEBUG) {
-	chromium.push("--log-level=3");
-}
-
+let child;
+let compositor;
+let stopping = false;
 const startedAt = Date.now();
-const child = spawn(electron, [...chromium, appDir, ...user], {
-	stdio: "inherit",
-	env,
-});
-child.on("error", (error) => {
-	process.stderr.write(
-		`[notgt-ndi] Electron could not be started (${electron}): ${error.message}\n`,
-	);
-	process.exitCode = 1;
-});
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-	process.on(signal, () => child.kill(signal));
-}
-child.on("exit", (code, signal) => {
-	if (code && Date.now() - startedAt < 10_000) {
-		// Gone before it could say anything itself: at least say that.
-		const hex = (code >>> 0).toString(16).toUpperCase();
-		process.stderr.write(
-			`[notgt-ndi] Electron ended at once with code ${code} (0x${hex}); NOTGT_NDI_DEBUG=1 shows Chromium's own messages\n`,
-		);
+
+async function launch(how) {
+	const args = [...common];
+	const childEnv = { ...env };
+	let mode = how;
+	if (ownDisplay) {
+		if (mode !== "cpu") {
+			const found = await startCompositor({ env });
+			if (found.ok) {
+				compositor = found;
+				args.push(...found.args);
+				Object.assign(childEnv, found.env);
+				say(`GPU: ${found.label}`);
+			} else {
+				// The headless platform's GPU is an emulated one: the CPU is cheaper.
+				say(`${found.why}; drawing on the CPU`);
+				mode = "cpu";
+			}
+		}
+		if (!compositor) args.push(...HEADLESS);
 	}
-	process.exitCode = code ?? (signal ? 1 : 0);
-});
+	child = spawn(electron, [...args, appDir, ...user, "--render", mode], {
+		stdio: "inherit",
+		env: childEnv,
+	});
+	child.on("error", (error) => {
+		process.stderr.write(
+			`[notgt-ndi] Electron could not be started (${electron}): ${error.message}\n`,
+		);
+		process.exitCode = 1;
+	});
+	child.on("exit", (code, signal) => {
+		compositor?.stop();
+		compositor = undefined;
+		if (code === EXIT_USE_CPU && mode !== "cpu" && !stopping) {
+			launch("cpu");
+			return;
+		}
+		if (code && Date.now() - startedAt < 10_000) {
+			// Gone before it could say anything itself: at least say that.
+			const hex = (code >>> 0).toString(16).toUpperCase();
+			process.stderr.write(
+				`[notgt-ndi] Electron ended at once with code ${code} (0x${hex}); NOTGT_NDI_DEBUG=1 shows Chromium's own messages\n`,
+			);
+		}
+		process.exitCode = code ?? (signal ? 1 : 0);
+	});
+}
+
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+	process.on(signal, () => {
+		stopping = true;
+		if (child && child.exitCode === null) child.kill(signal);
+		else compositor?.stop();
+	});
+}
+launch(render);

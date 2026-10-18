@@ -1,0 +1,79 @@
+#version 450
+// A frame as Chromium paints it (premultiplied RGBA) to what NDI sends:
+//  - with alpha, UYVA: a UYVY plane (U Y0 V Y1 for each two pixels), then
+//    one alpha byte a pixel;
+//  - opaque, UYVY: the picture over black.
+// Each invocation writes one 32-bit word of the result, laid out exactly as
+// NDI reads it. The arithmetic is core/src/reference.rs's, in integers: the
+// result is the same to the byte on every GPU.
+//
+// Compiled to convert.spv by scripts/build-native.mjs (glslc).
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) uniform sampler2D frame;
+layout(set = 0, binding = 1, std430) writeonly buffer Result {
+	uint words[];
+};
+
+layout(push_constant) uniform Params {
+	uint width;
+	uint height;
+	uint pairs;    // width / 2 * height: words of the UYVY plane
+	uint total;    // words in all
+	uint alpha;    // 1: divide the alpha out and write the alpha plane
+	uint groupsX;  // workgroups in x, for the index of a 2D dispatch
+	// 16.16 fixed-point weights (core/src/lib.rs Colour::fixed): integer
+	// arithmetic gives every GPU the same bytes, float division does not.
+	int yR, yG, yB;
+	int cbR, cbG, cbB;
+	int crR, crG, crB;
+} p;
+
+// The pixel's 8-bit premultiplied RGBA, as stored.
+uvec4 stored(uint x, uint y) {
+	return uvec4(round(texelFetch(frame, ivec2(x, y), 0) * 255.0));
+}
+
+// Straight 8-bit RGB: the alpha divided out, rounded; with no alpha wanted,
+// the picture over black as it is.
+ivec3 straight(uint x, uint y) {
+	uvec4 c = stored(x, y);
+	if (p.alpha == 0u) return ivec3(c.rgb);
+	if (c.a == 0u) return ivec3(0);
+	return ivec3(min((c.rgb * 255u + c.a / 2u) / c.a, uvec3(255u)));
+}
+
+int weigh(int r, int g, int b, ivec3 v) {
+	return (r * v.r + g * v.g + b * v.b + 32768) >> 16;
+}
+
+uint clampByte(int v) {
+	return uint(clamp(v, 0, 255));
+}
+
+void main() {
+	uint i = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * p.groupsX * 256u;
+	if (i >= p.total) return;
+	if (i < p.pairs) {
+		uint across = p.width / 2u;
+		uint x = (i % across) * 2u;
+		uint y = i / across;
+		ivec3 a = straight(x, y);
+		ivec3 b = straight(x + 1u, y);
+		ivec3 sum = a + b;
+		words[i] = clampByte(128 + weigh(p.cbR, p.cbG, p.cbB, sum))
+			| (clampByte(16 + weigh(p.yR, p.yG, p.yB, a)) << 8)
+			| (clampByte(128 + weigh(p.crR, p.crG, p.crB, sum)) << 16)
+			| (clampByte(16 + weigh(p.yR, p.yG, p.yB, b)) << 24);
+		return;
+	}
+	// The alpha plane: four alpha bytes of the frame, in order.
+	uint first = (i - p.pairs) * 4u;
+	uint word = 0u;
+	for (uint k = 0u; k < 4u; k++) {
+		uint q = first + k;
+		word |= stored(q % p.width, q / p.width).a << (8u * k);
+	}
+	words[i] = word;
+}

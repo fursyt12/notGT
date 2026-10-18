@@ -11,7 +11,12 @@
  * there are two frame buffers: one being read by NDI while the other is
  * written. Each remembers the region it has missed since it was last written,
  * so a buffer is brought up to date by converting just that region.
+ *
+ * The conversion runs in WebAssembly SIMD (convert.c) where it can, with
+ * both buffers inside its memory; the loops here are what runs where it
+ * cannot, and what it is checked against.
  */
+import fs from "node:fs";
 
 /** `LUT[alpha << 8 | channel]` = the channel with the alpha divided out. */
 export const LUT = (() => {
@@ -146,14 +151,65 @@ function copyBytes(src, srcStride, dst, dstWidth, rect) {
 	}
 }
 
+/** convert.wasm compiled, or `null` where WebAssembly SIMD does not run. */
+const simdModule = (() => {
+	if (process.env.NOTGT_NDI_SIMD === "0") return null;
+	try {
+		return new WebAssembly.Module(
+			fs.readFileSync(new URL("./convert.wasm", import.meta.url)),
+		);
+	} catch {
+		return null;
+	}
+})();
+
+export const simdAvailable = simdModule !== null;
+
+/** Where convert.wasm's own stack ends and the pictures begin. */
+const RESERVED = 65536;
+
+/**
+ * A memory for convert.wasm with room for one painted rectangle and the two
+ * frame buffers. It is made at its full size once and never grows, so the
+ * buffers never move while NDI reads them.
+ */
+function simdFrames(width, height) {
+	if (!simdModule) return null;
+	const frame = width * height * 4;
+	try {
+		const memory = new WebAssembly.Memory({
+			initial: Math.ceil((RESERVED + 3 * frame) / 65536),
+		});
+		const { exports } = new WebAssembly.Instance(simdModule, {
+			env: { memory },
+		});
+		const heap = Buffer.from(memory.buffer);
+		const at = [RESERVED + frame, RESERVED + 2 * frame];
+		return {
+			exports,
+			scratch: heap.subarray(RESERVED, RESERVED + frame),
+			at,
+			buffers: at.map((start) => heap.subarray(start, start + frame)),
+		};
+	} catch {
+		// No memory that large here (a 32-bit Pi and a big picture): the loops.
+		return null;
+	}
+}
+
 /** Two frame buffers taking turns, each written only where it is out of date. */
 export class FramePair {
-	/** `alpha: false` keeps the picture opaque, over black. */
-	constructor(width, height, { alpha = true } = {}) {
+	/**
+	 * `alpha: false` keeps the picture opaque, over black; `simd: false` keeps
+	 * to the JavaScript loops.
+	 */
+	constructor(width, height, { alpha = true, simd = true } = {}) {
 		this.width = width;
 		this.height = height;
+		this.alpha = alpha;
 		this.copy = alpha ? copyUnpremultiplied : copyOpaque;
-		this.buffers = [
+		this.simd = simd ? simdFrames(width, height) : null;
+		this.buffers = this.simd?.buffers ?? [
 			Buffer.alloc(width * height * 4),
 			Buffer.alloc(width * height * 4),
 		];
@@ -186,12 +242,30 @@ export class FramePair {
 		const rect = clip(this.stale[index], this.width, this.height);
 		if (rect) {
 			const { data, stride } = read(rect);
-			this.copy(data, stride, this.buffers[index], this.width, rect);
+			this.write(data, stride, index, rect);
 			this.converted += rect.width * rect.height;
 		}
 		this.stale[index] = null;
 		this.next = 1 - index;
 		this.current = this.buffers[index];
 		return this.current;
+	}
+
+	/** `rect` of the picture, `stride` bytes a row in `data`, into buffer `index`. */
+	write(data, stride, index, rect) {
+		const simd = this.simd;
+		if (!simd || stride % 4 !== 0 || data.length > simd.scratch.length) {
+			this.copy(data, stride, this.buffers[index], this.width, rect);
+			return;
+		}
+		simd.scratch.set(data);
+		simd.exports[this.alpha ? "unpremultiply" : "opaque"](
+			RESERVED,
+			stride >>> 2,
+			simd.at[index] + (rect.y * this.width + rect.x) * 4,
+			this.width,
+			rect.width,
+			rect.height,
+		);
 	}
 }

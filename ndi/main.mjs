@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import { createRequire } from "node:module";
-import { app } from "electron";
+import { app, BrowserWindow } from "electron";
 
 import {
 	Controller,
@@ -40,9 +40,18 @@ const HELP = `notGT NDI sender ${version}
   --groups <list>    NDI groups for --url
   --opaque           for --url: send it without transparency, over black
 
-  --gpu              render on the GPU (default: CPU, which is quicker for
-                     offscreen rendering on most machines, the Pi included)
+  --render <how>     auto (default): on the GPU where there is a usable one,
+                     else on the CPU; gpu: on the GPU even if it is emulated;
+                     cpu: on the CPU (or NOTGT_NDI_RENDER). --gpu and --cpu
+                     are short for the last two
+  --converter <c>    what turns GPU frames into NDI's: webgl (default), a
+                     hidden page with WebGL2; native, the Rust addon (Vulkan,
+                     Linux), with webgl after it if it cannot work
+                     (or NOTGT_NDI_CONVERTER)
 `;
+
+/** The exit code that asks bin/notgt-ndi.mjs to start again on the CPU. */
+export const EXIT_USE_CPU = 75;
 
 function parseArgs(argv) {
 	const args = {};
@@ -69,8 +78,16 @@ if (args.help || args.h) {
 const log = (line) => process.stdout.write(`[notgt-ndi] ${line}\n`);
 
 // --------------------------------------------------------------- chromium
+const render = args.cpu
+	? "cpu"
+	: args.gpu
+		? "gpu"
+		: String(args.render || process.env.NOTGT_NDI_RENDER || "auto");
 // Set before `ready`: they shape how Chromium starts.
-if (!args.gpu) app.disableHardwareAcceleration();
+if (render === "cpu") app.disableHardwareAcceleration();
+const converter = String(
+	args.converter || process.env.NOTGT_NDI_CONVERTER || "webgl",
+);
 const flags = app.commandLine;
 flags.appendSwitch("force-device-scale-factor", "1");
 flags.appendSwitch("autoplay-policy", "no-user-gesture-required");
@@ -82,6 +99,9 @@ flags.appendSwitch(
 	"disable-features",
 	"CalculateNativeWinOcclusion,MediaSessionService,HardwareMediaKeyHandling",
 );
+// Nothing here overrides Chromium's own choice of GPU APIs: forcing WebGPU
+// or Vulkan past its blocklist (--enable-unsafe-webgpu, Vulkan) hung the GPU
+// on Linux and took the desktop down with it.
 // The display and the sandbox switches have to be on the real command line:
 // bin/notgt-ndi.mjs puts them there.
 
@@ -105,6 +125,52 @@ async function start() {
 	let discovery = discoveryProblem();
 	if (discovery) log(discovery);
 	const { Output } = await import("./src/output.mjs");
+
+	let gpu = false;
+	if (render === "cpu") log("drawing on the CPU");
+	else {
+		const found = await probeGpu();
+		if (found.ok) {
+			gpu = true;
+			log(`drawing on the GPU: ${found.renderer}`);
+		} else if (render === "auto" && process.env.NOTGT_NDI_LAUNCHER) {
+			// Chromium emulating a GPU costs more than drawing on the CPU, and
+			// which one it is cannot change once it runs: start again.
+			log(`${found.why}: starting again on the CPU`);
+			app.exit(EXIT_USE_CPU);
+			return;
+		} else
+			log(
+				`${found.why}${render === "gpu" ? "" : " — --render cpu is cheaper here"}`,
+			);
+	}
+
+	// The GPU converters, best first; the CPU always comes after them.
+	let converters = ["webgl"];
+	let native;
+	if (gpu && converter === "native") {
+		converters = ["native", "webgl"];
+		const { loadNative, describeProbe } = await import("./src/native.mjs");
+		const found = loadNative();
+		// The GPU Chromium draws on — its frames are not another GPU's to
+		// read: the render node on Linux, the PCI ids elsewhere.
+		const renderNode = process.env.NOTGT_NDI_RENDER_NODE;
+		const { vendorId, deviceId } = await chromiumGpu();
+		if (vendorId)
+			log(
+				`Chromium draws on PCI 0x${vendorId.toString(16).padStart(4, "0")}:0x${deviceId.toString(16).padStart(4, "0")}`,
+			);
+		if (found.module) {
+			for (const line of describeProbe(
+				found.module.probe({ renderNode, vendorId, deviceId }),
+			))
+				log(line);
+			native = { module: found.module, renderNode, vendorId, deviceId };
+		} else {
+			log(`${found.why}; WebGL2 converts instead`);
+			native = { why: found.why };
+		}
+	}
 
 	let ndi;
 	let missing = "";
@@ -140,7 +206,7 @@ async function start() {
 	const controller = new Controller({
 		create: (config) => {
 			if (!ndi && !tryLoad()) throw new Error(missingText());
-			return new Output({ ndi, config, log });
+			return new Output({ ndi, config, log, gpu, converters, native });
 		},
 		log,
 	});
@@ -245,5 +311,63 @@ async function start() {
 			if (!stopping) setTimeout(tick, pollMs);
 		};
 		tick();
+	}
+}
+
+/** The PCI ids of the GPU Chromium draws on, where it says. */
+async function chromiumGpu() {
+	try {
+		const info = await app.getGPUInfo("basic");
+		const devices = info.gpuDevice ?? [];
+		const device = devices.find((d) => d.active) ?? devices[0];
+		return device?.vendorId
+			? { vendorId: device.vendorId, deviceId: device.deviceId }
+			: {};
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * Whether Chromium draws on a GPU worth using: composited on the GPU, and
+ * WebGL2 on real hardware rather than SwiftShader, llvmpipe or Windows'
+ * Basic Render Driver.
+ */
+async function probeGpu() {
+	const { isSoftwareRenderer } = await import("./src/gpu/shaders.mjs");
+	// Until the GPU process has started, the status says "software".
+	await app.getGPUInfo("basic").catch(() => {});
+	const window = new BrowserWindow({
+		show: false,
+		width: 16,
+		height: 16,
+		webPreferences: { offscreen: true, sandbox: true },
+	});
+	try {
+		await window.loadURL("about:blank");
+		const renderer = await window.webContents.executeJavaScript(`(() => {
+			const gl = new OffscreenCanvas(1, 1).getContext("webgl2");
+			if (!gl) return "";
+			const info = gl.getExtension("WEBGL_debug_renderer_info");
+			return String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+		})()`);
+		const compositing = String(app.getGPUFeatureStatus().gpu_compositing);
+		if (!compositing.startsWith("enabled"))
+			return {
+				ok: false,
+				why: `Chromium cannot use the GPU here (compositing: ${compositing})`,
+			};
+		if (!renderer) return { ok: false, why: "WebGL2 is not available" };
+		if (isSoftwareRenderer(renderer))
+			return {
+				ok: false,
+				renderer,
+				why: `the GPU is emulated in software (${renderer})`,
+			};
+		return { ok: true, renderer };
+	} catch (error) {
+		return { ok: false, why: `the GPU could not be checked: ${error.message}` };
+	} finally {
+		window.destroy();
 	}
 }

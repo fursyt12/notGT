@@ -7,6 +7,7 @@ import {
 	clip,
 	copyOpaque,
 	copyUnpremultiplied,
+	simdAvailable,
 	union,
 } from "../src/frame.mjs";
 import { frameRate } from "../src/ndi.mjs";
@@ -207,6 +208,55 @@ test("an opaque pair converts nothing", () => {
 	}));
 	assert.deepEqual([...buffer.subarray(0, 4)], [128, 128, 128, 255]);
 });
+
+/** Every premultiplied (alpha, channel) pair and some impossible ones, `width` pixels a row. */
+function everyPixel(width) {
+	const count = 256 * 256;
+	const height = Math.ceil(count / width);
+	const data = Buffer.alloc(width * height * 4);
+	for (let i = 0; i < count; i++) {
+		const alpha = i >> 8;
+		const channel = i & 255;
+		data[i * 4] = channel;
+		data[i * 4 + 1] = Math.min(255, (channel * 7) & 255);
+		data[i * 4 + 2] = 255 - channel;
+		data[i * 4 + 3] = alpha;
+	}
+	return { data, width, height };
+}
+
+test("SIMD runs here, as it does on every machine NDI runs on", () => {
+	assert.ok(simdAvailable, "convert.wasm did not load");
+});
+
+for (const alpha of [true, false]) {
+	test(`SIMD gives the loops' pixels to the bit (${alpha ? "alpha" : "opaque"})`, () => {
+		// 509 pixels a row: rows end in the middle of four, and the leftover
+		// pixels take convert.c's one-at-a-time path.
+		const { data, width, height } = everyPixel(509);
+		const whole = { x: 0, y: 0, width, height };
+		const simd = new FramePair(width, height, { alpha });
+		const loops = new FramePair(width, height, { alpha, simd: false });
+		assert.ok(simd.simd && !loops.simd);
+		// Whatever rectangle is asked for, with padding at the end of each row.
+		const read = (rect) => {
+			const stride = (rect.width + 3) * 4;
+			const out = Buffer.alloc(stride * rect.height, 0x5a);
+			for (let row = 0; row < rect.height; row++) {
+				const from = ((rect.y + row) * width + rect.x) * 4;
+				data.copy(out, row * stride, from, from + rect.width * 4);
+			}
+			return { data: out, stride };
+		};
+		assert.ok(simd.update(whole, read).equals(loops.update(whole, read)));
+		assert.ok(simd.update(whole, read).equals(loops.update(whole, read)));
+		// A rectangle lands in the same place in both.
+		for (let i = 0; i < 3; i++) {
+			const rect = { x: 3 + i, y: 5, width: 37, height: 11 };
+			assert.ok(simd.update(rect, read).equals(loops.update(rect, read)));
+		}
+	});
+}
 
 test("broadcast rates go out as n/1001, the rest as they are", () => {
 	assert.deepEqual(frameRate(29.97), {

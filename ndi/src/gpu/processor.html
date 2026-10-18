@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>notGT NDI GPU processor</title>
+	</head>
+	<body>
+		<script>
+			// Node's loader, not the page's: it resolves koffi and node: modules.
+			try {
+				require("./processor.mjs");
+			} catch (error) {
+				require("electron").ipcRenderer.send(
+					"failed",
+					`the GPU processor did not start: ${error.message}`,
+				);
+			}
+		</script>
+	</body>
+</html>

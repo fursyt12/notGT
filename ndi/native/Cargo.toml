@@ -1,0 +1,21 @@
+# The native half of the NDI sender: frames Chromium drew on the GPU are
+# converted there and handed to NDI without passing through JavaScript.
+#
+#   core/  the GPU backends, the NDI binding, the CPU reference conversion
+#   node/  the Node-API addon Electron's main process loads (src/native.mjs)
+#
+# Built by `npm run build:native` (scripts/build-native.mjs).
+[workspace]
+members = ["core", "node"]
+resolver = "2"
+
+[workspace.package]
+version = "0.12.7"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

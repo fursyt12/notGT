@@ -31,20 +31,56 @@ little as it can:
   so whatever is on air is there the moment Resolume connects.
 - **Only what changed is touched.** Chromium paints premultiplied alpha and NDI wants it
   straight; the conversion is done only inside the rectangle that changed — a lower third
-  sliding in costs its own box, not the two million pixels around it.
+  sliding in costs its own box, not the two million pixels around it. The conversion runs
+  in WebAssembly SIMD, four pixels at a time — about three times quicker than plain
+  JavaScript, with nothing to compile; where it cannot run, the plain loops do.
+- **Never more frames than the out's rate.** When Chromium paints faster than asked, the
+  paints in between are merged and only the newest is converted and sent.
 - **NDI works on its own threads.** Frames are handed over without waiting; compression
   and sending run inside the NDI library while the next frame is being drawn.
-- **No GPU needed.** Rendering is on the CPU by default, which is the quicker way for
-  offscreen pages on most machines and the Pi. `--gpu` is there for the rest.
+- **The GPU where there is a real one.** `--render auto` (the default) draws on the GPU
+  when Chromium gets a real one, and on the CPU otherwise — a GPU Chromium can only
+  emulate costs more than the CPU. On Linux with no display the sender starts a headless
+  Wayland compositor (sway or weston) on the GPU's render node to get one. With the GPU
+  a frame stays a texture and is converted to NDI's own 4:2:2 there: by WebGL2, or by
+  the native converter (below).
+- **Frames go out with Chromium's clock.** Chromium paints at 60 fps every 16 666 µs,
+  not every 1000/60 ms; the sender's clock follows the paints, so a frame goes out as
+  soon as it is painted rather than drifting against them (which once cost up to a frame
+  of latency, round and round every seven minutes, and a dropped frame each time).
 
 Measured on an x86-64 desktop (Linux, a 1920×1080 page with something moving all the
 time, sent at 30 fps to one receiver): the sender took about a quarter of one CPU core,
 of which the sender's own work was about 0.5% — the rest is NDI compressing the picture.
 With nobody receiving it is next to nothing; a still picture to a receiver costs NDI's
-compression of it and hardly anything else.
+compression of it and hardly anything else. A page that moves all over (a full-screen
+animated gradient, 1920×1080 at 30 fps) is the most there is: about 0.9 of a core,
+40% of it Chromium drawing the page, 15% NDI, 17% converting.
 
 So what decides the cost is **the size and the frame rate of the picture**, and both are
 set per out in the dashboard. Half the size is a quarter of the work.
+
+### The native converter (beta)
+
+`--converter native` (or `NOTGT_NDI_CONVERTER=native`) converts each frame in the
+sender's own process, in Rust (`native/`): Chromium's frame is imported on the GPU as it
+is — a dmabuf on Linux, a D3D11 texture on Windows — and a Vulkan compute shader writes
+NDI's 4:2:2 straight into memory NDI reads: one read back, no copy by the CPU, no extra
+process. Measured at 1080p30 on a Radeon 780M (Linux): 41.6% of a core for a moving
+lower third against 74.2% with WebGL2, 46.4% against 82.2% full screen, about 160 MB
+less memory per out; 30 minutes at 1080p60 stayed at 60 fps, colours right, memory flat.
+
+Before an out goes on air the converter turns a test picture into NDI's format and checks
+it against the CPU, byte for byte (the arithmetic is in integers: every GPU gives the
+same bytes). When it cannot work — no Vulkan, a GPU that cannot import Chromium's
+frames, or not the GPU Chromium draws on — the sender says why, in its log and under the
+out in the dashboard, and WebGL2 converts instead (then the CPU). It never changes how
+Chromium itself draws: forcing Chromium onto WebGPU or Vulkan past its GPU blocklist
+hung GPUs, and the sender does not do it.
+
+Built for Linux x86-64 and Windows x64 (`npm run build:native`, needs Rust); elsewhere
+WebGL2 converts. The default stays WebGL2 until the native one has been measured on more
+machines — see [Measuring it on your machine](#measuring-it-on-your-machine).
 
 ## What you need
 
@@ -114,7 +150,8 @@ needs no key, unless `apiToken` is set — then `--token` is the `apiToken`.
 | `--token <key>`   | —                       | the senders' key or the `apiToken` (also `NOTGT_TOKEN`)                  |
 | `--id <name>`     | the host name           | how this sender is named in the dashboard                                |
 | `--poll <ms>`     | `2000`                  | how often it asks the server what to send                                |
-| `--gpu`           | off                     | render on the GPU instead of the CPU                                     |
+| `--render <how>`  | `auto`                  | `auto`: the GPU where there is a real one, else the CPU; `gpu`; `cpu` (also `NOTGT_NDI_RENDER`, `--gpu`, `--cpu`) |
+| `--converter <c>` | `webgl`                 | with the GPU: `webgl`, or `native` (beta, above) — also `NOTGT_NDI_CONVERTER` |
 | `--url <page>`    | —                       | send this one page instead of asking a server (any page, not just notGT) |
 | `--name <source>` | `notGT`                 | with `--url`: the NDI name                                               |
 | `--size <WxH>`    | `1920x1080`             | with `--url`: the size the page lays out at                              |
@@ -265,10 +302,25 @@ is not configured correctly`) — `npm start` turns Chromium's sandbox off by it
   where it cannot work (as root, in a container); elsewhere add `--no-sandbox`, or
   `sudo chown root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 …`.
 
+## Measuring it on your machine
+
+```bash
+node scripts/diagnose.mjs            # both converters, full screen and a lower third, 1080p60
+node scripts/diagnose.mjs --long     # … and ten more minutes of the native one
+```
+
+It measures the converters through real NDI receivers — CPU per process, memory, frame
+rate and intervals, latency, colours and alpha, the time a conversion takes — and puts
+that, with the machine's GPUs, drivers, Vulkan devices and versions, into one zip on the
+Desktop to send. Nothing personal goes in: the computer's and the user's names, the home
+folder and network addresses are replaced. In the Windows package it is
+**NDI test - native converter.cmd**; **notGT - native NDI converter.cmd** starts notGT
+with the native converter. `scripts/bench.mjs` is the single measurement underneath.
+
 ## Tests
 
 ```bash
-npm test                                        # frame conversion, the sync with the server
+npm test                                        # frame conversion, the frame clock, the sync with the server
 NOTGT_BASE=http://127.0.0.1:9090 node ../bundles/notGT/scripts/e2e-ndi.mjs   # the server's side
 ```
 

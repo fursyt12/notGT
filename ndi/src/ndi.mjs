@@ -14,6 +14,10 @@ import koffi from "koffi";
 export const FOURCC_BGRA = fourcc("BGRA");
 /** The same layout, with the promise that every alpha is 255. */
 export const FOURCC_BGRX = fourcc("BGRX");
+/** 4:2:2 YCbCr, U Y0 V Y1 for each two pixels: what NDI compresses, as it is. */
+export const FOURCC_UYVY = fourcc("UYVY");
+/** UYVY, then a plane of one alpha byte a pixel. */
+export const FOURCC_UYVA = fourcc("UYVA");
 
 const FRAME_PROGRESSIVE = 1;
 const TIMECODE_SYNTHESIZE = 0x7fffffffffffffffn;
@@ -312,19 +316,32 @@ export class NdiSender {
 	/**
 	 * Hands a frame over and returns at once; compression and sending run on
 	 * NDI's own threads. `buffer` must not change until the next call.
+	 * `format` is "bgra" (BGRA, or BGRX when `opaque`), "uyvy" or "uyva".
 	 */
-	sendAsync(buffer, width, height, { fps = 30, opaque = false } = {}) {
+	sendAsync(
+		buffer,
+		width,
+		height,
+		{ fps = 30, opaque = false, format = "bgra" } = {},
+	) {
 		if (!this.handle) return;
+		const yuv = format === "uyvy" || format === "uyva";
 		this.fn.sendVideoAsync(this.handle, {
 			xres: width,
 			yres: height,
-			FourCC: opaque ? FOURCC_BGRX : FOURCC_BGRA,
+			FourCC: yuv
+				? format === "uyva"
+					? FOURCC_UYVA
+					: FOURCC_UYVY
+				: opaque
+					? FOURCC_BGRX
+					: FOURCC_BGRA,
 			...frameRate(fps),
 			picture_aspect_ratio: width / height,
 			frame_format_type: FRAME_PROGRESSIVE,
 			timecode: TIMECODE_SYNTHESIZE,
 			p_data: koffi.address(buffer),
-			line_stride_in_bytes: width * 4,
+			line_stride_in_bytes: yuv ? width * 2 : width * 4,
 			p_metadata: null,
 			timestamp: 0n,
 		});
@@ -388,17 +405,19 @@ export class NdiReceiver {
 
 	/**
 	 * The next video frame, or `null` when none came in time. `read` gets the
-	 * frame while its pixels are still valid.
+	 * frame while its pixels are still valid. `copy: false` hands it NDI's own
+	 * memory, valid only inside `read` — no copy of the whole frame.
 	 */
-	captureVideo(timeoutMs, read) {
+	captureVideo(timeoutMs, read, { copy = true } = {}) {
 		const frame = {};
 		const type = this.fn.recvCapture(this.handle, frame, null, null, timeoutMs);
 		if (type !== FRAME_TYPE_VIDEO) return null;
 		try {
 			const stride = frame.line_stride_in_bytes;
-			const pixels = Buffer.from(
-				koffi.decode(frame.p_data, "uint8_t", stride * frame.yres),
-			);
+			const bytes = stride * frame.yres;
+			const pixels = copy
+				? Buffer.from(koffi.decode(frame.p_data, "uint8_t", bytes))
+				: Buffer.from(koffi.view(frame.p_data, bytes));
 			return read({
 				width: frame.xres,
 				height: frame.yres,

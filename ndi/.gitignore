@@ -1,0 +1,4 @@
+
+# The native converter: Cargo builds here; the addon is built per machine
+native/target/
+native/*.node

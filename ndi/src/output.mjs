@@ -1,12 +1,20 @@
 /**
  * One out as one NDI source: the out page rendered in an offscreen window,
- * each painted frame handed to NDI.
+ * each painted frame handed to NDI by a sink. When Chromium draws on the GPU
+ * the frame stays a texture there, converted to NDI's own format by:
+ *  - `NativeSink` (native-sink.mjs): the native addon, in this process;
+ *  - `GpuSink` (gpu/sink.mjs): a hidden page, with WebGL2;
+ * and otherwise, or when no GPU sink works, `CpuSink` (cpu-sink.mjs): the
+ * frame comes as a bitmap, converted where it changed.
+ *
+ * The GPU sinks are tried in the order asked for, and the CPU one always
+ * comes last. Giving one up is never quiet: the log says which, why, and
+ * what converts instead, and so does the dashboard (the out's warning).
  *
  * What it costs is kept to what is seen:
  *  - Chromium paints only when something on the page moves, so a still title
  *    or an empty out costs no drawing and no converting; the last frame is
  *    sent again at the out's rate, because receivers want a steady one;
- *  - only the changed rectangle of a frame is converted (see `frame.mjs`);
  *  - with nobody receiving the source, the page is painted once a second at
  *    most and nothing is converted or sent — it keeps running, so a title on
  *    air is there the moment someone connects. (Pausing painting outright
@@ -15,12 +23,20 @@
  *  - NDI compresses and sends on its own threads.
  */
 import { BrowserWindow } from "electron";
-import { FramePair } from "./frame.mjs";
+import { CpuSink } from "./cpu-sink.mjs";
+import { GpuSink } from "./gpu/sink.mjs";
+import { NativeSink } from "./native-sink.mjs";
 
 const WATCH_MS = 500;
 /** Painting rate while nobody receives: the lowest Chromium takes. */
 const IDLE_FPS = 1;
 const RETRY_MS = 3000;
+/** What each converter is called in the log and the dashboard. */
+const LABELS = {
+	native: "the native GPU converter",
+	webgl: "WebGL2 on the GPU",
+	cpu: "the CPU",
+};
 
 export class Output {
 	/**
@@ -28,8 +44,13 @@ export class Output {
 	 * @param {import("./ndi.mjs").Ndi} options.ndi
 	 * @param {import("./controller.mjs").OutputConfig} options.config
 	 * @param {(line: string) => void} options.log
+	 * @param {boolean} [options.gpu] Chromium draws on the GPU: keep frames there
+	 * @param {string[]} [options.converters] GPU converters to try, best
+	 *   first: "native", "webgl"
+	 * @param {{ module?: any, renderNode?: string, vendorId?: number, deviceId?: number, why?: string }} [options.native]
+	 *   the native addon, or why there is none
 	 */
-	constructor({ ndi, config, log }) {
+	constructor({ ndi, config, log, gpu = false, converters = ["webgl"], native }) {
 		this.ndi = ndi;
 		this.config = config;
 		this.log = log;
@@ -37,12 +58,7 @@ export class Output {
 		this.error = undefined;
 		this.connections = 0;
 		this.watching = false;
-		this.sent = 0;
 		this.fps = 0;
-		this.frames = new FramePair(config.width, config.height, {
-			alpha: config.alpha,
-		});
-		this.sender = ndi.createSender(config.ndiName, { groups: config.groups });
 		this.window = undefined;
 		this.timers = [];
 		this.stopped = false;
@@ -63,8 +79,62 @@ export class Output {
 		this.shrink = 1;
 		/** Said in the dashboard when the picture cannot come out at its size. */
 		this.warning = undefined;
-		/** Time spent in the paint handler: copying, converting, handing over. */
-		this.busyMs = 0;
+		this.native = native;
+		/** Converters still to try, best first; the CPU is always last. */
+		this.chain = gpu ? [...converters] : [];
+		/** Why a converter was given up, for the dashboard. */
+		this.renderNote = undefined;
+		this.sink = this.nextSink();
+	}
+
+	/** The first converter left that starts; the CPU when none does. */
+	nextSink() {
+		while (this.chain.length) {
+			const kind = this.chain.shift();
+			try {
+				const sink = this.makeSink(kind);
+				this.sinkKind = kind;
+				return sink;
+			} catch (error) {
+				this.giveUp(kind, error.message);
+			}
+		}
+		this.sinkKind = "cpu";
+		return new CpuSink({ ndi: this.ndi, config: this.config });
+	}
+
+	makeSink(kind) {
+		const onFail = (reason) => this.fallBack(reason);
+		if (kind === "native") {
+			if (!this.native?.module)
+				throw new Error(this.native?.why ?? "the native converter is not loaded");
+			return new NativeSink({
+				native: this.native.module,
+				config: this.config,
+				ndiFile: this.ndi.file,
+				gpu: this.native,
+				log: this.log,
+				onFail,
+			});
+		}
+		if (kind === "webgl")
+			return new GpuSink({
+				config: this.config,
+				ndiFile: this.ndi.file,
+				log: this.log,
+				onFail,
+			});
+		throw new Error(`there is no converter called ${kind}`);
+	}
+
+	/** Says that `kind` is given up, why, and what comes next. */
+	giveUp(kind, reason) {
+		const next = LABELS[this.chain[0] ?? "cpu"];
+		const label = LABELS[kind] ?? kind;
+		this.log(
+			`${this.config.ndiName}: ${label} cannot be used: ${reason}; converting with ${next} instead`,
+		);
+		this.renderNote = `${label} cannot be used here (${reason}); converting with ${next}`;
 	}
 
 	start() {
@@ -72,14 +142,14 @@ export class Output {
 		let lastCount = 0;
 		this.timers.push(
 			setInterval(() => {
-				this.fps = (this.sent - lastCount) / 2;
-				lastCount = this.sent;
+				const sent = this.sink.sent;
+				this.fps = Math.max(0, sent - lastCount) / 2;
+				lastCount = sent;
 				if (this.watching) {
 					this.debug(
-						`${this.config.ndiName}: ${this.fps} fps, ${this.frames.converted} px converted, ${(this.busyMs / 20).toFixed(1)}% of a core in paint, ${this.connections} receiver(s)`,
+						`${this.config.ndiName}: ${this.fps} fps on ${this.sink.name}, ${this.sink.report(2)}, ${this.connections} receiver(s)`,
 					);
 				}
-				this.busyMs = 0;
 			}, 2000),
 		);
 		this.openWindow();
@@ -105,7 +175,10 @@ export class Output {
 			enableLargerThanScreen: true,
 			paintWhenInitiallyHidden: true,
 			webPreferences: {
-				offscreen: { useSharedTexture: false, deviceScaleFactor: this.scale },
+				offscreen: {
+					useSharedTexture: this.sink.shared,
+					deviceScaleFactor: this.scale,
+				},
 				zoomFactor: zoom,
 				backgroundThrottling: false,
 				autoplayPolicy: "no-user-gesture-required",
@@ -122,14 +195,17 @@ export class Output {
 		);
 		contents.setAudioMuted(true);
 
-		contents.on("paint", (_event, dirty, image) => {
-			if (this.window === window) this.paint(dirty, image);
+		contents.on("paint", (event, dirty, image) => {
+			if (this.window === window && !this.stopped)
+				this.paint(event, dirty, image);
+			else event.texture?.release();
 		});
 		contents.on("did-finish-load", () => {
 			// Set again once loaded: at 2× and up Chromium drops the zoom it was given.
 			contents.setZoomFactor(zoom);
 			this.state = this.watching ? "sending" : "idle";
 			this.error = undefined;
+			this.sink.loaded?.();
 		});
 		contents.on(
 			"did-fail-load",
@@ -151,10 +227,9 @@ export class Output {
 	 * help either, the picture goes out at the size it comes, and the
 	 * dashboard says why.
 	 */
-	checkSize(image) {
+	checkSize({ width, height }) {
 		if (this.sizeChecked) return;
 		this.sizeChecked = true;
-		const { width, height } = image.getSize();
 		const want = this.config;
 		const expectWidth = Math.round(want.width * this.shrink);
 		const expectHeight = Math.round(want.height * this.shrink);
@@ -226,15 +301,13 @@ export class Output {
 	watch() {
 		if (this.stopped || !this.window) return;
 		const contents = this.window.webContents;
-		this.connections = this.sender.connections(0);
+		this.connections = this.sink.connections();
 		if (this.connections > 0 && !this.watching) {
 			this.debug(
 				`${this.config.ndiName}: ${this.connections} receiver(s), painting`,
 			);
 			this.watching = true;
-			this.frames.invalidate();
-			// The last frame sent may be from long ago; the keepalive waits for a fresh one.
-			this.frames.current = null;
+			this.sink.setWatching(true);
 			// Chromium paints at whole rates; 29.97 is painted at 30 and sent as 30000/1001.
 			contents.setFrameRate(Math.round(this.config.fps));
 			contents.invalidate();
@@ -242,49 +315,31 @@ export class Output {
 		} else if (this.connections === 0 && this.watching) {
 			this.debug(`${this.config.ndiName}: no receivers, resting`);
 			this.watching = false;
-			clearTimeout(this.repeat);
+			this.sink.setWatching(false);
 			contents.setFrameRate(IDLE_FPS);
 			if (this.state === "sending") this.state = "idle";
 		}
 	}
 
-	paint(dirty, image) {
-		const began = performance.now();
-		this.handle(dirty, image);
-		this.busyMs += performance.now() - began;
-	}
-
-	handle(dirty, image) {
-		if (this.stopped || !this.window) return;
+	paint(event, dirty, image) {
+		const texture = event.texture;
+		if (texture) {
+			const info = texture.textureInfo;
+			this.checkSize(info.visibleRect ?? info.codedSize);
+			if (this.sink.shared) this.sink.paintTexture(texture);
+			else texture.release();
+			return;
+		}
+		// With shared textures, an invalidate() comes back as a paint with no
+		// picture at all: nothing to do with it.
+		if (this.sink.shared) return;
 		if (image.isEmpty()) {
 			// The page has no picture yet.
 			if (this.watching) this.repaintSoon();
 			return;
 		}
-		this.checkSize(image);
-		if (!this.watching) return;
-		const size = image.getSize();
-		if (
-			size.width !== this.frames.width ||
-			size.height !== this.frames.height
-		) {
-			// The window came out another size than asked; follow the picture.
-			this.sender.flush();
-			this.frames = new FramePair(size.width, size.height, {
-				alpha: this.config.alpha,
-			});
-		}
-		const full = this.frames.width;
-		const buffer = this.frames.update(dirty, (rect) => {
-			const whole =
-				rect.x === 0 &&
-				rect.y === 0 &&
-				rect.width === full &&
-				rect.height === this.frames.height;
-			const data = (whole ? image : image.crop(rect)).toBitmap();
-			return { data, stride: rowBytes(data, rect) };
-		});
-		this.send(buffer);
+		this.checkSize(image.getSize());
+		if (!this.sink.shared) this.sink.paint(dirty, image);
 	}
 
 	repaintSoon() {
@@ -295,44 +350,20 @@ export class Output {
 		}, 100);
 	}
 
-	/** A newly painted frame. */
-	send(buffer) {
-		this.transmit(buffer);
-		// Half a frame of grace, so a paint a little late is not sent twice.
-		this.repeatSoon(1.5);
-	}
-
 	/**
-	 * Receivers want a steady frame rate: OBS, Resolume and NDI Studio Monitor
-	 * take a source that sends one frame a second for a 1 fps source, and
-	 * stutter when it starts to move. So while someone watches and nothing is
-	 * painted, the last frame goes out again at the out's rate — NDI compresses
-	 * it again, nothing is drawn or converted.
+	 * The converter could not go on for this out: the same out, with the
+	 * next one. The NDI source goes down and comes back under the same name.
 	 */
-	repeatSoon(frames) {
-		clearTimeout(this.repeat);
-		if (this.stopped || !this.watching) return;
-		const frameMs = 1000 / this.config.fps;
-		// Each repeat is due a frame after the last one was due, not after it
-		// ran: timers run late, and a late timer must not slow the rate down.
-		this.repeatDue =
-			(frames === 1 ? this.repeatDue : performance.now()) + frames * frameMs;
-		this.repeat = setTimeout(
-			() => {
-				if (this.stopped || !this.watching || !this.frames.current) return;
-				this.transmit(this.frames.current);
-				this.repeatSoon(1);
-			},
-			Math.max(0, this.repeatDue - performance.now()),
-		);
-	}
-
-	transmit(buffer) {
-		this.sender.sendAsync(buffer, this.frames.width, this.frames.height, {
-			fps: this.config.fps,
-			opaque: !this.config.alpha,
-		});
-		this.sent++;
+	async fallBack(reason) {
+		if (this.stopped || this.fallingBack || !this.sink.shared) return;
+		this.fallingBack = true;
+		this.giveUp(this.sinkKind, reason);
+		await this.sink.stop();
+		this.fallingBack = false;
+		if (this.stopped) return;
+		this.sink = this.nextSink();
+		this.sink.setWatching(this.watching);
+		this.openWindow();
 	}
 
 	status() {
@@ -342,10 +373,16 @@ export class Output {
 			state: this.state,
 			connections: this.connections,
 			fps: Math.round(this.fps * 10) / 10,
-			width: this.frames.width,
-			height: this.frames.height,
+			...this.sink.size(),
+			render: this.sink.kind,
 			...(this.error ? { error: this.error } : {}),
-			...(this.warning ? { warning: this.warning } : {}),
+			...(this.warning || this.renderNote
+				? {
+						warning: [this.warning, this.renderNote]
+							.filter(Boolean)
+							.join("; "),
+					}
+				: {}),
 		};
 	}
 
@@ -354,16 +391,8 @@ export class Output {
 		for (const timer of this.timers) clearInterval(timer);
 		clearTimeout(this.retry);
 		clearTimeout(this.repaint);
-		clearTimeout(this.repeat);
 		if (this.window && !this.window.isDestroyed()) this.window.destroy();
 		this.window = undefined;
-		// Destroying the sender waits for NDI to let go of the last frame.
-		this.sender.destroy();
+		return this.sink.stop();
 	}
-}
-
-/** Bytes per row of a bitmap that holds `rect`, padding included. */
-function rowBytes(data, rect) {
-	if (rect.height <= 1) return rect.width * 4;
-	return (data.length - rect.width * 4) / (rect.height - 1);
 }
