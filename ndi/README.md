@@ -295,6 +295,11 @@ it). `--ips 10.0.0.5` reaches a machine that mDNS does not.
   smaller, and says so. Lower the display scaling, or choose a smaller picture size in
   the NDI settings. On Linux this does not happen: there the sender always draws with no
   display (`NOTGT_NDI_DISPLAY=1` makes it use the desktop's).
+- **“Electron ended at once with code -1”** (Windows) — Electron on Windows refuses a
+  command line in which a switch comes after something that looks like a URL. The
+  sender writes its own as `--name=value`; a switch added by hand has to be too
+  (`--url=about:blank`, not `--url about:blank` before another switch). In 0.14.0 the
+  sender's own command line did this, and it never started on Windows.
 - **“No NDI sender has picked it up yet”** — no sender reports to this server: it is not
   running, or it follows another address. Its own output says which.
 - **Chromium does not start on Linux** (`The SUID sandbox helper binary was found, but

@@ -13,6 +13,10 @@
  * When the app finds the GPU unusable it ends with EXIT_USE_CPU, and is
  * started again on the CPU.
  *
+ * Every `--name value` reaches Electron as `--name=value` (src/args.mjs):
+ * on Windows Electron quits at once, with -1, when a switch follows anything
+ * that looks like a URL — `--server http://… --render auto` did.
+ *
  * Every argument is passed on; see `--help`.
  */
 import { spawn } from "node:child_process";
@@ -20,6 +24,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { electronArgs } from "../src/args.mjs";
 import { startCompositor } from "../src/display.mjs";
 
 const require = createRequire(import.meta.url);
@@ -91,6 +96,9 @@ if (process.platform === "linux") {
 	// and the like — are noise; NOTGT_NDI_DEBUG lets them through. Elsewhere
 	// they are what there is to read when it does not start.
 	if (!process.env.NOTGT_NDI_DEBUG) common.push("--log-level=3");
+} else if (process.env.NOTGT_NDI_DEBUG) {
+	// Windows and macOS keep Chromium's messages to themselves unless asked.
+	common.push("--enable-logging=stderr");
 }
 /** Where Linux draws is ours to choose: not when told to keep the desktop. */
 const ownDisplay =
@@ -127,7 +135,13 @@ async function launch(how) {
 		}
 		if (!compositor) args.push(...HEADLESS);
 	}
-	child = spawn(electron, [...args, appDir, ...user, "--render", mode], {
+	const command = [
+		...args,
+		appDir,
+		...electronArgs([...user, "--render", mode]),
+	];
+	if (process.env.NOTGT_NDI_DEBUG) say(`starting ${electron} ${command.join(" ")}`);
+	child = spawn(electron, command, {
 		stdio: "inherit",
 		env: childEnv,
 	});
@@ -147,8 +161,14 @@ async function launch(how) {
 		if (code && Date.now() - startedAt < 10_000) {
 			// Gone before it could say anything itself: at least say that.
 			const hex = (code >>> 0).toString(16).toUpperCase();
+			// -1 at once on Windows: Electron refused its command line, as it
+			// does when a switch follows something that looks like a URL.
+			const refused =
+				process.platform === "win32" && code >>> 0 === 0xffffffff
+					? " — Electron on Windows refuses a command line with a switch after a URL-like argument; if one was added by hand, write it as --name=value"
+					: "";
 			process.stderr.write(
-				`[notgt-ndi] Electron ended at once with code ${code} (0x${hex}); NOTGT_NDI_DEBUG=1 shows Chromium's own messages\n`,
+				`[notgt-ndi] Electron ended at once with code ${code} (0x${hex})${refused}; NOTGT_NDI_DEBUG=1 shows Chromium's own messages\n`,
 			);
 		}
 		process.exitCode = code ?? (signal ? 1 : 0);

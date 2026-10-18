@@ -99,14 +99,22 @@ async function main() {
 		{ cwd: root, stdio: ["ignore", "pipe", "pipe"], env: process.env },
 	);
 	const senderLog = [];
+	/** Everything the sender and its Electron said, for when it does not start. */
+	const rawLog = [];
 	for (const stream of [sender.stdout, sender.stderr]) {
 		stream.setEncoding("utf8");
+		let partial = "";
 		stream.on("data", (chunk) => {
-			for (const line of chunk.split("\n"))
-				if (line.startsWith("[notgt-ndi]")) {
-					senderLog.push(line.slice(12));
-					if (args.log) console.error(line);
-				}
+			const lines = (partial + chunk).split(/\r?\n/);
+			partial = lines.pop();
+			for (const line of lines) {
+				if (!line) continue;
+				rawLog.push(line);
+				if (rawLog.length > 500) rawLog.shift();
+				if (line.startsWith("[notgt-ndi]")) senderLog.push(line.slice(12));
+				// --log: all of it, Chromium's own messages included.
+				if (args.log) console.error(line);
+			}
 		});
 	}
 	const stopSender = () => {
@@ -145,7 +153,7 @@ async function main() {
 	const sending = await server.untilSending(options.outs, 60_000);
 	if (!sending) {
 		console.error(
-			`The sender did not start sending in time. It said:\n${senderLog.join("\n")}`,
+			`The sender did not start sending in time${sender.exitCode !== null ? ` (it ended with code ${sender.exitCode})` : ""}. It said:\n${rawLog.join("\n")}`,
 		);
 		process.exit(1);
 	}
