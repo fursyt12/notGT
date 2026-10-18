@@ -22,7 +22,7 @@ import {
 	type ActiveTitleState,
 	type VariableSelection,
 } from "../shared/types";
-import { cropBox } from "../shared/crop";
+import { windowBox } from "../shared/crop";
 import {
 	ServerClock,
 	type Timer,
@@ -59,7 +59,7 @@ interface Instance {
 	/** Play counter; a change restarts the entrance animation. */
 	trigger: number;
 	data: TitleData;
-	/** Visible window inside the design box, or `null` for the whole box. */
+	/** Visible window (crop or scaled bounds) in design px, or `null` for the whole box. */
 	crop: ItemCrop | null;
 	/** Design size of the out, for placing a crop window (px -> percent). */
 	outW: number;
@@ -220,7 +220,7 @@ function computeInstances(out: Out | undefined): Instance[] {
 			scale: item.scale ?? 1,
 			trigger: runtimeRep.value?.triggers?.[`${out.id}:${item.id}`] ?? 0,
 			data: live(baseData()),
-			crop: item.crop ? cropBox(item, template) : null,
+			crop: item.crop || item.bounds ? windowBox(item, template) : null,
 			outW: out.width,
 			outH: out.height,
 		});
@@ -302,7 +302,8 @@ function sortLayers(template: TitleTemplate): TitleTemplate["layers"] {
 }
 
 /**
- * Places a slot on the out, with its crop window when it has one.
+ * Places a slot on the out, with its crop window (or scaled bounds) when it has
+ * one.
  *
  * Without a crop the positioner *is* the animation box: `x%`/`y%` from the
  * stage and the template's design size, scaled by `scale`.
@@ -314,6 +315,10 @@ function sortLayers(template: TitleTemplate): TitleTemplate["layers"] {
  * The offset is converted from design px to percent of the out, which is the
  * unit `left`/`top` are expressed in (`scale` is in the positioner's transform
  * and does not affect its own layout position).
+ *
+ * Scaled bounds take the same path. They may start left of or above the box:
+ * the offset is negative then, and the animator is pushed in rather than pulled
+ * back, so the animation still does not move.
  */
 function applyPlacement(slot: Slot, inst: Instance): void {
 	slot.positioner.style.transform = `scale(${inst.scale})`;

@@ -342,6 +342,14 @@ export interface OutItem {
 	/** Hides everything outside this window. Absent = the whole box is shown. */
 	crop?: ItemCrop;
 	/**
+	 * The animation's box, resized with the Scale Bounds tool: the area it is
+	 * rendered in, in design px from the top-left of the design box. Unlike a
+	 * crop it may reach past the design box on any side. The content keeps its
+	 * size and place, only the area it is shown in changes. Set instead of
+	 * `crop`, never with it. Absent = the design box (see `shared/crop.ts`).
+	 */
+	bounds?: ItemCrop;
+	/**
 	 * "Show it and keep it": while true the placement stays on air until the
 	 * toggle is switched off — no `holdMs` timeout, no `once`/`loop` schedule,
 	 * and it wins over `enabled`. This is the operator's live on/off toggle.

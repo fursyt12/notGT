@@ -474,6 +474,46 @@ async function main() {
 				uncroppedStyles.animatorLeft === "",
 			JSON.stringify(uncroppedStyles),
 		);
+
+		// --- 4c3. scaled bounds resize the box, not the animation ---------
+		// Bounds may reach past the design box: the window starts above and to
+		// the left of it, so the animator is pushed in instead of pulled back,
+		// and the scale stays what it was.
+		await api("PATCH", `/api/outs/main/items/${cropped.item.id}`, {
+			bounds: { x: -192, y: -108, width: 2304, height: 1296 },
+		});
+		await sleep(300);
+		const boundedStyles = await page.evaluate(() => {
+			const layer = document.querySelector('.notgt-layer[data-layer-id="p_marker"]');
+			const positioner = layer.closest(".notgt-slot");
+			const animator = layer.closest(".notgt-animator");
+			return {
+				left: positioner.style.left,
+				top: positioner.style.top,
+				width: positioner.style.width,
+				height: positioner.style.height,
+				overflow: positioner.style.overflow,
+				transform: positioner.style.transform,
+				animatorLeft: animator.style.left,
+				animatorTop: animator.style.top,
+			};
+		});
+		check(
+			"scaled bounds grow the placement box past the design box",
+			boundedStyles.left === "20%" &&
+				boundedStyles.top === "20%" &&
+				boundedStyles.width === "2304px" &&
+				boundedStyles.height === "1296px" &&
+				boundedStyles.overflow === "hidden",
+			JSON.stringify(boundedStyles),
+		);
+		check(
+			"scaled bounds leave the animation at its size and place",
+			boundedStyles.transform === "scale(0.5)" &&
+				boundedStyles.animatorLeft === "192px" &&
+				boundedStyles.animatorTop === "108px",
+			JSON.stringify(boundedStyles),
+		);
 		await api("DELETE", `/api/outs/main/items/${cropped.item.id}`);
 		await api("DELETE", "/api/templates/e2e-placement");
 		await api("POST", "/api/titles/hide", {});

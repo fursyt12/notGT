@@ -10,6 +10,12 @@
  * The rectangle is stored in template design pixels and is always normalized
  * against the template's current size: a crop older than the template, or one
  * dragged a pixel past an edge, still yields a sane box.
+ *
+ * Scaled bounds are the other kind of window: the animation's box itself made
+ * bigger or smaller (the Scale Bounds tool). They are the same rectangle in the
+ * same px, but free to reach past the design box, so a box grown to the right
+ * shows what the animation draws there. Both end up as the one window the out
+ * page and the canvas clip at (`windowBox`).
  */
 import type { ItemCrop, OutItem, TitleTemplate } from "./types";
 
@@ -36,9 +42,12 @@ export function hasCrop(item: OutItem): boolean {
  * or the whole box when it has none.
  */
 export function cropBox(item: OutItem, template: TitleTemplate): ItemCrop {
+	return item.crop ? clampCrop(item.crop, template) : fullCrop(template);
+}
+
+/** A window clamped into the template box, the way a crop is kept. */
+export function clampCrop(crop: ItemCrop, template: TitleTemplate): ItemCrop {
 	const full = fullCrop(template);
-	const crop = item.crop;
-	if (!crop) return full;
 	const x = clamp(crop.x, 0, full.width - MIN_CROP_PX);
 	const y = clamp(crop.y, 0, full.height - MIN_CROP_PX);
 	return {
@@ -49,19 +58,39 @@ export function cropBox(item: OutItem, template: TitleTemplate): ItemCrop {
 	};
 }
 
+/**
+ * The window a placement is drawn in: its scaled bounds when it has them, else
+ * its crop, else the whole box. Bounds only keep a minimum size; where they sit
+ * is up to the operator.
+ */
+export function windowBox(item: OutItem, template: TitleTemplate): ItemCrop {
+	const bounds = item.bounds;
+	if (!bounds) return cropBox(item, template);
+	const at = (value: number) => (Number.isFinite(value) ? value : 0);
+	return {
+		x: at(bounds.x),
+		y: at(bounds.y),
+		width: clamp(bounds.width, MIN_CROP_PX, Number.MAX_SAFE_INTEGER),
+		height: clamp(bounds.height, MIN_CROP_PX, Number.MAX_SAFE_INTEGER),
+	};
+}
+
 /** Rounded to 0.01 design px — the precision the editor writes. */
 export function roundCrop(crop: ItemCrop): ItemCrop {
 	const at = (value: number) => Math.round(value * 100) / 100;
 	return { x: at(crop.x), y: at(crop.y), width: at(crop.width), height: at(crop.height) };
 }
 
-/** True when the window covers the whole box, i.e. there is nothing to clip. */
+/**
+ * True when the window is the whole box, i.e. there is nothing to clip. A window
+ * bigger than the box is not: it clips too, only further out.
+ */
 export function cropIsFull(crop: ItemCrop, template: TitleTemplate): boolean {
 	const full = fullCrop(template);
 	return (
-		crop.x <= 0 &&
-		crop.y <= 0 &&
-		crop.width >= full.width - 0.01 &&
-		crop.height >= full.height - 0.01
+		Math.abs(crop.x) < 0.01 &&
+		Math.abs(crop.y) < 0.01 &&
+		Math.abs(crop.width - full.width) < 0.01 &&
+		Math.abs(crop.height - full.height) < 0.01
 	);
 }

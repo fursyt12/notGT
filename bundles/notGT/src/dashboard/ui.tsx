@@ -72,6 +72,12 @@ const ICONS = {
 		</>
 	),
 	crop: <path d="M6 2v13a3 3 0 0 0 3 3h13M2 6h13a3 3 0 0 1 3 3v13" />,
+	bounds: (
+		<>
+			<rect x="8" y="8" width="8" height="8" rx="1" />
+			<path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5" />
+		</>
+	),
 	sliders: (
 		<>
 			<path d="M4 7h8M18 7h2M4 17h2M12 17h8" />

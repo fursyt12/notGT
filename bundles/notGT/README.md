@@ -120,6 +120,16 @@ while the animation itself stays where it is and at its own scale: a crop remove
 not needed, it does not shrink the title. Without `crop` the whole template box is
 visible. It is set with the mouse in the editor (the **“Crop”** button) or through the API.
 
+Its sibling is `bounds`, the same kind of window but for the animation's **box itself**:
+the area the animation is rendered in, made bigger or smaller with **“Scale Bounds”**.
+Its edges may go past the template box on any side (`x`/`y` below zero, `width`/`height`
+beyond the template's), so a box grown to the right shows what the animation draws there.
+The animation keeps its size and its place, only the box changes, and everything outside
+the box is clipped. A placement has either `crop` or `bounds`: each tool writes its own
+and clears the other, and if an API client sends both, `bounds` wins. A code animation
+draws inside its iframe, which keeps the template's size, so growing its box past the
+template only adds empty space.
+
 The same template can be placed on several outs, or several times on one out — these are
 different placements with different `id`s.
 
@@ -390,12 +400,13 @@ draw it.
   none is selected (or a code animation is), a new animation the size of the out is
   created, placed on it and made active.
 - **`Crop`** turns on the crop tool for the active placement (see below).
+- **`Scale Bounds`** turns on the tool that resizes the active placement's box (see below).
 - The **full-screen** button next to it gives the whole screen to the desk — the canvas
   and its status bar, without the bars around it. The same button sits at the end of the
   status bar, so it is there in full screen too; `Esc` also leaves. Where the browser does
   not allow a page full screen, the desk fills the panel instead. In full screen
-  **`+ Layer`** and **`Crop`** come along: they move into a strip above the canvas, so a
-  layer can be added and a placement cropped without leaving it.
+  **`+ Layer`**, **`Crop`** and **`Scale Bounds`** come along: they move into a strip above
+  the canvas, so a layer can be added and a placement cropped without leaving it.
 - **`Play`** and **`Go on air`** act on the selected placement: the same one-shot and the
   same “On air” switch Control has (the button turns into **`Take off air`**). Unsaved
   edits are saved first. For an animation that is not on this out, the manual show is
@@ -432,6 +443,13 @@ double-click to rename) and the **“Library”** of all animations (place, dupl
   (edges, the 5 % safe area, the centre) and to the visible windows of other animations.
   `Esc` or “Done” turns the tool off. The crop is stored in the placement (`crop` in the
   `outs` of that out) and visible through `GET /api/outs`.
+- **Scale Bounds**: a frame with the same eight handles sets the **box the animation is
+  rendered in**. Pulling a handle moves only that edge, inwards or outwards, past the
+  template box too. The animation does not stretch, move or scale; what falls outside the
+  new box is hidden. Only the new box is drawn, not the template box's old corners.
+  Dragging inside the frame moves the placement, and the edges stick to the out's lines
+  and to other animations. “Reset” goes back to the template box; `Esc` or “Done” turns
+  the tool off. It is stored as `bounds` in the placement.
 - The **magnets** measure a placement by its **visible part**: a cropped animation sticks
   to lines with the edge and centre of its window, not of the hidden template box, and
   that same window is offered to other animations as a target. The magnets also work
@@ -454,7 +472,8 @@ remembered in the browser.
   the layer's own transitions with their delays. The tab opens by itself when a layer is
   selected.
 - **“Placement”** — the animation on this out: `x`/`y`/scale and “Fit out width”
-  (`scale = out.width / template.width`), the size of the crop window and “Clear”,
+  (`scale = out.width / template.width`), the size of the crop window and of the scaled
+  bounds, each with “Clear”,
   playback (“Timed” / “Until switched off”, “Hold”, “As long as the video”), “Starts from
   the API and Companion” (`enabled`).
 - **“Animation”** — the template itself: name, box size, kind, “Entrance and exit” and
@@ -930,6 +949,13 @@ curl -sS -X PATCH http://<host>/api/outs/interview/items/<itemId> \
 curl -sS -X PATCH http://<host>/api/outs/interview/items/<itemId> \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' -d '{"crop":null}'
+
+# grow a placement's box 192 px past the template box on every side (a 1920x1080
+# template); the animation keeps its size, only the area it is shown in grows
+curl -sS -X PATCH http://<host>/api/outs/interview/items/<itemId> \
+  -H "Authorization: Bearer $NOTGT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"bounds":{"x":-192,"y":-192,"width":2304,"height":1464}}'
 
 # one-shot of a specific placement
 curl -sS -X POST http://<host>/api/outs/interview/items/item_ab12cd34ef56/trigger \

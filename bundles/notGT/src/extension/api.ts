@@ -620,6 +620,7 @@ export function normalizeItem(input: Record<string, unknown>, index = 0): OutIte
 		...base,
 		playback: mergePlayback(input["playback"], base.playback),
 		crop: normalizeCrop(input["crop"]),
+		bounds: normalizeCrop(input["bounds"]),
 	};
 }
 

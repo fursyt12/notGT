@@ -24,7 +24,7 @@ import { createRoot } from "react-dom/client";
 
 import { CODE_HIDE_FALLBACK_MS, codeSource } from "../graphics/code-runtime";
 import { interpolate } from "../shared/binding";
-import { cropBox } from "../shared/crop";
+import { cropBox, windowBox } from "../shared/crop";
 import { BUNDLE_NAME, CODE_EXIT_MAX_MS, CODE_MESSAGES } from "../shared/types";
 import type {
 	CodeBlock,
@@ -40,7 +40,7 @@ import type {
 	VariableSelection,
 } from "../shared/types";
 import type { GalleryExample } from "../shared/examples/gallery";
-import { EditorCanvas } from "./editor/canvas";
+import { EditorCanvas, type CanvasTool } from "./editor/canvas";
 import { useCodeDocument, useTimerFeed } from "./editor/code-preview";
 import { TIMER_VAR, type Timer, layersUseTimers, timerPaths } from "../shared/timer";
 import { Splitter, useDeskFullscreen, useEditorLayout, type LayoutEdge } from "./editor/layout";
@@ -1646,6 +1646,7 @@ function PlacementInspector({
 	onRemove,
 	onFitOut,
 	onCrop,
+	onBounds,
 }: {
 	out: Out;
 	item: OutItem;
@@ -1656,9 +1657,12 @@ function PlacementInspector({
 	onFitOut: () => void;
 	/** Turns the crop tool on. */
 	onCrop: () => void;
+	/** Turns the Scale Bounds tool on. */
+	onBounds: () => void;
 }) {
 	const playback = item.playback ?? defaultPlayback();
 	const crop = item.crop ? cropBox(item, template) : null;
+	const bounds = item.bounds ? windowBox(item, template) : null;
 
 	return (
 		<div className="ed-panel-body">
@@ -1723,11 +1727,45 @@ function PlacementInspector({
 				) : (
 					<div className="ed-crop-row">
 						<span className="ed-hint" data-crop-none>
-							{t("The whole animation is visible")}
+							{bounds
+								? t("Its scaled bounds set what is visible")
+								: t("The whole animation is visible")}
 						</span>
 						<button type="button" className="small" onClick={onCrop}>
 							<Icon name="crop" size={14} />
 							{t("Set crop")}
+						</button>
+					</div>
+				)}
+			</Section>
+
+			<Section title={t("Scale Bounds")}>
+				{bounds ? (
+					<div className="ed-crop-row">
+						<span data-bounds-info>
+							{t("{size} px from ({x}, {y})", {
+								size: `${Math.round(bounds.width)}×${Math.round(bounds.height)}`,
+								x: Math.round(bounds.x),
+								y: Math.round(bounds.y),
+							})}
+						</span>
+						<button
+							type="button"
+							className="ghost small"
+							onClick={() => onPatch({ bounds: undefined })}
+							data-bounds-clear
+						>
+							{t("Clear")}
+						</button>
+					</div>
+				) : (
+					<div className="ed-crop-row">
+						<span className="ed-hint" data-bounds-none>
+							{t("Rendered in its design box")}
+						</span>
+						<button type="button" className="small" onClick={onBounds}>
+							<Icon name="bounds" size={14} />
+							{t("Scale bounds")}
 						</button>
 					</div>
 				)}
@@ -2169,8 +2207,11 @@ export function EditorApp() {
 	const [draft, setDraft] = useState<TitleTemplate | null>(null);
 	const [dirty, setDirty] = useState(false);
 	const [flash, setFlash] = useState("");
-	/** The crop tool is on: the canvas edits the active placement's window. */
-	const [cropMode, setCropMode] = useState(false);
+	/**
+	 * The frame tool that is on, if any: crop cuts the active placement's
+	 * visible window, Scale Bounds resizes the box it is rendered in.
+	 */
+	const [tool, setTool] = useState<CanvasTool | null>(null);
 	const layout = useEditorLayout();
 	const deskFull = useDeskFullscreen();
 	const leftRef = useRef<HTMLDivElement | null>(null);
@@ -2454,28 +2495,30 @@ export function EditorApp() {
 		updateItem(out.id, item.id, { scale: round(out.width / template.width, 4) });
 	};
 
-	// -------------------------------------------------------------- crop tool
+	// ------------------------------------------------ crop + scale bounds tools
 
 	/**
-	 * The crop tool edits the visible window of the active placement, so it is
-	 * offered exactly when there is a placement with a template to measure.
+	 * The crop and Scale Bounds tools edit the visible window of the active
+	 * placement, so they are offered exactly when there is a placement with a
+	 * template to measure.
 	 */
-	const canCrop = Boolean(activeItem && getTemplate(activeItem.templateId));
+	const canFrame = Boolean(activeItem && getTemplate(activeItem.templateId));
 
-	// Losing the placement loses the tool with it — there is nothing to crop.
+	// Losing the placement loses the tool with it — there is nothing to edit.
 	useEffect(() => {
-		if (!canCrop) setCropMode(false);
-	}, [canCrop]);
+		if (!canFrame) setTool(null);
+	}, [canFrame]);
 
-	const setCrop = (crop: OutItem["crop"]) => {
+	const patchActive = (patch: Partial<OutItem>) => {
 		if (!activeItem || !out) return;
-		updateItem(out.id, activeItem.id, { crop });
+		updateItem(out.id, activeItem.id, patch);
 	};
 
-	const toggleCropMode = () => {
-		if (!canCrop) return;
-		setCropMode((value) => {
-			const next = !value;
+	/** Switches a tool on (and the other one off), or off when it is already on. */
+	const toggleTool = (which: CanvasTool) => {
+		if (!canFrame) return;
+		setTool((value) => {
+			const next = value === which ? null : which;
 			if (next) {
 				setSelectedLayerId(null);
 				setInspectorTab("placement");
@@ -2715,19 +2758,19 @@ export function EditorApp() {
 		notify(t("Taken off air"));
 	};
 
-	// Escape always leaves the crop tool, whatever has focus. It is caught on
+	// Escape always leaves a frame tool, whatever has focus. It is caught on
 	// the way down and marked as used, so that on a desk that fills the panel
 	// the same press does not leave full screen as well.
 	useEffect(() => {
-		if (!cropMode) return;
+		if (!tool) return;
 		const handler = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
 			event.preventDefault();
-			setCropMode(false);
+			setTool(null);
 		};
 		window.addEventListener("keydown", handler, true);
 		return () => window.removeEventListener("keydown", handler, true);
-	}, [cropMode]);
+	}, [tool]);
 
 	// Arrow-key nudging: the layer when one is selected, otherwise the placement.
 	useEffect(() => {
@@ -2835,12 +2878,12 @@ export function EditorApp() {
 			</Menu>
 			<button
 				type="button"
-				className={`ed-tool${cropMode ? " is-active" : ""}`}
-				onClick={toggleCropMode}
-				disabled={!canCrop}
+				className={`ed-tool${tool === "crop" ? " is-active" : ""}`}
+				onClick={() => toggleTool("crop")}
+				disabled={!canFrame}
 				data-crop-toggle
 				title={
-					canCrop
+					canFrame
 						? t("A frame over the selected animation: everything outside it is hidden")
 						: t("Select an animation on the out first")
 				}
@@ -2848,10 +2891,25 @@ export function EditorApp() {
 				<Icon name="crop" size={14} />
 				{t("Crop")}
 			</button>
+			<button
+				type="button"
+				className={`ed-tool${tool === "bounds" ? " is-active" : ""}`}
+				onClick={() => toggleTool("bounds")}
+				disabled={!canFrame}
+				data-bounds-toggle
+				title={
+					canFrame
+						? t("The box the selected animation is rendered in: its edges resize the box, not the animation")
+						: t("Select an animation on the out first")
+				}
+			>
+				<Icon name="bounds" size={14} />
+				{t("Scale Bounds")}
+			</button>
 		</>
 	);
-	const cropTools =
-		cropMode && activeItem ? (
+	const frameTools =
+		tool === "crop" && activeItem ? (
 			<>
 				<span className="ed-hint" data-crop-hint>
 					{t("The frame is the visible part. Drag its edges and corners.")}
@@ -2860,13 +2918,32 @@ export function EditorApp() {
 					<button
 						type="button"
 						className="ghost small"
-						onClick={() => setCrop(undefined)}
+						onClick={() => patchActive({ crop: undefined })}
 						data-crop-reset
 					>
 						{t("Reset")}
 					</button>
 				) : null}
-				<button type="button" className="small" onClick={() => setCropMode(false)}>
+				<button type="button" className="small" onClick={() => setTool(null)}>
+					{t("Done")}
+				</button>
+			</>
+		) : tool === "bounds" && activeItem ? (
+			<>
+				<span className="ed-hint" data-bounds-hint>
+					{t("Drag the edges and corners: the box changes, the animation keeps its size.")}
+				</span>
+				{activeItem.bounds ? (
+					<button
+						type="button"
+						className="ghost small"
+						onClick={() => patchActive({ bounds: undefined })}
+						data-bounds-reset
+					>
+						{t("Reset")}
+					</button>
+				) : null}
+				<button type="button" className="small" onClick={() => setTool(null)}>
 					{t("Done")}
 				</button>
 			</>
@@ -2907,7 +2984,7 @@ export function EditorApp() {
 					onClick={deskFull.toggle}
 					disabled={!out}
 				/>
-				{deskFull.active ? null : cropTools}
+				{deskFull.active ? null : frameTools}
 				<span className="ed-spacer" />
 				{dirty ? <span className="ed-chip is-dirty">{t("Unsaved")}</span> : null}
 				<button
@@ -2997,7 +3074,7 @@ export function EditorApp() {
 							draft={draft}
 							activeItemId={activeItemId}
 							selectedLayerId={selectedLayerId}
-							cropMode={cropMode}
+							tool={tool}
 							liveIds={playingIds}
 							unsaved={dirty}
 							liveDraft={!activeItem && onAir}
@@ -3017,7 +3094,7 @@ export function EditorApp() {
 								deskFull.active ? (
 									<>
 										{canvasTools}
-										{cropTools}
+										{frameTools}
 									</>
 								) : null
 							}
@@ -3128,7 +3205,10 @@ export function EditorApp() {
 										onRemove={() => removeItemFromOut(activeItem.id)}
 										onFitOut={() => fitItemToOut(activeItem)}
 										onCrop={() => {
-											if (!cropMode) toggleCropMode();
+											if (tool !== "crop") toggleTool("crop");
+										}}
+										onBounds={() => {
+											if (tool !== "bounds") toggleTool("bounds");
 										}}
 									/>
 								) : (

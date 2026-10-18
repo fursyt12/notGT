@@ -12,6 +12,9 @@
  *   - the active animation has a draggable frame (and an explicit move handle)
  *     that edits the placement (`item.x` / `item.y`), plus a corner handle that
  *     edits `item.scale`;
+ *   - the crop tool cuts the visible window (`item.crop`); Scale Bounds resizes
+ *     the box the animation is rendered in (`item.bounds`) without resizing
+ *     the animation;
  *   - layers of the active animation can be selected, dragged (`layer.x/y`) and
  *     transformed (`layer.width/height`);
  *   - every other animation is dimmed and only responds to a click that makes
@@ -42,7 +45,7 @@ import {
 } from "react-konva";
 
 import { interpolate } from "../../shared/binding";
-import { cropBox, cropIsFull, fullCrop, roundCrop, MIN_CROP_PX } from "../../shared/crop";
+import { clampCrop, cropIsFull, fullCrop, roundCrop, windowBox, MIN_CROP_PX } from "../../shared/crop";
 import type {
 	ItemCrop,
 	Layer,
@@ -84,6 +87,9 @@ type KonvaEvent<T extends Event> = Konva.KonvaEventObject<T>;
 /** Screen-px size of the placement handles (constant, never scaled). */
 const HANDLE = 18;
 
+/** The tools that edit the active placement through a frame on the canvas. */
+export type CanvasTool = "crop" | "bounds";
+
 export interface EditorCanvasProps {
 	out: Out;
 	/** Saved templates (used for every animation except the active draft). */
@@ -92,8 +98,8 @@ export interface EditorCanvasProps {
 	draft: TitleTemplate | null;
 	activeItemId: string | null;
 	selectedLayerId: string | null;
-	/** The crop tool is active: the placement is edited, not played with. */
-	cropMode: boolean;
+	/** A frame tool is active: the placement is edited, not played with. */
+	tool: CanvasTool | null;
 	/** Placements that are on air on this out right now. */
 	liveIds: string[];
 	/**
@@ -216,7 +222,7 @@ interface DragPreview {
 	dy: number;
 	/** Placement scale while the size handle is being dragged. */
 	scale?: number;
-	/** Crop window in template px while the crop frame is being dragged. */
+	/** The window in template px while the crop or bounds frame is dragged. */
 	crop?: ItemCrop;
 }
 
@@ -254,7 +260,7 @@ export function EditorCanvas({
 	draft,
 	activeItemId,
 	selectedLayerId,
-	cropMode,
+	tool,
 	liveIds,
 	unsaved,
 	liveDraft,
@@ -387,7 +393,7 @@ export function EditorCanvas({
 	// A new selection, another out or another tool: nothing is being dragged.
 	useEffect(() => {
 		setPreview(null);
-	}, [activeItemId, out.id, cropMode]);
+	}, [activeItemId, out.id, tool]);
 
 	const items = useMemo(
 		() => [...(out.items ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
@@ -666,7 +672,7 @@ export function EditorCanvas({
 	/** The active placement as it is drawn right now (drag preview included). */
 	const shownActive = activeGeom ? withPreview(activeGeom) : null;
 	const activePending = Boolean(preview && activeGeom && preview.itemId === activeGeom.item.id);
-	/** The visible window of the active placement, when it hides something. */
+	/** The visible window of the active placement, when it is not the box. */
 	const activeCrop =
 		activeGeom && !cropIsFull(cropFor(activeGeom, preview), activeGeom.template)
 			? cropFor(activeGeom, preview)
@@ -920,7 +926,7 @@ export function EditorCanvas({
 										stageH={stageH}
 										active={geom.item.id === activeItemId}
 										live={isLive(geom)}
-										cropMode={cropMode}
+										toolActive={tool !== null}
 										selectedLayerId={selectedLayerId}
 										previewPlaying={previewPlaying}
 										restartToken={restartToken}
@@ -935,10 +941,10 @@ export function EditorCanvas({
 								))}
 
 								{/* Handles are drawn last so they stay usable even when the
-								    active animation sits below a later one. The crop tool
+								    active animation sits below a later one. A frame tool
 								    replaces them: while it is on, the frame is the thing being
 								    edited. */}
-								{activeGeom && !cropMode ? (
+								{activeGeom && !tool ? (
 									<PlacementHandles
 										geom={activeGeom}
 										stageW={stageW}
@@ -946,8 +952,16 @@ export function EditorCanvas({
 										onItemChange={onItemChange}
 									/>
 								) : null}
-								{activeGeom && cropMode ? (
+								{activeGeom && tool === "crop" ? (
 									<CropOverlay
+										geom={activeGeom}
+										stageW={stageW}
+										stageH={stageH}
+										onItemChange={onItemChange}
+									/>
+								) : null}
+								{activeGeom && tool === "bounds" ? (
+									<BoundsOverlay
 										geom={activeGeom}
 										stageW={stageW}
 										stageH={stageH}
@@ -1089,9 +1103,14 @@ export function EditorCanvas({
 						{round((shownActive.boxY / stageH) * 100)}% · scale{" "}
 						{round(shownActive.scale, 3)}
 						{activeCrop
-							? t(" · crop {size}", {
-									size: `${Math.round(activeCrop.width)}×${Math.round(activeCrop.height)}`,
-								})
+							? t(
+									activeGeom.item.bounds || tool === "bounds"
+										? " · bounds {size}"
+										: " · crop {size}",
+									{
+										size: `${Math.round(activeCrop.width)}×${Math.round(activeCrop.height)}`,
+									},
+								)
 							: ""}
 						{activePending ? t(" · dragging") : ""}
 					</span>
@@ -1141,8 +1160,8 @@ function usePlacementDrag(
 	const drag = useContext(DragContext);
 	const { item } = geom;
 	// The window at the moment the drag starts: the hook's own preview is not
-	// published yet, so the saved crop is the right one.
-	const win = windowOf(geom, cropBox(item, geom.template));
+	// published yet, so the saved window is the right one.
+	const win = windowOf(geom, windowBox(item, geom.template));
 
 	return useCallback(
 		(event: KonvaEvent<MouseEvent>) => {
@@ -1189,7 +1208,7 @@ function AnimatedItem({
 	stageH,
 	active,
 	live,
-	cropMode,
+	toolActive,
 	selectedLayerId,
 	previewPlaying,
 	restartToken,
@@ -1207,7 +1226,8 @@ function AnimatedItem({
 	active: boolean;
 	/** On air: the out page under the canvas draws it, so only the frame is kept. */
 	live: boolean;
-	cropMode: boolean;
+	/** A frame tool (crop, bounds) is on: the placement is edited through it. */
+	toolActive: boolean;
 	selectedLayerId: string | null;
 	previewPlaying: boolean;
 	restartToken: number;
@@ -1225,7 +1245,8 @@ function AnimatedItem({
 	const crop = cropFor(geom, drag?.preview ?? null);
 	const cropped = !cropIsFull(crop, template);
 	// Everything inside the group is drawn in the template's own box, so the
-	// crop window is a local rectangle and the clip is one line.
+	// window (a crop, or scaled bounds that may reach past the box) is a local
+	// rectangle and the clip is one line.
 	const local = {
 		x: cropped ? crop.x * view.k : 0,
 		y: cropped ? crop.y * view.k : 0,
@@ -1237,9 +1258,10 @@ function AnimatedItem({
 
 	const onPlacementDown = usePlacementDrag(geom, stageW, stageH, onItemChange);
 
-	// In crop mode the placement is a picture to cut, not a thing to move.
+	// While a frame tool is on the placement is a picture to frame, not a
+	// thing to move.
 	const hitDown = (event: KonvaEvent<MouseEvent>) => {
-		if (cropMode) {
+		if (toolActive) {
 			event.cancelBubble = true;
 			return;
 		}
@@ -1277,7 +1299,7 @@ function AnimatedItem({
 			) : null}
 
 			{live ? null : template.kind === "code" ? (
-				<CodePlaceholder boxW={view.boxW} boxH={view.boxH} />
+				<CodePlaceholder box={local} />
 			) : (
 				sortByZ(template.layers ?? []).map((layer) => (
 					<LayerNode
@@ -1306,13 +1328,16 @@ function AnimatedItem({
 /**
  * Outline of a code placement. The animation itself is the live iframe in the
  * DOM overlay above; this frame only keeps the box readable when the animation
- * is transparent where it is empty.
+ * is transparent where it is empty. It follows the visible window, so a box
+ * whose bounds were scaled shows its new edges and not the old ones.
  */
-function CodePlaceholder({ boxW, boxH }: { boxW: number; boxH: number }) {
+function CodePlaceholder({ box }: { box: SnapBox }) {
 	return (
 		<Rect
-			width={boxW}
-			height={boxH}
+			x={box.x}
+			y={box.y}
+			width={box.width}
+			height={box.height}
 			stroke="rgba(245,236,218,0.4)"
 			strokeWidth={1}
 			dash={[8, 6]}
@@ -1395,7 +1420,8 @@ function CodeOverlayFrame({
  * The frame is the *visible window* (the crop when there is one) — that is the
  * box the operator thinks in, and everything else measures from it. With a crop
  * the full template box is drawn faintly as well, so it is clear how much of the
- * animation is hidden.
+ * animation is hidden. Scaled bounds are the animation's box, so nothing is
+ * drawn behind them.
  *
  * Both handles drag themselves (see `DragApi`): the move handle publishes an
  * offset, the size handle publishes a scale, and by the time the button comes up
@@ -1487,7 +1513,7 @@ function PlacementHandles({
 	return (
 		<Fragment>
 			{/* The whole template box, when the window is only a part of it. */}
-			{cropIsFull(crop, template) ? null : (
+			{cropIsFull(crop, template) || item.bounds ? null : (
 				<Rect
 					x={view.boxX}
 					y={view.boxY}
@@ -1590,10 +1616,10 @@ function windowOf(geom: Geometry, crop: ItemCrop): SnapBox {
 	};
 }
 
-/** The crop to draw for a geometry: the one being dragged, else the saved one. */
+/** The window to draw for a geometry: the one being dragged, else the saved one. */
 function cropFor(geom: Geometry, preview: DragPreview | null): ItemCrop {
 	if (preview && preview.itemId === geom.item.id && preview.crop) return preview.crop;
-	return cropBox(geom.item, geom.template);
+	return windowBox(geom.item, geom.template);
 }
 
 // ------------------------------------------------------------------- crop tool
@@ -1624,6 +1650,9 @@ const CROP_HANDLE = 12;
  * kept. The frame is measured in the template's own box (the same space the
  * layer drag uses) and written to the placement as template px on release, so
  * the out page can clip at exactly the rectangle that was drawn here.
+ *
+ * A crop lives inside the box, so scaled bounds that reach past it are taken in
+ * to the box here, and the crop that is written replaces them.
  */
 function CropOverlay({
 	geom,
@@ -1639,7 +1668,7 @@ function CropOverlay({
 	const snap = useContext(SnapContext);
 	const drag = useContext(DragContext);
 	const { item, template } = geom;
-	const crop = cropFor(geom, drag?.preview ?? null);
+	const crop = clampCrop(cropFor(geom, drag?.preview ?? null), template);
 	const view = drag ? drag.view(geom) : geom;
 	const win = windowOf(view, crop);
 	const bounds = { width: geom.boxW, height: geom.boxH };
@@ -1687,8 +1716,10 @@ function CropOverlay({
 
 	const commit = (next: SnapBox) => {
 		const design = roundCrop(toDesign(next));
-		if (cropIsFull(design, template)) onItemChange(item.id, { crop: undefined });
-		else onItemChange(item.id, { crop: design });
+		onItemChange(item.id, {
+			crop: cropIsFull(design, template) ? undefined : design,
+			bounds: undefined,
+		});
 	};
 
 	/** Dragging the window itself: it slides over the animation. */
@@ -1885,6 +1916,146 @@ function CropOverlay({
 			</Group>
 
 		</Fragment>
+	);
+}
+
+// ----------------------------------------------------------- scale bounds tool
+
+/**
+ * The Scale Bounds frame: the box the active animation is rendered in, with a
+ * handle on every corner and edge. Pulling a handle moves that edge and nothing
+ * else: the animation keeps its size and its place on the out, only the area it
+ * is shown (and clipped) in grows or shrinks — past the design box too, so what
+ * the animation draws outside it comes into view.
+ *
+ * Only the new box is drawn. The crop frame keeps the design box faintly in
+ * view because what lies outside its window is still part of the animation;
+ * here the frame *is* the animation's box, and the old corners would mislead.
+ *
+ * Dragging inside the frame moves the placement, the same drag the move handle
+ * does. The edges being pulled stick to the out's lines: its edges, centre and
+ * safe area and the other animations.
+ */
+function BoundsOverlay({
+	geom,
+	stageW,
+	stageH,
+	onItemChange,
+}: {
+	geom: Geometry;
+	stageW: number;
+	stageH: number;
+	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
+}) {
+	const snap = useContext(SnapContext);
+	const drag = useContext(DragContext);
+	const { item, template } = geom;
+	const view = drag ? drag.view(geom) : geom;
+	const win = windowOf(view, cropFor(geom, drag?.preview ?? null));
+	/** The box as it is saved, which is where every pull starts from. */
+	const from = windowOf(geom, windowBox(item, template));
+	const onBodyDown = usePlacementDrag(geom, stageW, stageH, onItemChange);
+	const minSize = Math.max(2, MIN_CROP_PX * geom.k);
+	const threshold = snap?.threshold ?? 0;
+
+	/** Stage px -> design px from the top-left of the design box. */
+	const toDesign = (box: SnapBox): ItemCrop => ({
+		x: (box.x - geom.boxX) / geom.k,
+		y: (box.y - geom.boxY) / geom.k,
+		width: box.width / geom.k,
+		height: box.height / geom.k,
+	});
+
+	/** Moves one edge to `value`, magnets included. */
+	const pull = (value: number, lines: SnapLine[], guides: number[]): number => {
+		if (!snap?.enabled) return value;
+		const snapped = snapCoordinate(value, lines, threshold);
+		guides.push(...snapped.guide);
+		return snapped.value;
+	};
+
+	/** Dragging a handle: only the edges under the cursor move. */
+	const onAnchorDown =
+		(anchor: { fx: number; fy: number }) => (event: KonvaEvent<MouseEvent>) => {
+			if (!drag) return;
+			const start = drag.pointOf(event.evt);
+			if (!start) return;
+			const linesX = snap?.placementX ?? [];
+			const linesY = snap?.placementY ?? [];
+			const right = from.x + from.width;
+			const bottom = from.y + from.height;
+			let next: SnapBox | null = null;
+			drag.begin(
+				event,
+				(point) => {
+					let { x, y, width, height } = from;
+					const guidesX: number[] = [];
+					const guidesY: number[] = [];
+
+					if (anchor.fx === 0) {
+						x = Math.min(pull(x + (point.x - start.x), linesX, guidesX), right - minSize);
+						width = right - x;
+					} else if (anchor.fx === 1) {
+						const edge = Math.max(pull(right + (point.x - start.x), linesX, guidesX), x + minSize);
+						width = edge - x;
+					}
+
+					if (anchor.fy === 0) {
+						y = Math.min(pull(y + (point.y - start.y), linesY, guidesY), bottom - minSize);
+						height = bottom - y;
+					} else if (anchor.fy === 1) {
+						const edge = Math.max(pull(bottom + (point.y - start.y), linesY, guidesY), y + minSize);
+						height = edge - y;
+					}
+
+					next = { x, y, width, height };
+					drag.setPreview({ itemId: item.id, dx: 0, dy: 0, crop: toDesign(next) });
+					snap?.showPlacement(guidesX, guidesY);
+				},
+				() => {
+					drag.setPreview(null);
+					snap?.clear();
+					if (!next) return;
+					const bounds = roundCrop(toDesign(next));
+					onItemChange(item.id, {
+						bounds: cropIsFull(bounds, template) ? undefined : bounds,
+						crop: undefined,
+					});
+				},
+			);
+		};
+
+	return (
+		<Group x={win.x} y={win.y}>
+			<Rect
+				width={win.width}
+				height={win.height}
+				fill="rgba(0,0,0,0.001)"
+				stroke="rgba(255,90,140,0.95)"
+				strokeWidth={1}
+				onMouseDown={onBodyDown}
+			/>
+			{CROP_ANCHORS.filter(
+				(anchor) =>
+					// The same rule as the crop frame: no mid-edge handles on a frame
+					// too small to have room for them.
+					(anchor.fx !== 0.5 || win.width > CROP_HANDLE * 4) &&
+					(anchor.fy !== 0.5 || win.height > CROP_HANDLE * 4),
+			).map((anchor) => (
+				<Rect
+					key={anchor.id}
+					x={anchor.fx * win.width - CROP_HANDLE / 2}
+					y={anchor.fy * win.height - CROP_HANDLE / 2}
+					width={CROP_HANDLE}
+					height={CROP_HANDLE}
+					fill="rgba(255,90,140,0.95)"
+					stroke="#0c2b25"
+					strokeWidth={1}
+					cornerRadius={CROP_HANDLE / 2}
+					onMouseDown={onAnchorDown(anchor)}
+				/>
+			))}
+		</Group>
 	);
 }
 

@@ -425,7 +425,7 @@ async function main() {
 				/** Where the placement's *visible window* sits on the page, in page px. */
 				const windowOnPage = async () => {
 					const item = await readItem();
-					const c = item?.crop ?? {
+					const c = item?.bounds ?? item?.crop ?? {
 						x: 0,
 						y: 0,
 						width: box.width,
@@ -609,7 +609,66 @@ async function main() {
 					fullPage: false,
 				});
 
-				await page.click("button[data-crop-toggle]");
+				// --- Scale Bounds ---------------------------------------------------
+				// It takes over from the crop tool. Pulling a corner past the design
+				// box grows the box the animation is rendered in; the animation keeps
+				// its scale and the opposite corner stays where it was.
+				await page.click("button[data-bounds-toggle]");
+				await sleep(200);
+				const boundsOn = await page.evaluate(() => ({
+					bounds: document
+						.querySelector("button[data-bounds-toggle]")
+						.classList.contains("is-active"),
+					crop: document
+						.querySelector("button[data-crop-toggle]")
+						.classList.contains("is-active"),
+				}));
+				check(
+					"editor.html: Scale Bounds takes over from the crop tool",
+					boundsOn.bounds && !boundsOn.crop,
+					JSON.stringify(boundsOn),
+				);
+				const before = await windowOnPage();
+				const scaleBefore = croppedItem?.scale ?? 1;
+				const pullX = box.width * 0.6;
+				const pullY = box.height * 0.6;
+				await page.mouse.move(before.right, before.bottom);
+				await page.mouse.down();
+				await page.mouse.move(
+					before.right + (pullX * scaleBefore * stage.w) / 1920,
+					before.bottom + (pullY * scaleBefore * stage.h) / 1080,
+					{ steps: 10 },
+				);
+				await page.mouse.up();
+				await sleep(500);
+				const boundedItem = await readItem();
+				const after = await windowOnPage();
+				const b = boundedItem?.bounds;
+				check(
+					"editor.html: Scale Bounds grows the box past the design box, not the animation",
+					Boolean(b) &&
+						!boundedItem.crop &&
+						(boundedItem.scale ?? 1) === scaleBefore &&
+						b.x + b.width > box.width &&
+						b.y + b.height > box.height &&
+						Math.abs(after.left - before.left) < 1 &&
+						Math.abs(after.top - before.top) < 1,
+					JSON.stringify({ bounds: b, crop: boundedItem?.crop, scale: boundedItem?.scale }),
+				);
+				const boundsInfo = await page.evaluate(
+					() => document.querySelector("[data-bounds-info]")?.textContent ?? "",
+				);
+				check(
+					"editor.html: the inspector shows the scaled bounds",
+					/\d+×\d+/.test(boundsInfo),
+					boundsInfo,
+				);
+				await page.screenshot({
+					path: path.join(outDir, "editor-bounds.png"),
+					fullPage: false,
+				});
+
+				await page.click("button[data-bounds-toggle]");
 				await fetch(`${BASE}/api/outs/${fixtureOut}`, { method: "DELETE" });
 				await fetch(`${BASE}/api/templates/${templateId}`, {
 					method: "DELETE",
