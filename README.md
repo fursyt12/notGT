@@ -14,7 +14,7 @@
 <p align="center"><b>English</b> · <a href="README_RU.md">Русский</a></p>
 
 <p align="center">
-  <img alt="notGT 0.12.7" src="https://img.shields.io/badge/notGT-0.12.7-FF5A8C?style=flat-square&labelColor=0C2B25">
+  <img alt="notGT 0.14.0" src="https://img.shields.io/badge/notGT-0.14.0-FF5A8C?style=flat-square&labelColor=0C2B25">
   <img alt="NodeCG 2.8" src="https://img.shields.io/badge/NodeCG-2.8-FF5A8C?style=flat-square&labelColor=0C2B25">
   <img alt="Node.js 22" src="https://img.shields.io/badge/Node.js-22-FF5A8C?style=flat-square&labelColor=0C2B25">
   <img alt="Docker, Windows and macOS" src="https://img.shields.io/badge/runs%20on-Docker%20%C2%B7%20Windows%20%C2%B7%20macOS-FF8A3C?style=flat-square&labelColor=0C2B25">
