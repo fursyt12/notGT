@@ -46,6 +46,9 @@ const config = JSON.parse(
 );
 const send = (channel, ...args) => ipcRenderer.send(channel, ...args);
 
+/** How long the GPU may take over one frame before it is given up. */
+const FENCE_MS = 2000;
+
 let failed = false;
 function fail(message) {
 	if (failed) return;
@@ -155,9 +158,15 @@ class WebglConverter {
 		const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
 		gl.flush();
 		const queued = performance.now();
-		// Waited for without blocking: the GPU draws while the page idles.
-		while (gl.clientWaitSync(fence, 0, 0) === gl.TIMEOUT_EXPIRED)
+		// Waited for without blocking: the GPU draws while the page idles —
+		// but not for ever: a GPU that never finishes is given up.
+		while (gl.clientWaitSync(fence, 0, 0) === gl.TIMEOUT_EXPIRED) {
+			if (performance.now() - queued > FENCE_MS) {
+				gl.deleteSync(fence);
+				throw new Error(`the GPU did not finish a frame in ${FENCE_MS / 1000} s`);
+			}
 			await new Promise((resolve) => setTimeout(resolve, 1));
+		}
 		gl.deleteSync(fence);
 		uploaded();
 		const drawn = performance.now();

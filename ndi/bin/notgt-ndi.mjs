@@ -10,7 +10,11 @@
  *  - `--no-sandbox` when Chromium's sandbox cannot start here: running as
  *    root, or neither the setuid helper nor user namespaces are available.
  *
- * When the app finds the GPU unusable it ends with EXIT_USE_CPU, and is
+ * With a server it is a supervisor (src/supervisor.mjs): every out in an
+ * Electron of its own, each with its own Chromium GPU process; with --url or
+ * --one-process, one Electron for everything.
+ *
+ * When an Electron finds the GPU unusable it ends with EXIT_USE_CPU, and is
  * started again on the CPU.
  *
  * Every `--name value` reaches Electron as `--name=value` (src/args.mjs):
@@ -26,6 +30,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { electronArgs } from "../src/args.mjs";
 import { startCompositor } from "../src/display.mjs";
+import { runSupervisor, workerArgs } from "../src/supervisor.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -110,43 +115,96 @@ const HEADLESS = [
 	"--ozone-override-screen-size=7680,4320",
 ];
 
+/**
+ * With a server and no --one-process: every out in an Electron of its own
+ * (src/supervisor.mjs). With --url, or --one-process: one Electron.
+ */
+const oneProcess =
+	Boolean(process.env.NOTGT_NDI_ONE_PROCESS) || user.includes("--one-process");
+const supervise =
+	!oneProcess && !user.some((a) => a === "--url" || a.startsWith("--url="));
+
 let child;
 let compositor;
+/** The compositor being started: one for every Electron here. */
+let compositorStart;
 let stopping = false;
 const startedAt = Date.now();
 
-async function launch(how) {
-	const args = [...common];
-	const childEnv = { ...env };
-	let mode = how;
-	if (ownDisplay) {
-		if (mode !== "cpu") {
-			const found = await startCompositor({ env });
-			if (found.ok) {
-				compositor = found;
-				args.push(...found.args);
-				Object.assign(childEnv, found.env);
-				say(`GPU: ${found.label}`);
-			} else if (mode === "gpu") {
-				// Asked for: the headless platform's GPU, an emulated one.
-				say(`${found.why}; drawing on an emulated GPU, as --render gpu asks`);
-			} else {
-				// The headless platform's GPU is an emulated one: the CPU is cheaper.
-				say(`${found.why}; drawing on the CPU`);
-				mode = "cpu";
-			}
+/**
+ * Where an Electron drawing `how` draws on Linux: the shared headless
+ * compositor on the GPU, else the headless platform. Elsewhere nothing to do.
+ */
+async function display(how) {
+	if (!ownDisplay) return { args: [], env: {}, mode: how };
+	if (how !== "cpu") {
+		compositorStart ??= startCompositor({ env }).then((found) => {
+			if (found.ok) say(`GPU: ${found.label}`);
+			return found;
+		});
+		const found = await compositorStart;
+		if (found.ok) {
+			compositor = found;
+			return { args: found.args, env: found.env, mode: how };
 		}
-		if (!compositor) args.push(...HEADLESS);
+		if (how === "gpu") {
+			// Asked for: the headless platform's GPU, an emulated one.
+			say(`${found.why}; drawing on an emulated GPU, as --render gpu asks`);
+			return { args: HEADLESS, env: {}, mode: how };
+		}
+		// The headless platform's GPU is an emulated one: the CPU is cheaper.
+		say(`${found.why}; drawing on the CPU`);
 	}
+	return { args: HEADLESS, env: {}, mode: "cpu" };
+}
+
+function stopDisplay() {
+	compositor?.stop();
+	compositor = undefined;
+	compositorStart = undefined;
+}
+
+/** One out's Electron, for the supervisor: IPC for its status, its output piped. */
+async function spawnWorker(config, how) {
+	const where = await display(how);
 	const command = [
-		...args,
+		...common,
+		...where.args,
 		appDir,
-		...electronArgs([...user, "--render", mode]),
+		...electronArgs([
+			...workerArgs(user),
+			"--worker",
+			"--config",
+			Buffer.from(JSON.stringify(config)).toString("base64"),
+			"--render",
+			where.mode,
+		]),
+	];
+	const workerEnv = { ...env, ...where.env };
+	// The server's key is the supervisor's business, not a page's.
+	delete workerEnv.NOTGT_TOKEN;
+	delete workerEnv.NOTGT_TOKEN_FILE;
+	if (process.env.NOTGT_NDI_DEBUG)
+		say(`starting “${config.ndiName}”: ${electron} ${command.join(" ")}`);
+	return spawn(electron, command, {
+		stdio: ["ignore", "pipe", "pipe", "ipc"],
+		env: workerEnv,
+	});
+}
+
+async function launch(how) {
+	const where = await display(how);
+	const mode = where.mode;
+	const command = [
+		...common,
+		...where.args,
+		appDir,
+		...electronArgs([...user.filter((a) => a !== "--one-process"), "--render", mode]),
 	];
 	if (process.env.NOTGT_NDI_DEBUG) say(`starting ${electron} ${command.join(" ")}`);
 	child = spawn(electron, command, {
 		stdio: "inherit",
-		env: childEnv,
+		env: { ...env, ...where.env },
 	});
 	child.on("error", (error) => {
 		process.stderr.write(
@@ -155,12 +213,11 @@ async function launch(how) {
 		process.exitCode = 1;
 	});
 	child.on("exit", (code, signal) => {
-		compositor?.stop();
-		compositor = undefined;
 		if (code === EXIT_USE_CPU && mode !== "cpu" && !stopping) {
 			launch("cpu");
 			return;
 		}
+		stopDisplay();
 		if (code && Date.now() - startedAt < 10_000) {
 			// Gone before it could say anything itself: at least say that.
 			const hex = (code >>> 0).toString(16).toUpperCase();
@@ -178,11 +235,21 @@ async function launch(how) {
 	});
 }
 
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-	process.on(signal, () => {
-		stopping = true;
-		if (child && child.exitCode === null) child.kill(signal);
-		else compositor?.stop();
+if (supervise) {
+	runSupervisor({
+		argv: user,
+		render,
+		spawn: spawnWorker,
+		say,
+		onStop: stopDisplay,
 	});
+} else {
+	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+		process.on(signal, () => {
+			stopping = true;
+			if (child && child.exitCode === null) child.kill(signal);
+			else stopDisplay();
+		});
+	}
+	launch(render);
 }
-launch(render);

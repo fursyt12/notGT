@@ -10,7 +10,12 @@
 			- a time stamp below them, as 32 black or white blocks: 24 bits of
 			  Date.now() and an 8-bit check sum, read back for the latency;
 			- #lower: a lower third sliding in and out, as titles do;
-			- #full: also the whole picture under it moving (the most there is).
+			- #full: also the whole picture under it moving;
+			- #heavy: #full and five code titles on top, each in a sandboxed
+			  iframe as notGT's code titles are, each a different load —
+			  kinetic text, a canvas of particles, animated SVG with a blur,
+			  CSS clip-paths, masks and a backdrop blur, a scoreboard rewritten
+			  every frame. None covers the patches or the stamp.
 			#still draws once and never again.
 		-->
 		<style>
@@ -104,6 +109,11 @@
 			body:not(.moving) .wash {
 				display: none;
 			}
+			.title {
+				position: absolute;
+				border: 0;
+				background: transparent;
+			}
 		</style>
 	</head>
 	<body>
@@ -137,7 +147,8 @@
 			});
 			const mode = location.hash.slice(1) || "lower";
 			if (mode === "still") document.body.classList.add("still");
-			if (mode === "full") document.body.classList.add("moving");
+			if (mode === "full" || mode === "heavy") document.body.classList.add("moving");
+			if (mode === "heavy") heavyTitles();
 			const stamp = document.getElementById("stamp");
 			const bits = Array.from({ length: 32 }, () =>
 				stamp.appendChild(document.createElement("i")),
@@ -148,6 +159,58 @@
 				const word = t * 256 + sum;
 				for (let i = 0; i < 32; i++)
 					bits[i].className = Math.floor(word / 2 ** (31 - i)) % 2 ? "on" : "";
+			}
+			/** Five code titles, each in a sandboxed iframe, as notGT puts them. */
+			function heavyTitles() {
+				const page = (style, body, script) =>
+					`<!doctype html><html><head><style>html,body{margin:0;overflow:hidden;background:transparent;font-family:"DejaVu Sans",sans-serif;color:#fff}${style}</style></head><body>${body}<script>${script}<\/script></body></html>`;
+				const titles = [
+					// Kinetic text: letters rising one after another, and a ticker.
+					[{ left: 1000, top: 210, width: 880, height: 260 }, page(
+						".l{display:inline-block;font-size:64px;font-weight:700}.t{position:absolute;bottom:10px;white-space:nowrap;font-size:28px}",
+						'<div id="w"></div><div class="t" id="t"></div>',
+						`const w=document.getElementById("w"),t=document.getElementById("t");
+						 [..."NOTGT HEAVY CODE TITLE • KINETIC LETTERS • 60 FPS"].forEach((c,i)=>{const s=document.createElement("span");s.className="l";s.textContent=c===" "?"\u00a0":c;w.append(s);
+						 s.animate([{transform:"translateY(80px) rotate(-20deg)",opacity:0},{transform:"none",opacity:1}],{duration:900,delay:i*40,iterations:Infinity,direction:"alternate",easing:"cubic-bezier(.2,.8,.2,1)"})});
+						 for(let i=0;i<160;i++){const s=document.createElement("span");s.textContent=" BREAKING · "+i+" ";t.append(s)}
+						 t.animate([{transform:"translateX(0)"},{transform:"translateX(-4000px)"}],{duration:20000,iterations:Infinity});`)],
+					// Canvas: 3000 particles with trails and additive light.
+					[{ left: 1000, top: 500, width: 880, height: 360 }, page(
+						"canvas{display:block}", '<canvas id="c" width="880" height="360"></canvas>',
+						`const c=document.getElementById("c"),x=c.getContext("2d"),P=[];
+						 for(let i=0;i<3000;i++)P.push({x:Math.random()*880,y:Math.random()*360,vx:(Math.random()-.5)*4,vy:(Math.random()-.5)*4,h:Math.random()*360});
+						 (function f(){x.globalCompositeOperation="destination-out";x.fillStyle="rgba(0,0,0,.18)";x.fillRect(0,0,880,360);x.globalCompositeOperation="lighter";
+						 for(const p of P){p.x=(p.x+p.vx+880)%880;p.y=(p.y+p.vy+360)%360;x.fillStyle="hsla("+p.h+",90%,60%,.6)";x.fillRect(p.x,p.y,3,3)}requestAnimationFrame(f)})();`)],
+					// SVG: 80 shapes moved by script every frame, under a blur filter.
+					[{ left: 40, top: 220, width: 900, height: 300 }, page(
+						"svg{display:block}", '<svg id="s" width="900" height="300"><defs><filter id="b"><feGaussianBlur stdDeviation="3"/></filter></defs><g id="g" filter="url(#b)"></g></svg>',
+						`const g=document.getElementById("g"),N=[];
+						 for(let i=0;i<80;i++){const e=document.createElementNS("http://www.w3.org/2000/svg","circle");e.setAttribute("r",6+i%14);e.setAttribute("fill","hsl("+i*4.5+",80%,60%)");e.setAttribute("opacity",".7");g.append(e);N.push(e)}
+						 (function f(t){N.forEach((e,i)=>{e.setAttribute("cx",450+Math.sin(t/700+i)*400);e.setAttribute("cy",150+Math.cos(t/500+i*1.7)*120)});requestAnimationFrame(f)})(0);`)],
+					// CSS: clip-path, masks and a backdrop blur, all moving.
+					[{ left: 40, top: 560, width: 900, height: 200 }, page(
+						".a{position:absolute;inset:0;background:linear-gradient(90deg,#ff2d6f,#ffb800,#00d0ff);animation:c 2s linear infinite alternate;-webkit-mask:linear-gradient(90deg,transparent,#000 30%,#000 70%,transparent);mask:linear-gradient(90deg,transparent,#000 30%,#000 70%,transparent)}.b{position:absolute;left:100px;top:40px;width:700px;height:120px;backdrop-filter:blur(12px);background:rgba(0,0,0,.3);border-radius:16px;font-size:56px;line-height:120px;text-align:center;animation:d 3s ease-in-out infinite alternate}@keyframes c{from{clip-path:polygon(0 0,40% 0,30% 100%,0 100%)}to{clip-path:polygon(0 0,100% 0,90% 100%,0 100%)}}@keyframes d{from{transform:translateX(-80px) scale(.9)}to{transform:translateX(80px) scale(1.05)}}",
+						'<div class="a"></div><div class="b">CLIP · MASK · BLUR</div>', "")],
+					// Scoreboard: 300 cells of text rewritten every frame.
+					[{ left: 40, top: 790, width: 900, height: 260 }, page(
+						"#b{display:grid;grid-template-columns:repeat(20,1fr);gap:2px;font:16px monospace}#b div{background:rgba(20,30,80,.8);padding:4px;text-align:center}",
+						'<div id="b"></div>',
+						`const b=document.getElementById("b"),C=[];for(let i=0;i<300;i++){const d=document.createElement("div");b.append(d);C.push(d)}
+						 (function f(t){for(let i=0;i<300;i++)C[i].textContent=((t/10+i*37)|0)%1000;requestAnimationFrame(f)})(0);`)],
+				];
+				for (const [box, html] of titles) {
+					const frame = document.createElement("iframe");
+					frame.className = "title";
+					frame.setAttribute("sandbox", "allow-scripts");
+					Object.assign(frame.style, {
+						left: `${box.left}px`,
+						top: `${box.top}px`,
+						width: `${box.width}px`,
+						height: `${box.height}px`,
+					});
+					frame.srcdoc = html;
+					document.body.append(frame);
+				}
 			}
 			show();
 			if (mode !== "still")

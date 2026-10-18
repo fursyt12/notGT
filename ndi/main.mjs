@@ -18,6 +18,8 @@ import {
 	ServerClient,
 	clampFps,
 	evenSize,
+	followServer,
+	tokenFrom,
 } from "./src/controller.mjs";
 
 const require = createRequire(import.meta.url);
@@ -122,8 +124,6 @@ app
 async function start() {
 	const { loadNdi, NdiMissingError, REDIST_URL, discoveryProblem } =
 		await import("./src/ndi.mjs");
-	let discovery = discoveryProblem();
-	if (discovery) log(discovery);
 	const { Output } = await import("./src/output.mjs");
 
 	let gpu = false;
@@ -196,7 +196,7 @@ async function start() {
 		}
 	};
 	tryLoad();
-	if (!ndi && typeof args.url === "string") {
+	if (!ndi && typeof args.url === "string" && !args.worker) {
 		app.exit(2);
 		return;
 	}
@@ -215,9 +215,11 @@ async function start() {
 	});
 
 	let stopping = false;
+	let stopFollowing = () => {};
 	function shutdown() {
 		if (stopping) return;
 		stopping = true;
+		stopFollowing();
 		controller.stopAll();
 		ndi?.destroy();
 		app.exit(0);
@@ -225,7 +227,27 @@ async function start() {
 	process.on("SIGINT", shutdown);
 	process.on("SIGTERM", shutdown);
 
-	if (typeof args.url === "string") {
+	if (args.worker) {
+		// One out, for bin/notgt-ndi.mjs (src/workers.mjs): its config comes
+		// on the command line, its status goes back over IPC, and it ends
+		// when the sender that started it does.
+		const config = JSON.parse(
+			Buffer.from(String(args.config ?? ""), "base64").toString("utf8"),
+		);
+		controller.apply([config]);
+		const report = () =>
+			process.send?.({
+				type: "status",
+				out: controller.status()[0],
+				ndi: ndi?.version ?? "",
+			});
+		report();
+		setInterval(report, 1000);
+		process.on("message", (message) => {
+			if (message?.type === "stop") shutdown();
+		});
+		process.on("disconnect", shutdown);
+	} else if (typeof args.url === "string") {
 		const [w, h] = String(args.size || "1920x1080")
 			.split(/[x×]/)
 			.map(Number);
@@ -250,70 +272,33 @@ async function start() {
 		const server = String(
 			args.server || process.env.NOTGT_SERVER || "http://127.0.0.1:9090",
 		);
-		const tokenFile =
-			typeof args["token-file"] === "string"
-				? args["token-file"]
-				: process.env.NOTGT_TOKEN_FILE;
-		const fixedToken =
-			typeof args.token === "string" ? args.token : process.env.NOTGT_TOKEN;
-		// A file is read on every request: the server rewrites it when the key
-		// is replaced, and it may not be there yet when the sender starts.
-		const token = tokenFile
-			? () => {
-					try {
-						return fs.readFileSync(tokenFile, "utf8").trim() || fixedToken;
-					} catch {
-						return fixedToken;
-					}
-				}
-			: fixedToken;
-		const client = new ServerClient({ server, token });
-		const senderId =
-			typeof args.id === "string"
-				? args.id
-				: process.env.NOTGT_NDI_ID || os.hostname();
-		const pollMs = Math.max(500, Number(args.poll) || 2000);
-		let lastProblem = "";
-		log(`following ${server}`);
-
-		const tick = async () => {
-			try {
-				controller.apply(await client.outputs());
-				// Checked every round: starting Avahi is enough, no restart.
-				const now = discoveryProblem();
-				if (now !== discovery)
-					log(now ?? "avahi-daemon is running: receivers can find the sources");
-				discovery = now;
-				await client.report({
-					id: senderId,
-					host: os.hostname(),
-					platform: `${process.platform}-${process.arch}`,
-					version,
-					ndi: ndi?.version ?? "",
-					outs: controller
-						.status()
-						.map((out) =>
-							discovery && !out.warning && !out.error
-								? { ...out, warning: discovery }
-								: out,
-						),
-				});
-				if (lastProblem) log("the server answers again");
-				lastProblem = "";
-			} catch (error) {
-				const problem = error.cause?.code ?? error.message;
-				// The sources stay as they were while the server is away; a key
-				// the server refuses (replaced in the dashboard) takes them down.
-				if (error.refused) controller.apply([]);
-				if (problem !== lastProblem) {
-					const cause = error.cause?.code ? ` (${error.cause.code})` : "";
-					log(`server ${server}: ${error.message}${cause}; trying again`);
-				}
-				lastProblem = problem;
-			}
-			if (!stopping) setTimeout(tick, pollMs);
-		};
-		tick();
+		const token = tokenFrom({
+			tokenFile:
+				typeof args["token-file"] === "string"
+					? args["token-file"]
+					: process.env.NOTGT_TOKEN_FILE,
+			token:
+				typeof args.token === "string" ? args.token : process.env.NOTGT_TOKEN,
+			read: (file) => fs.readFileSync(file, "utf8"),
+		});
+		stopFollowing = followServer({
+			client: new ServerClient({ server, token }),
+			controller,
+			server,
+			sender: {
+				id:
+					typeof args.id === "string"
+						? args.id
+						: process.env.NOTGT_NDI_ID || os.hostname(),
+				host: os.hostname(),
+				platform: `${process.platform}-${process.arch}`,
+				version,
+			},
+			ndiVersion: () => ndi?.version ?? "",
+			discoveryProblem,
+			log,
+			pollMs: Math.max(500, Number(args.poll) || 2000),
+		});
 	}
 }
 

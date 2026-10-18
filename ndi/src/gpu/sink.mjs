@@ -28,6 +28,8 @@ const START_MS = 10_000;
  * frame ever comes.
  */
 const FIRST_FRAME_MS = 5000;
+/** How long a frame may stay with the processor before the converter is given up. */
+const STUCK_MS = 3000;
 
 export class GpuSink {
 	/**
@@ -58,6 +60,8 @@ export class GpuSink {
 		this.out = new Map();
 		/** The newest paint that had to wait. */
 		this.waiting = undefined;
+		/** When each texture with the processor went to it. */
+		this.sentAt = new Map();
 
 		const window = new BrowserWindow({
 			show: false,
@@ -98,6 +102,17 @@ export class GpuSink {
 			() => this.fail("the GPU processor did not start in time"),
 			START_MS,
 		);
+		// A frame the processor never gives back stalls the out for good: the
+		// textures it holds are the ones Chromium paints into.
+		this.watchdog = setInterval(() => {
+			const now = Date.now();
+			for (const sentAt of this.sentAt.values()) {
+				if (now - sentAt > STUCK_MS) {
+					this.fail(`the GPU processor has not finished a frame in ${STUCK_MS / 1000} s`);
+					return;
+				}
+			}
+		}, 1000);
 		contents
 			.loadFile(PAGE, {
 				query: {
@@ -167,6 +182,7 @@ export class GpuSink {
 	async pass(texture) {
 		const id = ++this.nextId;
 		this.out.set(id, texture);
+		this.sentAt.set(id, Date.now());
 		let imported;
 		try {
 			imported = sharedTexture.importSharedTexture({
@@ -194,6 +210,7 @@ export class GpuSink {
 		const texture = this.out.get(id);
 		if (!texture) return;
 		this.out.delete(id);
+		this.sentAt.delete(id);
 		texture.release();
 		this.passWaiting();
 	}
@@ -213,6 +230,7 @@ export class GpuSink {
 	fail(reason) {
 		if (this.failed) return;
 		this.failed = true;
+		clearInterval(this.watchdog);
 		clearTimeout(this.startTimer);
 		clearTimeout(this.frameTimer);
 		this.dropWaiting();
@@ -226,11 +244,13 @@ export class GpuSink {
 
 	/** Takes the NDI source down; resolves once it is gone. */
 	stop() {
+		clearInterval(this.watchdog);
 		clearTimeout(this.startTimer);
 		clearTimeout(this.frameTimer);
 		this.dropWaiting();
 		for (const texture of this.out.values()) texture.release();
 		this.out.clear();
+		this.sentAt.clear();
 		const window = this.window;
 		if (!window || window.isDestroyed()) return Promise.resolve();
 		return new Promise((resolve) => {

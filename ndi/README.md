@@ -36,6 +36,15 @@ little as it can:
   JavaScript, with nothing to compile; where it cannot run, the plain loops do.
 - **Never more frames than the out's rate.** When Chromium paints faster than asked, the
   paints in between are merged and only the newest is converted and sent.
+- **Every out in a process of its own.** With a server, the sender is a small supervisor
+  that runs each out in an Electron of its own: each gets its own Chromium GPU process
+  and its own cores, and an out that crashes is started again by itself, the others
+  untouched. In one process, every out's drawing goes through one GPU process, which
+  turned four outs of heavy code titles at 1080p60 into 13–20 new frames a second
+  each; a process each gave them 48–50 on the same machine (a Radeon 780M, where the GPU
+  itself is then the limit). Each process costs memory — about 0.7 GB for an out drawn
+  on the CPU, 1.2 GB for a heavy one — so `--one-process` (or `NOTGT_NDI_ONE_PROCESS=1`)
+  keeps them all in one, for many light outs or a small machine.
 - **NDI works on its own threads.** Frames are handed over without waiting; compression
   and sending run inside the NDI library while the next frame is being drawn.
 - **The GPU where there is a real one.** `--render auto` (the default) draws on the GPU
@@ -151,6 +160,7 @@ needs no key, unless `apiToken` is set — then `--token` is the `apiToken`.
 | `--id <name>`     | the host name           | how this sender is named in the dashboard                                |
 | `--poll <ms>`     | `2000`                  | how often it asks the server what to send                                |
 | `--render <how>`  | `auto`                  | `auto`: the GPU where there is a real one, else the CPU; `gpu`; `cpu` (also `NOTGT_NDI_RENDER`, `--gpu`, `--cpu`) |
+| `--one-process`   | off                     | every out in one Electron instead of one each (also `NOTGT_NDI_ONE_PROCESS=1`) |
 | `--converter <c>` | `webgl`                 | with the GPU: `webgl`, or `native` (beta, above) — also `NOTGT_NDI_CONVERTER` |
 | `--url <page>`    | —                       | send this one page instead of asking a server (any page, not just notGT) |
 | `--name <source>` | `notGT`                 | with `--url`: the NDI name                                               |

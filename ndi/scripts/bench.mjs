@@ -5,7 +5,7 @@
  * memory), what comes out (frame rate, fresh frames, latency) and whether it
  * is right (known colours and alpha, checked in what the receiver gets).
  *
- *   node scripts/bench.mjs [--render auto|gpu|cpu] [--page still|lower|full]
+ *   node scripts/bench.mjs [--render auto|gpu|cpu] [--page still|lower|full|heavy]
  *        [--outs 1] [--size 1920x1080] [--fps 30] [--seconds 10] [--opaque]
  *        [--ips 127.0.0.1] [--json] [--log] [--every 60]
  *
@@ -55,6 +55,9 @@ const PATCHES = [
 const TOLERANCE = { colour: 16, alpha: 4 };
 const STAMP_WRAP = 2 ** 24;
 
+/** The first source's number (--first). */
+let firstSource = 1;
+
 if (isMainThread) await main();
 else await receive(workerData);
 
@@ -75,7 +78,10 @@ async function main() {
 		alpha: !args.opaque,
 		ips: typeof args.ips === "string" ? args.ips : "127.0.0.1",
 		every: Number(args.every) || 0,
+		// --first <n>: number the sources from n, for several benches at once.
+		first: Math.max(1, Number(args.first) || 1),
 	};
+	firstSource = options.first;
 	const say = args.json ? () => {} : (line) => console.log(line);
 
 	const gpuBefore = gpuMemory();
@@ -210,7 +216,7 @@ async function main() {
 }
 
 function sourceName(i) {
-	return `notGT bench ${i + 1}`;
+	return `notGT bench ${i + firstSource}`;
 }
 
 /** The notGT server, as far as the sender needs one. */
