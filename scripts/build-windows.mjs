@@ -85,6 +85,7 @@ function parseArgs(argv) {
 		appOnly: false,
 		prodRoot: null,
 		ndi: true,
+		nativeNdi: false,
 		help: false,
 	};
 	for (let i = 0; i < argv.length; i++) {
@@ -118,6 +119,9 @@ function parseArgs(argv) {
 				break;
 			case "--no-ndi":
 				opts.ndi = false;
+				break;
+			case "--native-ndi":
+				opts.nativeNdi = true;
 				break;
 			case "--help":
 			case "-h":
@@ -904,7 +908,66 @@ function assembleNdiSender() {
 			);
 		}
 	}
+	if (opts.nativeNdi) addNativeNdiTest(dest);
 	log(`NDI sender: ${human(dirSize(dest))}`);
+}
+
+/**
+ * --native-ndi: the native converter's addon for Windows (built by
+ * `npm run build:native` in ndi/ before this), the benchmark's page, and two
+ * ways in at the top of the package — notGT with the native converter, and
+ * the diagnostics that collect what to send back. Nothing changes for anyone
+ * who does not start those: the default converter stays WebGL2.
+ */
+function addNativeNdiTest(dest) {
+	const addon = "notgt-ndi-native.win32-x64.node";
+	const built = path.join(NDI_DIR, "native", addon);
+	if (!exists(built)) {
+		throw new Error(
+			`--native-ndi: ndi\\native\\${addon} is not built (run npm run build:native in ndi/ first)`,
+		);
+	}
+	fs.mkdirSync(path.join(dest, "native"), { recursive: true });
+	fs.copyFileSync(built, path.join(dest, "native", addon));
+	fs.mkdirSync(path.join(dest, "test", "fixtures"), { recursive: true });
+	fs.copyFileSync(
+		path.join(NDI_DIR, "test", "fixtures", "bench.html"),
+		path.join(dest, "test", "fixtures", "bench.html"),
+	);
+	const cmd = (lines) => [
+		"@echo off",
+		"rem This file is UTF-8; switch the console so the text renders.",
+		"chcp 65001 >nul 2>nul",
+		"setlocal",
+		'pushd "%~dp0" || exit /b 1',
+		...lines,
+		"",
+	].join("\r\n");
+	fs.writeFileSync(
+		path.join(PACKAGE_DIR, "NDI test - native converter.cmd"),
+		cmd([
+			"echo notGT: NDI diagnostics - the native (Rust + Vulkan) converter against WebGL2.",
+			"echo About two minutes; close notGT first. Needs NDI Tools or the NDI runtime.",
+			"echo If Windows Firewall asks about node.exe, allow it: the test receives its own NDI sources.",
+			"echo.",
+			'cd ndi || exit /b 1',
+			'"..\\node\\node.exe" "scripts\\diagnose.mjs" %*',
+			"echo.",
+			"pause",
+		]),
+		"utf8",
+	);
+	fs.writeFileSync(
+		path.join(PACKAGE_DIR, "notGT - native NDI converter.cmd"),
+		cmd([
+			"rem notGT as usual, with the NDI sender converting frames natively",
+			"rem (Rust + Vulkan); it falls back to WebGL2 and says why if it cannot.",
+			"set NOTGT_NDI_CONVERTER=native",
+			'call "%~dp0notGT.cmd" %*',
+		]),
+		"utf8",
+	);
+	log(`--native-ndi: ${addon}, the benchmark and the test .cmd files added`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,6 +1206,10 @@ async function main() {
 				"  --prod-root  use an already installed production tree instead of\n" +
 				"               running `npm ci --omit=dev` in a staging directory\n" +
 				"  --no-ndi     leave the NDI sender (and its Electron) out of the package",
+				"  --native-ndi a test build of the native NDI converter: its addon",
+				"               (ndi\\native, built first by npm run build:native in ndi/),",
+				"               the benchmark, and two .cmd files to run notGT with it and",
+				"               to collect diagnostics; the default converter stays WebGL2",
 		);
 		return;
 	}

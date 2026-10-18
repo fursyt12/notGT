@@ -1,0 +1,148 @@
+# A Windows test build of the native NDI converter (Rust + Vulkan): the usual
+# Windows package, plus the converter's addon, the NDI benchmark, and two
+# .cmd files at its top — notGT with the native converter selected, and the
+# diagnostics that collect what to send back (ndi/scripts/diagnose.mjs).
+# The default converter stays WebGL2: nothing changes for anyone who does not
+# start those.
+#
+#   push to ndi-native-test -> build, upload the zip as a workflow artifact
+#   manual run              -> the same; fill in `prerelease` to also publish
+#                              it as a GitHub pre-release (a direct link)
+#
+# The regular packages and releases are release.yml's; this never touches them.
+name: NDI native test build
+
+on:
+  push:
+    branches:
+      - ndi-native-test
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Tag to publish the build under as a pre-release (e.g. ndi-native-test-1). Leave empty for the artifact only."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: notGT-win-x64 with the native NDI converter
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            bundles/notGT/package-lock.json
+
+      - name: Set up Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ndi/native/target
+          key: cargo-windows-${{ hashFiles('ndi/native/**/Cargo.toml', 'ndi/native/Cargo.lock') }}
+
+      # The converter's arithmetic, layouts and frame rates; the Vulkan tests
+      # need a GPU, which the runner has not.
+      - name: Test the native converter (no GPU)
+        working-directory: ndi/native
+        run: cargo test --release -p notgt-ndi-core
+
+      # glslc is not on the runner: the committed convert.spv is used.
+      - name: Build the native converter
+        working-directory: ndi
+        run: node scripts/build-native.mjs
+
+      - name: Install monorepo dependencies
+        run: npm ci
+
+      - name: Build NodeCG workspaces
+        run: npm run build
+
+      - name: Install bundle dependencies
+        working-directory: bundles/notGT
+        run: npm ci
+
+      - name: Build the notGT bundle
+        working-directory: bundles/notGT
+        run: npm run build
+
+      - name: Ensure a Windows C compiler for the launcher
+        shell: pwsh
+        run: |
+          $gcc = Get-Command x86_64-w64-mingw32-gcc -ErrorAction SilentlyContinue
+          if (-not $gcc) {
+            foreach ($dir in @("C:\mingw64\bin", "C:\ProgramData\mingw64\mingw64\bin", "C:\tools\mingw64\bin")) {
+              if (Test-Path (Join-Path $dir "x86_64-w64-mingw32-gcc.exe")) {
+                Add-Content -Path $env:GITHUB_PATH -Value $dir
+                $gcc = $true
+                break
+              }
+            }
+          }
+          if (-not $gcc) { choco install mingw -y --no-progress }
+
+      - name: Build the Windows package with the native converter
+        run: node scripts/build-windows.mjs --node-version 22.14.0 --smoke --native-ndi
+
+      # The addon has to load in the package's own Node, and the probe has to
+      # run (the runner has no GPU: it says so, which is the point here).
+      - name: Check the packaged addon loads
+        shell: pwsh
+        working-directory: dist/notGT-win-x64/ndi
+        run: |
+          ..\node\node.exe -e "import('./src/native.mjs').then(m => { const n = m.loadNative(); if (!n.module) { console.error(n.why); process.exit(1) } for (const l of m.describeProbe(n.module.probe())) console.log(l) })"
+          if (-not (Test-Path "..\NDI test - native converter.cmd")) { throw "the diagnostics .cmd is missing" }
+
+      - name: Name the test zip
+        shell: pwsh
+        run: Move-Item dist/notGT-win-x64.zip dist/notGT-win-x64-ndi-native-test.zip
+
+      - name: Upload the test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: notGT-win-x64-ndi-native-test
+          path: dist/notGT-win-x64-ndi-native-test.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish as a pre-release
+        if: ${{ inputs.prerelease != '' && inputs.prerelease != null }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.prerelease }}
+          target_commitish: ${{ github.sha }}
+          name: "notGT NDI native converter test (${{ inputs.prerelease }})"
+          prerelease: true
+          make_latest: false
+          files: dist/notGT-win-x64-ndi-native-test.zip
+          body: |
+            A **test build** of the native NDI converter (Rust + Vulkan) for Windows. Not a release: the default converter is still WebGL2.
+
+            1. Install NDI Tools (or the NDI runtime) if it is not there.
+            2. Unzip, close notGT if it runs, and double-click **`NDI test - native converter.cmd`**. It takes about two minutes and writes `notgt-ndi-diagnostics-….zip` to the Desktop. Send that file back.
+            3. To use the native converter live: **`notGT - native NDI converter.cmd`** starts notGT with it. The NDI sender falls back to WebGL2, and says why, if it cannot work.

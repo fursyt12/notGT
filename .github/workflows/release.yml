@@ -56,6 +56,34 @@ jobs:
             package-lock.json
             bundles/notGT/package-lock.json
 
+      # The NDI sender's native converter (ndi/native, Rust + Vulkan): built
+      # here and shipped in the package; the sender's default converter stays
+      # WebGL2, the native one is chosen with NOTGT_NDI_CONVERTER=native.
+      - name: Set up Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ndi/native/target
+          key: cargo-windows-${{ hashFiles('ndi/native/**/Cargo.toml', 'ndi/native/Cargo.lock') }}
+
+      # Its arithmetic, layouts and frame rates; the Vulkan tests need a GPU.
+      - name: Test the native NDI converter (no GPU)
+        working-directory: ndi/native
+        run: cargo test --release -p notgt-ndi-core
+
+      - name: Build the native NDI converter
+        working-directory: ndi
+        run: node scripts/build-native.mjs
+
       # Build the NodeCG monorepo exactly like local development does.
       - name: Install monorepo dependencies
         run: npm ci
@@ -106,7 +134,15 @@ jobs:
         # --smoke starts the packaged server with the packaged node.exe and
         # checks the dashboard, the out page, the API and the database, so a
         # package that cannot start on Windows fails here instead of shipping.
-        run: node scripts/build-windows.mjs --node-version 22.14.0 --smoke
+        run: node scripts/build-windows.mjs --node-version 22.14.0 --smoke --native-ndi
+
+      # The converter's addon has to load in the package's own Node, and its
+      # probe has to run (the runner has no GPU: it says so).
+      - name: Check the native NDI converter loads
+        shell: pwsh
+        working-directory: dist/notGT-win-x64/ndi
+        run: |
+          ..\node\node.exe -e "import('./src/native.mjs').then(m => { const n = m.loadNative(); if (!n.module) { console.error(n.why); process.exit(1) } for (const l of m.describeProbe(n.module.probe())) console.log(l) })"
 
       # Fail loudly rather than publishing a build without the launcher.
       - name: Assert the launcher executable exists
@@ -255,13 +291,22 @@ jobs:
             cat "$NOTES/install.ru.md"
           } > release-body.md
 
+          # A beta: docs/release-notes/<tag>.prerelease exists. It goes out as a
+          # pre-release, never as the latest release.
+          TITLE="notGT $TAG"
+          KIND=()
+          if [ -f "$NOTES/$TAG.prerelease" ]; then
+            TITLE="notGT $TAG (beta)"
+            KIND=(--prerelease --latest=false)
+          fi
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists — updating the notes and the assets."
-            gh release edit "$TAG" --notes-file release-body.md
+            gh release edit "$TAG" --title "$TITLE" --notes-file release-body.md "${KIND[@]}"
             gh release upload "$TAG" packages/notGT-win-x64.zip packages/notGT-macos-arm64.zip --clobber
           else
             echo "Creating release $TAG."
             gh release create "$TAG" packages/notGT-win-x64.zip packages/notGT-macos-arm64.zip \
-              --title "notGT $TAG" \
-              --notes-file release-body.md
+              --title "$TITLE" \
+              --notes-file release-body.md "${KIND[@]}"
           fi
