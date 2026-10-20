@@ -229,8 +229,21 @@ fn a_gpu_frame_is_drawn_from_its_nt_handle() {
 		.flat_map(|row| row[8..24].to_vec())
 		.collect();
 	close_enough(&sender.read_back().unwrap(), &want);
+	assert!(sent.opened, "the first frame opens the texture");
+	// The same texture again, with a handle of its own, as Electron hands every
+	// frame — the first one closed: kept open, not opened again.
+	let again = unsafe {
+		texture.as_ref().unwrap().cast::<IDXGIResource1>().unwrap().CreateSharedHandle(None, DXGI_SHARED_RESOURCE_READ.0, None)
+	}
+	.unwrap();
 	unsafe {
 		let _ = CloseHandle(handle);
+	}
+	let sent = sender.send_shared(again.0 as usize, (2, 1, 4, 2)).unwrap();
+	assert!(!sent.opened, "the same texture is not opened again");
+	close_enough(&sender.read_back().unwrap(), &want);
+	unsafe {
+		let _ = CloseHandle(again);
 	}
 }
 

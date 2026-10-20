@@ -49,7 +49,7 @@ export class SpoutSink {
 		this.busy = false;
 		/** The newest paint that had to wait: a texture, or a bitmap's rectangle. */
 		this.waiting = undefined;
-		this.totals = { frames: 0, skipped: 0, gpuMs: 0, totalMs: 0 };
+		this.totals = { frames: 0, opened: 0, skipped: 0, gpuMs: 0, totalMs: 0 };
 		this.tally = tally;
 		/** When a frame was last written for receivers. */
 		this.wroteAt = undefined;
@@ -171,6 +171,7 @@ export class SpoutSink {
 				} else {
 					this.sent++;
 					t.frames++;
+					if (done.opened) t.opened++;
 					t.gpuMs += done.gpuMs;
 					t.totalMs += done.totalMs;
 					this.wrote(done.totalMs);
@@ -214,8 +215,8 @@ export class SpoutSink {
 	report() {
 		const t = this.totals;
 		const n = t.frames || 1;
-		const line = `${t.frames} frames shared${t.skipped ? ` (${t.skipped} dropped: a receiver held the texture)` : ""}, ${(t.gpuMs / n).toFixed(1)} ms on the GPU and ${(t.totalMs / n).toFixed(1)} ms in all each`;
-		this.totals = { frames: 0, skipped: 0, gpuMs: 0, totalMs: 0 };
+		const line = `${t.frames} frames shared (${t.opened} textures of Chromium's opened)${t.skipped ? ` (${t.skipped} dropped: a receiver held the texture)` : ""}, ${(t.gpuMs / n).toFixed(1)} ms on the GPU and ${(t.totalMs / n).toFixed(1)} ms in all each`;
+		this.totals = { frames: 0, opened: 0, skipped: 0, gpuMs: 0, totalMs: 0 };
 		return line;
 	}
 

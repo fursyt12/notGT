@@ -28,7 +28,10 @@ use std::ffi::{c_void, CString};
 use std::time::{Duration, Instant};
 
 use windows::core::{Interface, PCSTR};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE, INVALID_HANDLE_VALUE, WAIT_ABANDONED, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{
+	CloseHandle, CompareObjectHandles, DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, HMODULE, INVALID_HANDLE_VALUE,
+	WAIT_ABANDONED, WAIT_OBJECT_0,
+};
 use windows::Win32::Globalization::{MultiByteToWideChar, WideCharToMultiByte, CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS};
 use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
 use windows::Win32::Graphics::Direct3D::{
@@ -44,7 +47,9 @@ use windows::Win32::System::Memory::{
 	MEMORY_BASIC_INFORMATION, MEMORY_MAPPED_VIEW_ADDRESS, PAGE_READWRITE,
 };
 use windows::Win32::System::Registry::{RegGetValueA, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
-use windows::Win32::System::Threading::{CreateMutexA, CreateSemaphoreA, ReleaseMutex, ReleaseSemaphore, WaitForSingleObject};
+use windows::Win32::System::Threading::{
+	CreateMutexA, CreateSemaphoreA, GetCurrentProcess, ReleaseMutex, ReleaseSemaphore, WaitForSingleObject,
+};
 
 /// What can go wrong, said for the log and the dashboard.
 pub type Result<T> = std::result::Result<T, String>;
@@ -57,6 +62,8 @@ const LOCK_MS: u32 = 67;
 const INFO_LEN: usize = 280;
 /// How long the GPU may take to draw one frame before the sender gives up.
 const GPU_TIMEOUT: Duration = Duration::from_secs(2);
+/// Chromium's textures kept open: it draws into a few of them in turn.
+const OPENED: usize = 8;
 
 const SHADER: &str = r"
 cbuffer Params : register(b0) { int2 origin; int opaque; int pad; };
@@ -409,6 +416,8 @@ pub struct Sent {
 	pub height: u32,
 	/// A receiver held the texture too long: this frame was not written.
 	pub skipped: bool,
+	/// Chromium's texture was opened for this frame, not kept from before.
+	pub opened: bool,
 	pub gpu_ms: f64,
 	pub total_ms: f64,
 }
@@ -419,6 +428,17 @@ struct Target {
 	view: ID3D11RenderTargetView,
 	width: u32,
 	height: u32,
+}
+
+/// One of Chromium's textures, opened once and kept: opening it again for
+/// every frame costs a call into the driver each time. Known by what it is,
+/// not by the handle it comes with — every frame brings a handle of its own,
+/// and Windows gives a closed handle's value out again — through a handle of
+/// this process's own on it, which the next ones are compared against.
+struct Opened {
+	handle: Owned,
+	view: ID3D11ShaderResourceView,
+	used: u64,
 }
 
 /// Frames drawn on the CPU go through this texture.
@@ -441,6 +461,8 @@ pub struct Sender {
 	adapter: String,
 	target: Option<Target>,
 	upload: Option<Upload>,
+	opened: Vec<Opened>,
+	tick: u64,
 	reg: Registration,
 	/// False only in tests where textures cannot be shared (wine).
 	share: bool,
@@ -592,6 +614,8 @@ impl Sender {
 			adapter,
 			target: None,
 			upload: None,
+			opened: Vec::new(),
+			tick: 0,
 			reg,
 			share,
 		})
@@ -659,12 +683,36 @@ impl Sender {
 	/// texture. Returns once the GPU is done reading it.
 	pub fn send_shared(&mut self, nt_handle: usize, visible: (u32, u32, u32, u32)) -> Result<Sent> {
 		let began = Instant::now();
+		let (view, opened) = self.view_of(HANDLE(nt_handle as *mut c_void))?;
+		let mut sent = self.draw(&view, visible, began)?;
+		sent.opened = opened;
+		Ok(sent)
+	}
+
+	/// A view of the texture `handle` is on: kept from before, or opened now (true).
+	fn view_of(&mut self, handle: HANDLE) -> Result<(ID3D11ShaderResourceView, bool)> {
+		self.tick += 1;
+		let tick = self.tick;
+		if let Some(o) = self.opened.iter_mut().find(|o| unsafe { CompareObjectHandles(handle, o.handle.0) }.as_bool()) {
+			o.used = tick;
+			return Ok((o.view.clone(), false));
+		}
 		let device: ID3D11Device1 = self.device.cast().map_err(fail("Direct3D 11.1"))?;
-		let frame: ID3D11Texture2D =
-			unsafe { device.OpenSharedResource1(HANDLE(nt_handle as *mut c_void)) }.map_err(fail("Chromium's frame"))?;
+		let frame: ID3D11Texture2D = unsafe { device.OpenSharedResource1(handle) }.map_err(fail("Chromium's frame"))?;
 		let mut view = None;
 		unsafe { self.device.CreateShaderResourceView(&frame, None, Some(&mut view)) }.map_err(fail("Chromium's frame's view"))?;
-		self.draw(&view.unwrap(), visible, began)
+		let view = view.unwrap();
+		let mut own = HANDLE::default();
+		let me = unsafe { GetCurrentProcess() };
+		// With no handle of its own the texture cannot be known again: opened anew next time.
+		if unsafe { DuplicateHandle(me, handle, me, &mut own, 0, false, DUPLICATE_SAME_ACCESS) }.is_ok() {
+			if self.opened.len() >= OPENED {
+				let oldest = (0..self.opened.len()).min_by_key(|&i| self.opened[i].used).unwrap();
+				self.opened.swap_remove(oldest);
+			}
+			self.opened.push(Opened { handle: Owned(own), view: view.clone(), used: tick });
+		}
+		Ok((view, true))
 	}
 
 	/// A frame drawn on the CPU (premultiplied BGRA): `pixels` hold the

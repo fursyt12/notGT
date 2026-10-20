@@ -69,6 +69,8 @@ pub struct SpoutSent {
 	pub height: u32,
 	/// A receiver held the texture too long: the frame was dropped.
 	pub skipped: bool,
+	/// Chromium's texture was opened for this frame, not kept from before.
+	pub opened: bool,
 	pub gpu_ms: f64,
 	pub total_ms: f64,
 }
@@ -109,6 +111,7 @@ impl Task for SpoutTask {
 				width: sent.width,
 				height: sent.height,
 				skipped: sent.skipped,
+				opened: sent.opened,
 				gpu_ms: sent.gpu_ms,
 				total_ms: sent.total_ms,
 			})
