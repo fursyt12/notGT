@@ -256,11 +256,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  # Publishes both packages as one GitHub Release. It waits for both builds: a
-  # release never goes out with one of its packages missing.
+  # Publishes the packages as one GitHub Release. It goes out once the Windows
+  # package is built, whatever became of the macOS one: GitHub's macOS arm64
+  # runners are sometimes not to be had for hours ("not acquired ... even after
+  # multiple attempts"), and the release should not wait for them. A macOS
+  # build that gets through later — "Re-run failed jobs", which runs this job
+  # again, or the tag pushed again — adds its zip to the same release.
   release:
     name: Publish the GitHub Release
-    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    if: >-
+      always() &&
+      needs.windows-package.result == 'success' &&
+      (startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != '')
     needs: [windows-package, macos-package]
     runs-on: ubuntu-latest
 
@@ -318,13 +325,22 @@ jobs:
             KIND=(--prerelease --latest=false)
           fi
 
+          # What was built: Windows always (this job needs it), macOS when its
+          # build got through.
+          ASSETS=(packages/notGT-win-x64.zip)
+          if [ -f packages/notGT-macos-arm64.zip ]; then
+            ASSETS+=(packages/notGT-macos-arm64.zip)
+          else
+            echo "::warning::The macOS package was not built (${{ needs.macos-package.result }}): the release goes out with Windows only. Re-run the failed jobs to add it."
+          fi
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists — updating the notes and the assets."
             gh release edit "$TAG" --title "$TITLE" --notes-file release-body.md "${KIND[@]}"
-            gh release upload "$TAG" packages/notGT-win-x64.zip packages/notGT-macos-arm64.zip --clobber
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
             echo "Creating release $TAG."
-            gh release create "$TAG" packages/notGT-win-x64.zip packages/notGT-macos-arm64.zip \
+            gh release create "$TAG" "${ASSETS[@]}" \
               --title "$TITLE" \
               --notes-file release-body.md "${KIND[@]}"
           fi
