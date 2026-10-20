@@ -73,7 +73,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ndi/native/target
-          key: cargo-windows-${{ hashFiles('ndi/native/**/Cargo.toml', 'ndi/native/Cargo.lock') }}
+            spout/native/target
+          key: cargo-windows-${{ hashFiles('ndi/native/**/Cargo.toml', 'ndi/native/Cargo.lock', 'spout/native/**/Cargo.toml', 'spout/native/Cargo.lock') }}
 
       # Its arithmetic, layouts and frame rates; the Vulkan tests need a GPU.
       - name: Test the native NDI converter (no GPU)
@@ -82,6 +83,17 @@ jobs:
 
       - name: Build the native NDI converter
         working-directory: ndi
+        run: node scripts/build-native.mjs
+
+      # The Spout library's addon (spout/native, Rust + D3D11), which the
+      # sender loads for the outs shared over Spout. Its tests open what they
+      # share as a receiver would; WARP stands in for the GPU.
+      - name: Test the Spout sender
+        working-directory: spout/native
+        run: cargo test --release -p notgt-spout-core
+
+      - name: Build the Spout addon
+        working-directory: spout
         run: node scripts/build-native.mjs
 
       # Build the NodeCG monorepo exactly like local development does.
@@ -143,6 +155,12 @@ jobs:
         working-directory: dist/notGT-win-x64/ndi
         run: |
           ..\node\node.exe -e "import('./src/native.mjs').then(m => { const n = m.loadNative(); if (!n.module) { console.error(n.why); process.exit(1) } for (const l of m.describeProbe(n.module.probe())) console.log(l) })"
+
+      - name: Check the Spout addon loads
+        shell: pwsh
+        working-directory: dist/notGT-win-x64/spout
+        run: |
+          ..\node\node.exe -e "import('./index.mjs').then(m => { const s = m.loadSpout(); if (!s.module) { console.error(s.why); process.exit(1) } console.log('Spout addon: ' + s.file) })"
 
       # Fail loudly rather than publishing a build without the launcher.
       - name: Assert the launcher executable exists

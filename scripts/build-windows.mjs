@@ -11,6 +11,7 @@
  *     launcher/ui.html
  *     ndi/                    the NDI sender (Electron for Windows), started by
  *                             the launcher with the server (--no-ndi: left out)
+ *     spout/                  the Spout library the sender loads (left out with it)
  *     node/node.exe           official Windows Node runtime (nothing else of it)
  *     app/                    NodeCG runtime root
  *       index.js, package.json
@@ -64,6 +65,7 @@ const LAUNCHER_EXE_NAME = "notGT Launcher.exe";
 const BUNDLE_DIR = path.join(REPO_ROOT, "bundles", "notGT");
 const LAUNCHER_DIR = path.join(REPO_ROOT, "launcher");
 const NDI_DIR = path.join(REPO_ROOT, "ndi");
+const SPOUT_DIR = path.join(REPO_ROOT, "spout");
 const LAUNCHER_C_SRC = path.join(LAUNCHER_DIR, "win", "notGT-launcher.c");
 /** The NodeCG server, relative to the root of an installed tree. */
 const SERVER_ENTRY = path.join(
@@ -970,6 +972,29 @@ function addNativeNdiTest(dest) {
 	log(`--native-ndi: ${addon}, the benchmark and the test .cmd files added`);
 }
 
+/**
+ * The Spout library the sender loads on Windows (spout/): its sources and,
+ * when it is built (`npm run build:native` in spout/, on Windows), its addon.
+ * Without the addon the sender runs as before and its Spout outs say why.
+ */
+function assembleSpout() {
+	const dest = path.join(PACKAGE_DIR, "spout");
+	fs.mkdirSync(dest, { recursive: true });
+	copyTree(path.join(SPOUT_DIR, "src"), path.join(dest, "src"));
+	for (const name of ["index.mjs", "package.json", "README.md", "README_RU.md"]) {
+		fs.copyFileSync(path.join(SPOUT_DIR, name), path.join(dest, name));
+	}
+	const addon = "notgt-spout-native.win32-x64.node";
+	const built = path.join(SPOUT_DIR, "native", addon);
+	if (exists(built)) {
+		fs.mkdirSync(path.join(dest, "native"), { recursive: true });
+		fs.copyFileSync(built, path.join(dest, "native", addon));
+		log(`Spout: ${addon} added`);
+	} else {
+		log(`Spout: spout\\native\\${addon} is not built (npm run build:native in spout/, on Windows); the Spout outs will say so`);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 6. README.txt / cfg/README.txt (Russian)
 // ---------------------------------------------------------------------------
@@ -1262,6 +1287,8 @@ async function main() {
 	if (opts.ndi) {
 		log("Assembling ndi/ (the NDI sender)…");
 		assembleNdiSender();
+		log("Assembling spout/ (the Spout library)…");
+		assembleSpout();
 	} else log("--no-ndi: the NDI sender is left out");
 
 	const exeBuilt = buildLauncherExe();

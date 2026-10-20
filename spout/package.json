@@ -1,0 +1,12 @@
+{
+	"name": "notgt-spout",
+	"version": "0.15.1",
+	"private": true,
+	"description": "notGT Spout library: shares an out as a Spout 2 sender on Windows, for the notGT sender in ../ndi.",
+	"license": "MIT",
+	"type": "module",
+	"main": "index.mjs",
+	"scripts": {
+		"build:native": "node scripts/build-native.mjs"
+	}
+}

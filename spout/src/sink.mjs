@@ -26,7 +26,7 @@ export class SpoutSink {
 	 * when either cannot be done.
 	 * @param {object} options
 	 * @param {any} options.native the addon (native.mjs)
-	 * @param {import("./controller.mjs").OutputConfig} options.config
+	 * @param {import("../../ndi/src/controller.mjs").OutputConfig} options.config
 	 * @param {boolean} options.shared frames come as Chromium's textures
 	 * @param {{ vendorId?: number, deviceId?: number }} [options.gpu] the GPU Chromium draws on
 	 * @param {(line: string) => void} options.log

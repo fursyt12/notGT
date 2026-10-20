@@ -5,7 +5,7 @@
 
 use std::ffi::c_void;
 
-use notgt_ndi_core::spout::Sender;
+use notgt_spout_core::Sender;
 use windows::core::{Interface, PCSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE};
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP};
@@ -243,4 +243,27 @@ fn a_gpu_frame_is_drawn_from_its_nt_handle() {
 	unsafe {
 		let _ = CloseHandle(handle);
 	}
+}
+
+#[test]
+fn two_senders_are_listed_side_by_side() {
+	let active = || {
+		read_map("ActiveSenderName", 256).map(|b| String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap()]).into_owned())
+	};
+	let a = open_sender("notGT test pair A", true);
+	let b = open_sender("notGT test pair B", true);
+	let names = listed();
+	assert!(
+		names.contains(&"notGT test pair A".to_string()) && names.contains(&"notGT test pair B".to_string()),
+		"listed: {names:?}"
+	);
+	// The senders hold `ActiveSenderName` open: nobody else has to.
+	let first = active().expect("ActiveSenderName is gone");
+	assert!(listed().contains(&first), "the active sender {first:?} is not listed");
+
+	drop(a);
+	assert!(!listed().contains(&"notGT test pair A".to_string()));
+	assert!(listed().contains(&"notGT test pair B".to_string()), "the second sender lost its place");
+	assert_ne!(active().expect("ActiveSenderName is gone"), "notGT test pair A");
+	drop(b);
 }

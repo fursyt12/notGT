@@ -1,0 +1,3 @@
+# The addon: Cargo builds here; it is built on Windows
+native/target/
+native/*.node

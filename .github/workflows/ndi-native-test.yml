@@ -64,7 +64,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ndi/native/target
-          key: cargo-windows-${{ hashFiles('ndi/native/**/Cargo.toml', 'ndi/native/Cargo.lock') }}
+            spout/native/target
+          key: cargo-windows-${{ hashFiles('ndi/native/**/Cargo.toml', 'ndi/native/Cargo.lock', 'spout/native/**/Cargo.toml', 'spout/native/Cargo.lock') }}
 
       # The converter's arithmetic, layouts and frame rates; the Vulkan tests
       # need a GPU, which the runner has not.
@@ -75,6 +76,10 @@ jobs:
       # glslc is not on the runner: the committed convert.spv is used.
       - name: Build the native converter
         working-directory: ndi
+        run: node scripts/build-native.mjs
+
+      - name: Build the Spout addon
+        working-directory: spout
         run: node scripts/build-native.mjs
 
       - name: Install monorepo dependencies

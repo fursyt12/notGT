@@ -82,6 +82,9 @@ export default function notGTExtension(nodecg: ServerAPI): {
 					requested === `${graphics}out.html`
 						? query["out"] === outId
 						: requested.startsWith(graphics) || requested.startsWith("/assets/"),
+				// Its timers run on the server's clock.
+				sends: ({ bundleName, messageName }: { bundleName: string; messageName: string }) =>
+					bundleName === BUNDLE_NAME && messageName === MESSAGES.clock,
 			};
 		},
 	});

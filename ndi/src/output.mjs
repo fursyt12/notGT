@@ -1,6 +1,6 @@
 /**
  * One out as one NDI source — or, for a config of kind "spout", one Spout
- * sender (spout-sink.mjs: the GPU's texture when Chromium shares it, the
+ * sender (../spout's sink: the GPU's texture when Chromium shares it, the
  * bitmap otherwise): the out page rendered in an offscreen window,
  * each painted frame handed to NDI by a sink. When Chromium draws on the GPU
  * the frame stays a texture there, converted to NDI's own format by:
@@ -28,7 +28,6 @@ import { BrowserWindow } from "electron";
 import { CpuSink } from "./cpu-sink.mjs";
 import { GpuSink } from "./gpu/sink.mjs";
 import { NativeSink } from "./native-sink.mjs";
-import { SpoutSink } from "./spout-sink.mjs";
 
 const WATCH_MS = 500;
 /** Painting rate while nobody receives: the lowest Chromium takes. */
@@ -53,8 +52,8 @@ export class Output {
 	 *   first: "native", "webgl"
 	 * @param {{ module?: any, renderNode?: string, vendorId?: number, deviceId?: number, why?: string }} [options.native]
 	 *   the native addon, or why there is none
-	 * @param {{ module?: any, vendorId?: number, deviceId?: number, why?: string }} [options.spout]
-	 *   for a Spout out: the native addon, or why there is none
+	 * @param {{ module?: any, Sink?: any, vendorId?: number, deviceId?: number, why?: string }} [options.spout]
+	 *   for a Spout out: the Spout library (../spout), or why there is none
 	 */
 	constructor({ ndi, config, log, gpu = false, converters = ["webgl"], native, spout }) {
 		this.ndi = ndi;
@@ -113,8 +112,8 @@ export class Output {
 
 	spoutSink(shared) {
 		if (!this.spout?.module)
-			throw new Error(this.spout?.why ?? "Spout needs the native addon");
-		return new SpoutSink({
+			throw new Error(this.spout?.why ?? "Spout needs its library (spout/)");
+		return new this.spout.Sink({
 			native: this.spout.module,
 			config: this.config,
 			shared,

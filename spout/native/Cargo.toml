@@ -1,0 +1,21 @@
+# The native half of notGT's Spout library: an out's frames drawn into the
+# D3D11 texture Spout receivers open (Windows).
+#
+#   core/  the Spout protocol and the D3D11 sender
+#   node/  the Node-API addon the notGT sender loads (src/native.mjs)
+#
+# Built by `npm run build:native` (scripts/build-native.mjs).
+[workspace]
+members = ["core", "node"]
+resolver = "2"
+
+[workspace.package]
+version = "0.15.1"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

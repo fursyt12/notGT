@@ -40,11 +40,17 @@ export const createSocketAuthMiddleware = (db: DatabaseAdapter) => {
 			}
 
 			// A key of a graphic rather than of a user: the socket may watch,
-			// and nothing else.
-			if (accessProvider()?.findKey(token)) {
+			// and ask what the key lets it ask, and nothing else.
+			const grant = accessProvider()?.findKey(token);
+			if (grant) {
 				socket.data.readOnly = true;
-				socket.use(([event], proceed) => {
-					if (READ_ONLY_EVENTS.has(event)) {
+				socket.use(([event, request], proceed) => {
+					const asks =
+						event === "message" &&
+						typeof request === "object" &&
+						request !== null &&
+						grant.sends?.(request as { bundleName: string; messageName: string }) === true;
+					if (READ_ONLY_EVENTS.has(event) || asks) {
 						proceed();
 					} else {
 						proceed(new Error(`"${event}" refused: this key only reads`));

@@ -16,6 +16,9 @@
 //! The texture is BGRA with straight alpha, as receivers take it; Chromium's
 //! frames are premultiplied, so each one is drawn into it by a pixel shader
 //! that divides the alpha out (or sets it to 1, sent opaque).
+//!
+//! Windows only: elsewhere the crate is empty.
+#![cfg(windows)]
 
 use std::collections::BTreeSet;
 use std::ffi::{c_void, CString};
@@ -40,7 +43,8 @@ use windows::Win32::System::Memory::{
 use windows::Win32::System::Registry::{RegGetValueA, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::System::Threading::{CreateMutexA, CreateSemaphoreA, ReleaseMutex, ReleaseSemaphore, WaitForSingleObject};
 
-use crate::Result;
+/// What can go wrong, said for the log and the dashboard.
+pub type Result<T> = std::result::Result<T, String>;
 
 /// Bytes of a name in `SpoutSenderNames`, its NUL included.
 const NAME_LEN: usize = 256;
@@ -281,6 +285,9 @@ struct Registration {
 	info: SharedMemory,
 	access: Owned,
 	frames: Owned,
+	/// `ActiveSenderName`, held open: a mapping nobody holds is gone, and
+	/// the name in it with it.
+	active: Option<SharedMemory>,
 }
 
 impl Registration {
@@ -323,7 +330,7 @@ impl Registration {
 		})();
 		match objects {
 			Ok((info, access, frames)) => {
-				let mut reg = Self { name, names, info, access, frames };
+				let mut reg = Self { name, names, info, access, frames, active: None };
 				reg.claim_active();
 				Ok(reg)
 			}
@@ -340,9 +347,10 @@ impl Registration {
 
 	/// The active sender, when there is none (or it is gone): this one.
 	fn claim_active(&mut self) {
-		let Ok(mut active) = SharedMemory::create(b"ActiveSenderName", NAME_LEN) else { return };
+		let Ok(active) = SharedMemory::create(b"ActiveSenderName", NAME_LEN) else { return };
 		let listed = self.names.locked(|buf| read_names(buf)).unwrap_or_default();
 		let name = self.name.clone();
+		let active = self.active.insert(active);
 		let _ = active.locked(|buf| {
 			let current = read_active(buf);
 			if current.is_empty() || !listed.contains(&current) {
@@ -380,7 +388,8 @@ impl Drop for Registration {
 				list
 			})
 			.unwrap_or_default();
-		if let Ok(mut active) = SharedMemory::create(b"ActiveSenderName", NAME_LEN) {
+		let active = self.active.take().or_else(|| SharedMemory::create(b"ActiveSenderName", NAME_LEN).ok());
+		if let Some(mut active) = active {
 			let _ = active.locked(|buf| {
 				if read_active(buf) == name {
 					write_active(buf, left.iter().next().map_or(&[][..], |n| n.as_slice()));

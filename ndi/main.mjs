@@ -9,12 +9,13 @@
  *       shares one page as a Spout sender (Windows) instead.
  *
  * The outs with Spout switched on are shared as Spout senders by a sender on
- * Windows (src/spout-sink.mjs); they need the native addon, not NDI.
+ * Windows, through the Spout library (../spout); they need it, not NDI.
  *
  * See README.md for the flags and for running it on a Raspberry Pi.
  */
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { createRequire } from "node:module";
 import { app, BrowserWindow } from "electron";
 
@@ -84,6 +85,21 @@ if (args.help || args.h) {
 }
 
 const log = (line) => process.stdout.write(`[notgt-ndi] ${line}\n`);
+
+/** --worker: the one out this process draws (src/workers.mjs). */
+let workerConfig;
+if (args.worker) {
+	try {
+		workerConfig = JSON.parse(Buffer.from(String(args.config ?? ""), "base64").toString("utf8"));
+	} catch (error) {
+		log(`--config cannot be read: ${error.message}`);
+		process.exit(1);
+	}
+	// A Chromium profile of its own: in a shared one, each process that
+	// starts fights the others over the caches they hold.
+	const folder = `${workerConfig.kind ?? "ndi"}-${workerConfig.id}`.replace(/[^\w.-]+/g, "_");
+	app.setPath("userData", path.join(app.getPath("userData"), "outs", folder));
+}
 
 // --------------------------------------------------------------- chromium
 const render = args.cpu
@@ -181,29 +197,30 @@ async function start() {
 		}
 	}
 
-	// Spout senders draw with the native addon, NDI or no NDI.
+	// Spout senders draw with the Spout library (../spout), NDI or no NDI.
 	let spout;
-	const spoutNative = async () => {
+	const loadSpoutLibrary = async () => {
 		if (spout) return spout;
 		if (process.platform !== "win32") {
 			spout = { why: "Spout is only on Windows" };
 			return spout;
 		}
-		const { loadNative } = await import("./src/native.mjs");
-		const found = loadNative();
-		spout = found.module
-			? { module: found.module, ...(gpu ? await chromiumGpu() : {}) }
-			: { why: `${found.why} — Spout needs it` };
+		try {
+			const { loadSpout, SpoutSink } = await import("../spout/index.mjs");
+			const found = loadSpout();
+			spout = found.module
+				? { module: found.module, Sink: SpoutSink, ...(gpu ? await chromiumGpu() : {}) }
+				: { why: found.why };
+		} catch (error) {
+			spout = { why: `the Spout library (spout/) is not here: ${error.message}` };
+		}
 		if (spout.why) log(spout.why);
 		return spout;
 	};
-	const workerConfig = args.worker
-		? JSON.parse(Buffer.from(String(args.config ?? ""), "base64").toString("utf8"))
-		: undefined;
 	const onlySpout = workerConfig?.kind === "spout" || (typeof args.url === "string" && args.spout);
 	// Following a server on Windows, Spout outs may come at any round.
 	if (onlySpout || (process.platform === "win32" && !args.worker && typeof args.url !== "string"))
-		await spoutNative();
+		await loadSpoutLibrary();
 
 	let ndi;
 	let missing = "";
@@ -239,7 +256,7 @@ async function start() {
 	const controller = new Controller({
 		create: (config) => {
 			if (config.kind === "spout") {
-				if (!spout) throw new Error("the native addon is still being loaded");
+				if (!spout) throw new Error("the Spout library is still being loaded");
 				return new Output({ config, log, gpu, spout });
 			}
 			if (!ndi && !tryLoad()) throw new Error(missingText());

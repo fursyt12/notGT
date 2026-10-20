@@ -33,6 +33,11 @@ export interface KeyGrant {
 		path: string;
 		query: Record<string, unknown>;
 	}) => boolean;
+	/**
+	 * Whether the key's socket may send this message to a bundle: what a
+	 * page that only reads still has to ask, such as the server's clock.
+	 */
+	sends?: (request: { bundleName: string; messageName: string }) => boolean;
 }
 
 let provider: AccessProvider | undefined;

@@ -293,7 +293,11 @@ async function main() {
 			api.sendMessageToBundle("stop", "notGT", {});
 			const invented = api.Replicant("e2eTeamInvented", "notGT", { defaultValue: 1 });
 			await new Promise((resolve) => setTimeout(resolve, 700));
-			return { connected: api.socket.connected, seesOuts, invented: invented.status };
+			const clock = await Promise.race([
+				api.sendMessageToBundle("clock", "notGT").catch((error) => String(error)),
+				new Promise((resolve) => setTimeout(() => resolve("no answer"), 3000)),
+			]);
+			return { connected: api.socket.connected, seesOuts, invented: invented.status, clock };
 		});
 		const after = await http(admin.cookie, "GET", `${BASE}/api/data`);
 		const outsAfter = await http(admin.cookie, "GET", `${BASE}/api/outs`);
@@ -302,6 +306,11 @@ async function main() {
 			"…but what it writes is refused",
 			after.json?.data?.e2eTeamIntruder === undefined && outsAfter.json?.outs?.length >= 2,
 			`outs left: ${outsAfter.json?.outs?.length}`,
+		);
+		check(
+			"…and it may ask the server's clock, for its timers",
+			typeof result.clock === "number" && Math.abs(result.clock - Date.now()) < 60_000,
+			String(result.clock),
 		);
 	} finally {
 		await browser.close();
