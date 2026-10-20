@@ -180,7 +180,8 @@ paints, between frames sent and how long Chromium's textures were kept (p50 / p9
 most). The same counts, from the start, are in the out's status (`pipeline`), with the
 GPU Chromium draws on and its driver. `NOTGT_NDI_TRACE=1` logs every event of every frame
 as it happens, with a time that is the same in every process — the log to send when
-frames go missing.
+frames go missing. `NOTGT_NDI_IN_FLIGHT=1`…`4` sets how many of Chromium's textures the
+WebGL2 converter holds at once (2), to measure what more or fewer would change.
 
 ## Spout (Windows)
 

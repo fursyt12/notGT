@@ -20,7 +20,11 @@ import { BrowserWindow, sharedTexture } from "electron";
 import { Tally } from "../telemetry.mjs";
 
 const PAGE = fileURLToPath(new URL("./processor.html", import.meta.url));
-const IN_FLIGHT = 2;
+/**
+ * Textures with the processor at a time: 2, or NOTGT_NDI_IN_FLIGHT (1–4) to
+ * measure what more would change (spec G1: more holds more of Chromium's few).
+ */
+const IN_FLIGHT = Math.min(4, Math.max(1, Math.round(Number(process.env.NOTGT_NDI_IN_FLIGHT)) || 2));
 /** How long the processor has to get going before the CPU takes over. */
 const START_MS = 10_000;
 /**
