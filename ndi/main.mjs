@@ -54,8 +54,8 @@ const HELP = `notGT NDI sender ${version}
                      cpu: on the CPU (or NOTGT_NDI_RENDER). --gpu and --cpu
                      are short for the last two
   --converter <c>    what turns GPU frames into NDI's: webgl (default), a
-                     hidden page with WebGL2; native, the Rust addon (Vulkan,
-                     Linux), with webgl after it if it cannot work
+                     hidden page with WebGL2; native, the Rust addon (Vulkan:
+                     Linux, Windows), with webgl after it if it cannot work
                      (or NOTGT_NDI_CONVERTER)
 `;
 
@@ -149,12 +149,18 @@ async function start() {
 	const { Output } = await import("./src/output.mjs");
 
 	let gpu = false;
+	/** The GPU Chromium draws on and its driver, for the log and the outs' status. */
+	let adapter = "";
 	if (render === "cpu") log("drawing on the CPU");
 	else {
 		const found = await probeGpu();
 		if (found.ok) {
 			gpu = true;
 			log(`drawing on the GPU: ${found.renderer}`);
+			const described = await describeAdapter();
+			if (described) log(`GPU: ${described}`);
+			// Where Chromium names no device (Linux, mostly), the renderer says enough.
+			adapter = described || found.renderer;
 		} else if (render === "auto" && process.env.NOTGT_NDI_LAUNCHER) {
 			// Chromium emulating a GPU costs more than drawing on the CPU, and
 			// which one it is cannot change once it runs: start again.
@@ -257,10 +263,10 @@ async function start() {
 		create: (config) => {
 			if (config.kind === "spout") {
 				if (!spout) throw new Error("the Spout library is still being loaded");
-				return new Output({ config, log, gpu, spout });
+				return new Output({ config, log, gpu, spout, adapter });
 			}
 			if (!ndi && !tryLoad()) throw new Error(missingText());
-			return new Output({ ndi, config, log, gpu, converters, native });
+			return new Output({ ndi, config, log, gpu, converters, native, adapter });
 		},
 		log,
 	});
@@ -348,6 +354,25 @@ async function start() {
 			log,
 			pollMs: Math.max(500, Number(args.poll) || 2000),
 		});
+	}
+}
+
+/**
+ * The GPU Chromium draws on, as Chromium names it: name, PCI ids, driver,
+ * and how many GPUs there are when more than one (a laptop with two).
+ */
+async function describeAdapter() {
+	try {
+		const info = await app.getGPUInfo("basic");
+		const devices = info.gpuDevice ?? [];
+		const device = devices.find((d) => d.active) ?? devices[0];
+		if (!device?.vendorId) return "";
+		const hex = (n) => `0x${Number(n).toString(16).padStart(4, "0")}`;
+		const name = [device.vendorString, device.deviceString].filter(Boolean).join(" ");
+		const driver = [device.driverVendor, device.driverVersion].filter(Boolean).join(" ");
+		return `${name || "a GPU"} (PCI ${hex(device.vendorId)}:${hex(device.deviceId)})${driver ? `, driver ${driver}` : ""}${devices.length > 1 ? `, one of ${devices.length} GPUs` : ""}`;
+	} catch {
+		return "";
 	}
 }
 

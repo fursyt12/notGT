@@ -28,6 +28,7 @@ import { BrowserWindow } from "electron";
 import { CpuSink } from "./cpu-sink.mjs";
 import { GpuSink } from "./gpu/sink.mjs";
 import { NativeSink } from "./native-sink.mjs";
+import { Tally, describeWindow } from "./telemetry.mjs";
 
 const WATCH_MS = 500;
 /** Painting rate while nobody receives: the lowest Chromium takes. */
@@ -54,8 +55,9 @@ export class Output {
 	 *   the native addon, or why there is none
 	 * @param {{ module?: any, Sink?: any, vendorId?: number, deviceId?: number, why?: string }} [options.spout]
 	 *   for a Spout out: the Spout library (../spout), or why there is none
+	 * @param {string} [options.adapter] the GPU Chromium draws on and its driver, as the log says it
 	 */
-	constructor({ ndi, config, log, gpu = false, converters = ["webgl"], native, spout }) {
+	constructor({ ndi, config, log, gpu = false, converters = ["webgl"], native, spout, adapter }) {
 		this.ndi = ndi;
 		this.config = config;
 		this.log = log;
@@ -86,6 +88,11 @@ export class Output {
 		this.warning = undefined;
 		this.native = native;
 		this.spout = spout;
+		this.adapter = adapter;
+		/** What becomes of the frames, whichever sink has them (telemetry.mjs). */
+		this.tally = new Tally({
+			trace: process.env.NOTGT_NDI_TRACE ? (line) => log(`${config.ndiName}: ${line}`) : undefined,
+		});
 		/** Converters still to try, best first; the CPU is always last. */
 		this.chain = gpu ? (config.kind === "spout" ? ["spout"] : [...converters]) : [];
 		/** Why a converter was given up, for the dashboard. */
@@ -107,7 +114,7 @@ export class Output {
 		}
 		this.sinkKind = "cpu";
 		if (this.config.kind === "spout") return this.spoutSink(false);
-		return new CpuSink({ ndi: this.ndi, config: this.config });
+		return new CpuSink({ ndi: this.ndi, config: this.config, tally: this.tally });
 	}
 
 	spoutSink(shared) {
@@ -119,6 +126,7 @@ export class Output {
 			shared,
 			gpu: this.spout,
 			log: this.log,
+			tally: this.tally,
 			onFail: (reason) => this.fallBack(reason),
 		});
 	}
@@ -134,6 +142,7 @@ export class Output {
 				ndiFile: this.ndi.file,
 				gpu: this.native,
 				log: this.log,
+				tally: this.tally,
 				onFail,
 			});
 		}
@@ -143,6 +152,7 @@ export class Output {
 				config: this.config,
 				ndiFile: this.ndi.file,
 				log: this.log,
+				tally: this.tally,
 				onFail,
 			});
 		throw new Error(`there is no converter called ${kind}`);
@@ -166,9 +176,11 @@ export class Output {
 				const sent = this.sink.sent;
 				this.fps = Math.max(0, sent - lastCount) / 2;
 				lastCount = sent;
+				// Read either way, so each window is these two seconds.
+				const frames = describeWindow(this.tally.window());
 				if (this.watching) {
 					this.debug(
-						`${this.config.ndiName}: ${this.fps} fps on ${this.sink.name}, ${this.sink.report(2)}, ${this.connections} receiver(s)`,
+						`${this.config.ndiName}: ${this.fps} fps on ${this.sink.name}, ${this.sink.report(2)}, ${this.connections} receiver(s); ${frames}`,
 					);
 				}
 			}, 2000),
@@ -343,12 +355,15 @@ export class Output {
 	}
 
 	paint(event, dirty, image) {
+		const now = performance.now();
 		const texture = event.texture;
 		if (texture) {
 			const info = texture.textureInfo;
 			this.checkSize(info.visibleRect ?? info.codedSize);
-			if (this.sink.shared) this.sink.paintTexture(texture);
-			else texture.release();
+			if (this.sink.shared) {
+				this.tally.painted(now);
+				this.sink.paintTexture(texture, now);
+			} else texture.release();
 			return;
 		}
 		// With shared textures, an invalidate() comes back as a paint with no
@@ -370,7 +385,10 @@ export class Output {
 		if (this.emptyPaints >= 50) this.warning = undefined;
 		this.emptyPaints = 0;
 		this.checkSize(image.getSize());
-		if (!this.sink.shared) this.sink.paint(dirty, image);
+		if (!this.sink.shared) {
+			this.tally.painted(now);
+			this.sink.paint(dirty, image);
+		}
 	}
 
 	repaintSoon() {
@@ -430,6 +448,9 @@ export class Output {
 			fps: Math.round(this.fps * 10) / 10,
 			...this.sink.size(),
 			render: this.sink.kind,
+			// Counted from the start: where frames go (telemetry.mjs).
+			pipeline: { ...this.tally.counts, held: this.tally.held },
+			...(this.adapter ? { adapter: this.adapter } : {}),
 			...(this.error ? { error: this.error } : {}),
 			...(this.warning || this.renderNote
 				? {

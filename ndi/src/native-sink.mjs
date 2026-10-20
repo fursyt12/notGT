@@ -17,6 +17,7 @@
  * left behind.
  */
 import { FrameClock } from "./clock.mjs";
+import { Tally } from "./telemetry.mjs";
 
 /**
  * How long a first frame may take once the page is loaded. Where Chromium
@@ -36,8 +37,9 @@ export class NativeSink {
 	 *   the GPU Chromium draws on
 	 * @param {(line: string) => void} options.log
 	 * @param {(reason: string) => void} options.onFail another sink should take over
+	 * @param {Tally} [options.tally] the out's: what becomes of its frames
 	 */
-	constructor({ native, config, ndiFile, gpu = {}, log, onFail }) {
+	constructor({ native, config, ndiFile, gpu = {}, log, onFail, tally = new Tally() }) {
 		this.config = config;
 		this.log = log;
 		this.onFail = onFail;
@@ -54,6 +56,7 @@ export class NativeSink {
 		this.waiting = undefined;
 		this.warnedSync = false;
 		this.totals = { frames: 0, imports: 0, gpuMs: 0, totalMs: 0 };
+		this.tally = tally;
 
 		this.out = new native.NativeOut({
 			ndiFile,
@@ -76,6 +79,7 @@ export class NativeSink {
 		this.clock = new FrameClock({
 			fps: config.fps,
 			transmit: (slot) => this.out.send(slot),
+			tally,
 		});
 	}
 
@@ -105,8 +109,8 @@ export class NativeSink {
 		);
 	}
 
-	/** A painted frame, as a texture this sink has to release. */
-	paintTexture(texture) {
+	/** A painted frame, as a texture this sink has to release; painted at `paintedAt`. */
+	paintTexture(texture, paintedAt = performance.now()) {
 		if (this.failed || this.stopped) {
 			texture.release();
 			return;
@@ -115,16 +119,28 @@ export class NativeSink {
 			this.framed = true;
 			clearTimeout(this.frameTimer);
 		}
+		this.tally.took();
+		const painted = { texture, paintedAt };
 		if (this.converting) {
-			this.waiting?.release();
-			this.waiting = texture;
+			if (this.waiting) this.tally.count("replaced");
+			this.letGo(this.waiting);
+			this.waiting = painted;
 			return;
 		}
-		this.convert(texture);
+		this.convert(painted);
 	}
 
-	async convert(texture) {
+	/** Gives a painted frame's texture back to Chromium. */
+	letGo(painted) {
+		if (!painted) return;
+		painted.texture.release();
+		this.tally.gaveBack(painted.paintedAt);
+	}
+
+	async convert(painted) {
 		this.converting = true;
+		this.tally.time("wait", performance.now() - painted.paintedAt);
+		const { texture } = painted;
 		try {
 			const info = texture.textureInfo;
 			const handle = info.handle ?? {};
@@ -174,18 +190,20 @@ export class NativeSink {
 			if (done.imported) t.imports++;
 			t.gpuMs += done.gpuMs;
 			t.totalMs += done.totalMs;
+			this.tally.count("converted");
+			this.tally.time("convert", done.totalMs);
 			this.clock.frameReady(slot);
 		} catch (error) {
 			this.fail(`the native converter could not convert a frame: ${error.message}`);
 		} finally {
 			// Only now: the GPU is done reading it.
-			texture.release();
+			this.letGo(painted);
 			this.converting = false;
 		}
 		const next = this.waiting;
 		this.waiting = undefined;
 		if (next) {
-			if (this.failed || this.stopped) next.release();
+			if (this.failed || this.stopped) this.letGo(next);
 			else this.convert(next);
 		}
 	}
@@ -195,7 +213,7 @@ export class NativeSink {
 		this.failed = true;
 		clearTimeout(this.frameTimer);
 		this.clock.stop();
-		this.waiting?.release();
+		this.letGo(this.waiting);
 		this.waiting = undefined;
 		this.onFail(reason);
 	}
@@ -215,7 +233,7 @@ export class NativeSink {
 		this.stopped = true;
 		clearTimeout(this.frameTimer);
 		this.clock.stop();
-		this.waiting?.release();
+		this.letGo(this.waiting);
 		this.waiting = undefined;
 		// Waits for NDI to let go of the last frame, and for the GPU.
 		this.out.close();

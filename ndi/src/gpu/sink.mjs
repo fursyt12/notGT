@@ -17,6 +17,7 @@
  */
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, sharedTexture } from "electron";
+import { Tally } from "../telemetry.mjs";
 
 const PAGE = fileURLToPath(new URL("./processor.html", import.meta.url));
 const IN_FLIGHT = 2;
@@ -38,11 +39,13 @@ export class GpuSink {
 	 * @param {string} [options.ndiFile] the NDI library the main process opened
 	 * @param {(line: string) => void} options.log
 	 * @param {(reason: string) => void} options.onFail the CPU should take over
+	 * @param {Tally} [options.tally] the out's: what becomes of its frames
 	 */
-	constructor({ config, ndiFile, log, onFail }) {
+	constructor({ config, ndiFile, log, onFail, tally = new Tally() }) {
 		this.config = config;
 		this.log = log;
 		this.onFail = onFail;
+		this.tally = tally;
 		this.debug = process.env.NOTGT_NDI_DEBUG ? log : () => {};
 		/** Frames come as shared textures. */
 		this.shared = true;
@@ -56,7 +59,7 @@ export class GpuSink {
 		this.width = config.width;
 		this.height = config.height;
 		this.nextId = 0;
-		/** Textures with the processor, by id. */
+		/** Painted frames with the processor, by id: their texture and when painted. */
 		this.out = new Map();
 		/** The newest paint that had to wait. */
 		this.waiting = undefined;
@@ -90,9 +93,12 @@ export class GpuSink {
 		contents.ipc.on("log", (_event, line) =>
 			this.debug(`${config.ndiName}: ${line}`),
 		);
+		contents.ipc.on("trace", (_event, line) => log(`${config.ndiName}: ${line}`));
 		contents.ipc.on("done", (_event, id) => this.done(id));
 		contents.ipc.on("stats", (_event, stats) => {
 			this.stats = stats;
+			// What the processor converted, and what its clock sent, again or not at all.
+			this.tally.absorb(stats.tally);
 		});
 		contents.ipc.on("failed", (_event, reason) => this.fail(reason));
 		contents.on("render-process-gone", (_event, details) =>
@@ -157,8 +163,8 @@ export class GpuSink {
 		);
 	}
 
-	/** A painted frame, as a texture this sink has to release. */
-	paintTexture(texture) {
+	/** A painted frame, as a texture this sink has to release; painted at `paintedAt`. */
+	paintTexture(texture, paintedAt = performance.now()) {
 		if (this.failed) {
 			texture.release();
 			return;
@@ -171,22 +177,26 @@ export class GpuSink {
 			texture.textureInfo.visibleRect ?? texture.textureInfo.codedSize;
 		this.width = width;
 		this.height = height;
+		this.tally.took();
+		const painted = { texture, paintedAt };
 		if (!this.ready || this.out.size >= IN_FLIGHT) {
+			if (this.waiting) this.tally.count("replaced");
 			this.dropWaiting();
-			this.waiting = texture;
+			this.waiting = painted;
 			return;
 		}
-		this.pass(texture);
+		this.pass(painted);
 	}
 
-	async pass(texture) {
+	async pass(painted) {
 		const id = ++this.nextId;
-		this.out.set(id, texture);
+		this.out.set(id, painted);
 		this.sentAt.set(id, Date.now());
+		this.tally.time("wait", performance.now() - painted.paintedAt);
 		let imported;
 		try {
 			imported = sharedTexture.importSharedTexture({
-				textureInfo: texture.textureInfo,
+				textureInfo: painted.texture.textureInfo,
 			});
 			await sharedTexture.sendSharedTexture(
 				{
@@ -207,12 +217,19 @@ export class GpuSink {
 
 	/** The processor has its copy of texture `id`. */
 	done(id) {
-		const texture = this.out.get(id);
-		if (!texture) return;
+		const painted = this.out.get(id);
+		if (!painted) return;
 		this.out.delete(id);
 		this.sentAt.delete(id);
-		texture.release();
+		this.letGo(painted);
 		this.passWaiting();
+	}
+
+	/** Gives a painted frame's texture back to Chromium. */
+	letGo(painted) {
+		if (!painted) return;
+		painted.texture.release();
+		this.tally.gaveBack(painted.paintedAt);
 	}
 
 	passWaiting() {
@@ -223,7 +240,7 @@ export class GpuSink {
 	}
 
 	dropWaiting() {
-		this.waiting?.release();
+		this.letGo(this.waiting);
 		this.waiting = undefined;
 	}
 
@@ -248,7 +265,7 @@ export class GpuSink {
 		clearTimeout(this.startTimer);
 		clearTimeout(this.frameTimer);
 		this.dropWaiting();
-		for (const texture of this.out.values()) texture.release();
+		for (const painted of this.out.values()) this.letGo(painted);
 		this.out.clear();
 		this.sentAt.clear();
 		const window = this.window;

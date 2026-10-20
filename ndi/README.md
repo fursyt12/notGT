@@ -172,7 +172,14 @@ needs no key, unless `apiToken` is set — then `--token` is the `apiToken`.
 | `--spout`         | off                     | with `--url`: share it as a Spout sender (Windows) instead of NDI        |
 
 `NOTGT_NDI_DEBUG=1` makes it say, every two seconds, what each source sends and what that
-costs.
+costs — and where its frames went: how many Chromium painted, how many were replaced while
+they waited for a busy converter, converted, sent new or again, dropped by the frame
+clock, or (Spout) skipped while a receiver held the texture, with the times between
+paints, between frames sent and how long Chromium's textures were kept (p50 / p99 /
+most). The same counts, from the start, are in the out's status (`pipeline`), with the
+GPU Chromium draws on and its driver. `NOTGT_NDI_TRACE=1` logs every event of every frame
+as it happens, with a time that is the same in every process — the log to send when
+frames go missing.
 
 ## Spout (Windows)
 
@@ -339,6 +346,21 @@ Desktop to send. Nothing personal goes in: the computer's and the user's names, 
 folder and network addresses are replaced. In the Windows package it is
 **NDI test - native converter.cmd**; **notGT - native NDI converter.cmd** starts notGT
 with the native converter. `scripts/bench.mjs` is the single measurement underneath.
+
+Whether shows arrive from their first frame, every frame of them:
+
+```bash
+node scripts/bench.mjs --render gpu --page entry --fps 60 --shows 40
+node scripts/bench.mjs --render gpu --real http://127.0.0.1:9090 --token <apiToken> --fps 60 --shows 40
+```
+
+The first sends a test page that starts a show every 2.5 s, still in between. The second
+sends an out of a running notGT (its first, or `--out <id>`) and shows a test title on it
+over the API, 40 times, as an operator would. Both draw a frame count into the picture —
+by script, as a code title draws, and on the compositor, as a layers title moves — and
+the bench reads it back: for every show, the first frame that arrived (0 when nothing is
+lost), which frames never did, and beside them the sender's own counts, which say where
+on the way a frame was lost.
 
 ## Tests
 

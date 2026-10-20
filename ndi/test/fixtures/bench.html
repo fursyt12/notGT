@@ -9,13 +9,27 @@
 			  what the receiver gets (straight alpha);
 			- a time stamp below them, as 32 black or white blocks: 24 bits of
 			  Date.now() and an 8-bit check sum, read back for the latency;
+			- a count under it, the same way: the show (0 for none), its frame,
+			  the page's own frame (one more each animation frame it draws, to
+			  256 and round again) and a check sum — a frame missing from it
+			  is one lost after the page drew it;
 			- #lower: a lower third sliding in and out, as titles do;
 			- #full: also the whole picture under it moving;
 			- #heavy: #full and five code titles on top, each in a sandboxed
 			  iframe as notGT's code titles are, each a different load —
 			  kinetic text, a canvas of particles, animated SVG with a blur,
 			  CSS clip-paths, masks and a backdrop blur, a scoreboard rewritten
-			  every frame. None covers the patches or the stamp.
+			  every frame. None covers the patches or the stamp;
+			- #entry: shows, as notGT starts them, on a page that is still
+			  between them. Every `period` ms (?period=, 2500 unless given) a
+			  timer starts one — as a message from the server would — of 60
+			  frames at the out's rate (?fps=, 60 unless given): the lower
+			  third slides in, the count says which frame of the show each
+			  animation frame is (as a code title's script draws), and a
+			  white marker steps along a track below it one place a frame,
+			  moved by the Web Animations API on the compositor (as a layers
+			  title moves). Both should reach the receiver from their frame 0,
+			  every frame of them; scripts/bench.mjs --page entry checks that.
 			#still draws once and never again.
 		-->
 		<style>
@@ -34,19 +48,51 @@
 				width: 64px;
 				height: 64px;
 			}
-			#stamp {
+			#stamp,
+			#count {
 				position: absolute;
 				left: 40px;
 				top: 128px;
 				display: flex;
 			}
-			#stamp i {
+			#count {
+				top: 152px;
+			}
+			#stamp i,
+			#count i {
 				width: 16px;
 				height: 16px;
 				background: #000;
 			}
-			#stamp i.on {
+			#stamp i.on,
+			#count i.on {
 				background: #fff;
+			}
+			/* #entry: 64 places of 16 px, the marker in one of them during a show. */
+			#track {
+				position: absolute;
+				left: 40px;
+				top: 176px;
+				width: 1024px;
+				height: 16px;
+				background: #000;
+				display: none;
+			}
+			#marker {
+				width: 16px;
+				height: 16px;
+				background: #fff;
+				opacity: 0;
+			}
+			body.entry #track {
+				display: block;
+			}
+			body.entry .third {
+				animation: none;
+				visibility: hidden;
+			}
+			body.entry.showing .third {
+				visibility: visible;
 			}
 			.wash {
 				position: absolute;
@@ -123,6 +169,8 @@
 			<p>Chief engineer, notGT broadcast</p>
 		</div>
 		<div id="stamp"></div>
+		<div id="count"></div>
+		<div id="track"><div id="marker"></div></div>
 		<script>
 			// The same list is in scripts/bench.mjs: straight RGBA.
 			const PATCHES = [
@@ -149,16 +197,27 @@
 			if (mode === "still") document.body.classList.add("still");
 			if (mode === "full" || mode === "heavy") document.body.classList.add("moving");
 			if (mode === "heavy") heavyTitles();
-			const stamp = document.getElementById("stamp");
-			const bits = Array.from({ length: 32 }, () =>
-				stamp.appendChild(document.createElement("i")),
-			);
-			function show() {
+			const blocks = (id) => {
+				const row = document.getElementById(id);
+				return Array.from({ length: 32 }, () => row.appendChild(document.createElement("i")));
+			};
+			const bits = blocks("stamp");
+			const countBits = blocks("count");
+			/** `word` in 32 blocks, its highest bit first. */
+			function write(row, word) {
+				for (let i = 0; i < 32; i++)
+					row[i].className = Math.floor(word / 2 ** (31 - i)) % 2 ? "on" : "";
+			}
+			/** The page's own frames, counted round to 256. */
+			let drawn = 0;
+			/** The time stamp and the count, for a frame of the page: frame `frame` of show `entry`. */
+			function show(entry = 0, frame = 0) {
 				const t = Date.now() % 2 ** 24;
 				const sum = ((t & 255) + ((t >> 8) & 255) + ((t >> 16) & 255)) & 255;
-				const word = t * 256 + sum;
-				for (let i = 0; i < 32; i++)
-					bits[i].className = Math.floor(word / 2 ** (31 - i)) % 2 ? "on" : "";
+				write(bits, t * 256 + sum);
+				drawn = (drawn + 1) % 256;
+				const check = (entry + frame + drawn) & 255;
+				write(countBits, ((entry * 256 + frame) * 256 + drawn) * 256 + check);
 			}
 			/** Five code titles, each in a sandboxed iframe, as notGT puts them. */
 			function heavyTitles() {
@@ -212,8 +271,52 @@
 					document.body.append(frame);
 				}
 			}
+			/** #entry: a show every `period` ms, the page still between them. */
+			function entries() {
+				const params = new URLSearchParams(location.search);
+				const frameMs = 1000 / (Number(params.get("fps")) || 60);
+				const period = Number(params.get("period")) || 2500;
+				// The same number is in scripts/bench.mjs.
+				const FRAMES = 60;
+				const marker = document.getElementById("marker");
+				const third = document.querySelector(".third");
+				document.body.classList.add("entry");
+				let entry = 0;
+				setInterval(() => {
+					entry = (entry % 255) + 1;
+					let frame = 0;
+					requestAnimationFrame(function tick() {
+						if (frame === 0) {
+							document.body.classList.add("showing");
+							// The marker's place is the show's frame by the clock;
+							// starting half a frame in keeps a frame drawn a little
+							// early or late in its own place.
+							marker.animate(
+								[
+									{ opacity: 1, transform: "translateX(0)" },
+									{ opacity: 1, transform: `translateX(${FRAMES * 16}px)` },
+								],
+								{ duration: FRAMES * frameMs, delay: -frameMs / 2, easing: `steps(${FRAMES})` },
+							);
+							third.animate(
+								[{ transform: "translateX(-1100px)" }, { transform: "translateX(0)" }],
+								{ duration: FRAMES * frameMs, easing: "cubic-bezier(.2,.8,.2,1)" },
+							);
+						}
+						if (frame < FRAMES) {
+							show(entry, frame++);
+							requestAnimationFrame(tick);
+						} else {
+							// Over: still until the next one.
+							document.body.classList.remove("showing");
+							show();
+						}
+					});
+				}, period);
+			}
 			show();
-			if (mode !== "still")
+			if (mode === "entry") entries();
+			else if (mode !== "still")
 				requestAnimationFrame(function tick() {
 					show();
 					requestAnimationFrame(tick);

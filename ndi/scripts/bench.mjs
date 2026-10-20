@@ -5,14 +5,29 @@
  * memory), what comes out (frame rate, fresh frames, latency) and whether it
  * is right (known colours and alpha, checked in what the receiver gets).
  *
- *   node scripts/bench.mjs [--render auto|gpu|cpu] [--page still|lower|full|heavy]
+ *   node scripts/bench.mjs [--render auto|gpu|cpu] [--page still|lower|full|heavy|entry]
  *        [--outs 1] [--size 1920x1080] [--fps 30] [--seconds 10] [--opaque]
- *        [--ips 127.0.0.1] [--json] [--log] [--every 60]
+ *        [--ips 127.0.0.1] [--json] [--log] [--every 60] [--period 2500] [--shows 40]
  *
  * It plays the notGT server itself (the outs, the page: test/fixtures/
  * bench.html), starts bin/notgt-ndi.mjs as anyone would, and receives every
  * source in a worker thread of its own. The receivers' own work is not
  * counted. Needs the NDI library, as the sender does.
+ *
+ * What comes out is read from the page's own marks (bench.html says how):
+ * frames the page drew that never arrived, the gaps between new ones, and
+ * with `--page entry` every show — whether it arrived from its frame 0, and
+ * which of its frames are missing, both as script draws a show and as the
+ * compositor moves one. `--shows <n>`: measure that many shows, `--period`
+ * ms apart. The sender's own counts (src/telemetry.mjs) are set beside them:
+ * where on its way a frame was lost.
+ *
+ *   node scripts/bench.mjs --real http://notgt:9090 [--token <apiToken>] [--out <id>] --shows 40 …
+ *
+ * `--real`: the same shows, through a real notGT server — its out page, with
+ * a code title that draws the count as #entry does (a fresh iframe each
+ * show, as notGT puts code titles), shown and hidden over its API as an
+ * operator would. The title is the server's only for the run.
  *
  * `--every <s>`: one long run, reported every <s> seconds for --seconds in
  * all — a JSON line a window with --json — to see what changes over time
@@ -30,6 +45,7 @@ import {
 	parentPort,
 	workerData,
 } from "node:worker_threads";
+import { percentiles } from "../src/telemetry.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -54,6 +70,11 @@ const PATCHES = [
  */
 const TOLERANCE = { colour: 16, alpha: 4 };
 const STAMP_WRAP = 2 ** 24;
+/** --real: the code title the shows are made of. */
+const TITLE_ID = "notgt-bench-count";
+/** Frames in a show of bench.html#entry, and how many count as its start. */
+const SHOW_FRAMES = 60;
+const SHOW_START = 30;
 
 /** The first source's number (--first). */
 let firstSource = 1;
@@ -74,18 +95,26 @@ async function main() {
 		width,
 		height,
 		fps: Number(args.fps) || 30,
-		seconds: Number(args.seconds) || 10,
+		// #entry: a show every `period` ms.
+		period: Number(args.period) || 2500,
+		seconds:
+			Number(args.seconds) ||
+			(args.shows ? Math.ceil((Number(args.shows) * (Number(args.period) || 2500)) / 1000) : 10),
 		alpha: !args.opaque,
 		ips: typeof args.ips === "string" ? args.ips : "127.0.0.1",
 		every: Number(args.every) || 0,
 		// --first <n>: number the sources from n, for several benches at once.
 		first: Math.max(1, Number(args.first) || 1),
+		real: typeof args.real === "string" ? args.real.replace(/\/$/, "") : "",
 	};
+	// --real: shows of a code title on a real server's out page.
+	const real = options.real ? await realShows(options, args) : undefined;
+	if (real) options.page = "entry";
 	firstSource = options.first;
 	const say = args.json ? () => {} : (line) => console.log(line);
 
 	const gpuBefore = gpuMemory();
-	const server = await serve(options);
+	const server = await serve({ ...options, url: real?.url });
 	say(
 		`${options.outs} × ${width}×${height} @ ${options.fps} fps, #${options.page}, ${options.alpha ? "alpha" : "opaque"}, --render ${options.render}`,
 	);
@@ -141,6 +170,8 @@ async function main() {
 				width,
 				height,
 				alpha: options.alpha,
+				// A real out page has none of bench.html's colour patches.
+				patches: !real,
 				flag,
 			},
 		});
@@ -165,10 +196,12 @@ async function main() {
 	}
 	// Let it settle: first frames, receivers connected, painting at the full rate.
 	await sleep(5000);
+	real?.start();
 	if (options.every) {
-		await everyWindow({ options, sender, flag, windowResults, args, say });
+		await everyWindow({ options, sender, server, flag, windowResults, args, say });
 		Atomics.store(flag, 0, 2);
 		await Promise.all(workers);
+		await real?.stop();
 		stopSender();
 		server.close();
 		process.exit(0);
@@ -176,6 +209,7 @@ async function main() {
 
 	const sampler = sampleGpu(options.seconds);
 	const before = processTree(sender.pid);
+	const countedBefore = pipelines(server.lastStatus());
 	Atomics.store(flag, 0, 1);
 	const started = performance.now();
 	await sleep(options.seconds * 1000);
@@ -186,6 +220,7 @@ async function main() {
 	const gpuAfter = gpuMemory();
 	const results = await Promise.all(workers);
 	const status = server.lastStatus();
+	await real?.stop();
 	stopSender();
 	server.close();
 
@@ -195,6 +230,9 @@ async function main() {
 		render: [...new Set((status?.outs ?? []).map((out) => out.render))].join(
 			"+",
 		),
+		adapter: status?.outs?.find((out) => out.adapter)?.adapter ?? "",
+		// The status comes every second or two: a little of before and after is in it.
+		pipeline: grown(countedBefore, pipelines(status)),
 		senderSays: senderLog.filter((line) =>
 			/GPU:|drawing on|instead|cannot|emulated/.test(line),
 		),
@@ -220,7 +258,7 @@ function sourceName(i) {
 }
 
 /** The notGT server, as far as the sender needs one. */
-function serve({ outs, width, height, fps, alpha, page }) {
+function serve({ outs, width, height, fps, alpha, page, period, url: pageUrl }) {
 	const html = fs.readFileSync(
 		path.join(root, "test", "fixtures", "bench.html"),
 	);
@@ -235,7 +273,7 @@ function serve({ outs, width, height, fps, alpha, page }) {
 					outs: Array.from({ length: outs }, (_, i) => ({
 						id: `bench${i + 1}`,
 						ndiName: sourceName(i),
-						url: `/bench.html#${page}`,
+						url: pageUrl ?? `/bench.html?fps=${fps}&period=${period}#${page}`,
 						width,
 						height,
 						designWidth: 1920,
@@ -289,8 +327,148 @@ function serve({ outs, width, height, fps, alpha, page }) {
 	);
 }
 
+/**
+ * --real: shows through a real notGT server. Its out page is the one sent;
+ * every `period` ms a code title that draws the count is shown on it over
+ * the API, and hidden again once its frames are drawn. `stop()` takes the
+ * title away again.
+ */
+async function realShows(options, args) {
+	const base = options.real;
+	const token = typeof args.token === "string" ? args.token : (process.env.NOTGT_TOKEN ?? "");
+	const api = async (method, url, body) => {
+		const response = await fetch(`${base}/api${url}`, {
+			method,
+			headers: {
+				...(body ? { "content-type": "application/json" } : {}),
+				...(token ? { authorization: `Bearer ${token}` } : {}),
+			},
+			...(body ? { body: JSON.stringify(body) } : {}),
+		});
+		if (!response.ok) throw new Error(`${method} ${base}/api${url}: ${response.status} ${await response.text()}`);
+		return response.json();
+	};
+	const outs = (await api("GET", "/outs")).outs ?? [];
+	const out = typeof args.out === "string" ? outs.find((o) => o.id === args.out) : outs[0];
+	if (!out) throw new Error(`${base} has no out${typeof args.out === "string" ? ` called ${args.out}` : ""}`);
+	// The page as this machine reaches the server, whatever address the server gives.
+	const given = new URL((await api("GET", `/outs/${out.id}/url`)).url, base);
+	const url = new URL(given.pathname + given.search, base).href;
+	await api("POST", "/templates", {
+		id: TITLE_ID,
+		name: "notGT bench count",
+		kind: "code",
+		width: 1100,
+		height: 220,
+		code: countTitle(options.fps),
+	});
+	let shown = 0;
+	let timer;
+	const hides = new Set();
+	const hide = () => api("POST", "/titles/hide", { out: out.id, templateId: TITLE_ID });
+	let stopped = false;
+	return {
+		url,
+		start() {
+			timer = setInterval(async () => {
+				shown++;
+				try {
+					await api("POST", `/titles/${TITLE_ID}/show`, { out: out.id, data: { bench: { show: shown } } });
+				} catch (error) {
+					console.error(error.message);
+					return;
+				}
+				const later = setTimeout(() => {
+					hides.delete(later);
+					hide().catch((error) => console.error(error.message));
+				}, (SHOW_FRAMES * 1000) / options.fps + 500);
+				hides.add(later);
+			}, options.period);
+		},
+		async stop() {
+			if (stopped) return;
+			stopped = true;
+			clearInterval(timer);
+			for (const later of hides) clearTimeout(later);
+			await hide().catch(() => {});
+			await api("DELETE", `/templates/${TITLE_ID}`).catch(() => {});
+		},
+	};
+}
+
+/**
+ * --real's code title: bench.html's stamp, count and marker (see there),
+ * drawn from the moment notGT shows it — its frames counted from its first
+ * animation frame, the marker moved on the compositor.
+ */
+function countTitle(fps) {
+	return {
+		html: '<div id="stamp"></div><div id="count"></div><div id="track"><div id="marker"></div></div>',
+		css: [
+			"html,body{margin:0;background:transparent;overflow:hidden}",
+			"#stamp,#count{position:absolute;left:40px;top:128px;display:flex}#count{top:152px}",
+			"#stamp i,#count i{width:16px;height:16px;background:#000}#stamp i.on,#count i.on{background:#fff}",
+			"#track{position:absolute;left:40px;top:176px;width:1024px;height:16px;background:#000}",
+			"#marker{width:16px;height:16px;background:#fff;opacity:0}",
+		].join("\n"),
+		js: `const FRAMES = ${SHOW_FRAMES};
+const frameMs = ${1000 / fps};
+const blocks = (id) => {
+	const row = document.getElementById(id);
+	return Array.from({ length: 32 }, () => row.appendChild(document.createElement("i")));
+};
+const bits = blocks("stamp");
+const countBits = blocks("count");
+const write = (row, word) => {
+	for (let i = 0; i < 32; i++) row[i].className = Math.floor(word / 2 ** (31 - i)) % 2 ? "on" : "";
+};
+let drawn = 0;
+function draw(entry, frame) {
+	const t = Date.now() % 2 ** 24;
+	write(bits, t * 256 + (((t & 255) + ((t >> 8) & 255) + ((t >> 16) & 255)) & 255));
+	drawn = (drawn + 1) % 256;
+	write(countBits, ((entry * 256 + frame) * 256 + drawn) * 256 + ((entry + frame + drawn) & 255));
+}
+onShow(() => {
+	const entry = (Number(vars("bench.show", 0)) % 255) + 1;
+	let frame = 0;
+	requestAnimationFrame(function tick() {
+		if (frame === 0)
+			document.getElementById("marker").animate(
+				[
+					{ opacity: 1, transform: "translateX(0)" },
+					{ opacity: 1, transform: "translateX(" + FRAMES * 16 + "px)" },
+				],
+				{ duration: FRAMES * frameMs, delay: -frameMs / 2, easing: "steps(" + FRAMES + ")" },
+			);
+		if (frame < FRAMES) {
+			draw(entry, frame++);
+			requestAnimationFrame(tick);
+		}
+	});
+});`,
+	};
+}
+
+/** The sender's counts (src/telemetry.mjs) of each out, by its NDI name. */
+function pipelines(status) {
+	return new Map((status?.outs ?? []).map((out) => [out.ndiName, out.pipeline ?? {}]));
+}
+
+/** What each out's counts grew by from `before` to `after`. */
+function grown(before, after) {
+	return [...after].map(([source, counts]) => ({
+		source,
+		...Object.fromEntries(
+			Object.entries(counts)
+				.filter(([what]) => what !== "held")
+				.map(([what, n]) => [what, n - (before.get(source)?.[what] ?? 0)]),
+		),
+	}));
+}
+
 /** --every: windows of `every` seconds, one report each, until `seconds`. */
-async function everyWindow({ options, sender, flag, windowResults, args, say }) {
+async function everyWindow({ options, sender, server, flag, windowResults, args, say }) {
 	const windows = Math.max(1, Math.round(options.seconds / options.every));
 	const startedAt = Date.now();
 	Atomics.store(flag, 0, 1);
@@ -301,6 +479,7 @@ async function everyWindow({ options, sender, flag, windowResults, args, say }) 
 		}
 		const sampler = sampleGpu(options.every);
 		const before = processTree(sender.pid);
+		const counted = pipelines(server.lastStatus());
 		const started = performance.now();
 		await sleep(options.every * 1000);
 		const after = processTree(sender.pid);
@@ -316,19 +495,20 @@ async function everyWindow({ options, sender, flag, windowResults, args, say }) 
 			cpu: cpuUse(before, after, elapsed),
 			gpuBusy: gpu.busyPercent,
 			receivers: windowResults.get(k) ?? [],
+			pipeline: grown(counted, pipelines(server.lastStatus())),
 		};
 		windowResults.delete(k);
 		if (args.json) console.log(JSON.stringify(report));
 		else
 			for (const x of report.receivers)
 				say(
-					`${report.minutes} min: CPU ${report.cpu.total}%, ${report.cpu.memoryMB} MB, ${x.fps} fps (${x.freshFps} fresh), interval p50 ${x.intervalMs.p50} / p95 ${x.intervalMs.p95} / max ${x.intervalMs.max} ms, latency p50 ${x.latencyMs.p50} ms, colours ${x.correct ? "right" : "WRONG"} (${x.colourError}, alpha ${x.alphaError})`,
+					`${report.minutes} min: CPU ${report.cpu.total}%, ${report.cpu.memoryMB} MB, ${x.fps} fps (${x.freshFps} fresh, ${x.lost} lost), interval p50 ${x.intervalMs.p50} / p99 ${x.intervalMs.p99} / max ${x.intervalMs.max} ms, latency p50 ${x.latencyMs.p50} ms, colours ${x.correct ? "right" : "WRONG"} (${x.colourError}, alpha ${x.alphaError})`,
 				);
 	}
 }
 
 // --------------------------------------------------------- the receivers
-async function receive({ name, ips, width, height, alpha, flag }) {
+async function receive({ name, ips, width, height, alpha, patches, flag }) {
 	const { loadNdi } = await import("../src/ndi.mjs");
 	const ndi = loadNdi();
 	/** Finds the source again, as receivers do when one comes back elsewhere. */
@@ -358,6 +538,13 @@ async function receive({ name, ips, width, height, alpha, flag }) {
 		colourError: 0,
 		alphaError: 0,
 		worst: undefined,
+		/** Frames the page drew that never came (its count skipped them). */
+		lost: 0,
+		/** Between new frames of one motion: all the time, or one show. */
+		freshIntervals: [],
+		/** #entry: each show that ended, by the count and by the marker. */
+		shows: [],
+		markers: [],
 	});
 	let stats = newStats();
 	let window = 0;
@@ -366,6 +553,47 @@ async function receive({ name, ips, width, height, alpha, flag }) {
 	let lastStamp;
 	let lastArrival;
 	let checkedAt = 0;
+	// #entry's shows, followed across windows, and the last new frame's count.
+	let show;
+	let marker;
+	let lastFresh;
+	const endShow = () => {
+		if (show?.counted) stats.shows.push(arrived(show));
+		show = undefined;
+	};
+	const endMarker = () => {
+		if (marker?.counted) stats.markers.push(arrived(marker));
+		marker = undefined;
+	};
+	/**
+	 * Follows the shows in a frame: by its count, and by the marker's place.
+	 * Followed while settling too, and counted only when begun measuring: a
+	 * show already going is not taken for one that came in late.
+	 */
+	const follow = (count, place, measuring) => {
+		if (count) {
+			if (show && show.entry !== count.entry) endShow();
+			if (count.entry !== 0) {
+				show ??= { entry: count.entry, first: count.frame, frames: new Set(), counted: measuring };
+				show.frames.add(count.frame);
+			}
+		}
+		if (place < 0) endMarker();
+		else {
+			marker ??= { first: place, frames: new Set(), counted: measuring };
+			marker.frames.add(place);
+		}
+	};
+	/** A new frame: what the page drew since the last one and never sent is lost. */
+	const fresh = (count, now) => {
+		// Within one motion: all the time, or one show (a code title counts each show from 0).
+		if (lastFresh && count && count.entry === lastFresh.entry) {
+			const step = (count.drawn - lastFresh.drawn + 256) % 256;
+			if (step > 1) stats.lost += step - 1;
+			stats.freshIntervals.push(now - lastFresh.at);
+		}
+		lastFresh = count ? { ...count, at: now } : undefined;
+	};
 	while (receiver && Atomics.load(flag, 0) < 2) {
 		const measuring = Atomics.load(flag, 0) === 1;
 		if (Atomics.load(flag, 1) !== window) {
@@ -384,40 +612,51 @@ async function receive({ name, ips, width, height, alpha, flag }) {
 		receiver.captureVideo(
 			100,
 			(frame) => {
-				heardAt = performance.now();
-				if (!measuring) return;
 				const now = performance.now();
+				heardAt = now;
+				/** B, G, R, A at a point of the 1920×1080 layout. */
+				const at = (x, y) => {
+					const i = Math.round(y * sy) * frame.stride + Math.round(x * sx) * 4;
+					return frame.pixels.subarray(i, i + 4);
+				};
+				/** 32 blocks of 16 px from (40, `top`), white for 1: a number, highest bit first. */
+				const word = (top) => {
+					let value = 0;
+					for (let bit = 0; bit < 32; bit++) {
+						const [b, g, r] = at(40 + bit * 16 + 8, top + 8);
+						value = value * 2 + ((r + g + b) / 3 > 128 ? 1 : 0);
+					}
+					return value;
+				};
+				const count = readCount(word(152));
+				follow(count, markerPlace(at), measuring);
+				if (!measuring) return;
 				stats.frames++;
 				stats.size = `${frame.width}×${frame.height}`;
 				stats.fourcc = frame.fourcc;
 				stats.declaredFps = Math.round(frame.fps * 100) / 100;
 				if (lastArrival !== undefined) stats.intervals.push(now - lastArrival);
 				lastArrival = now;
-				/** B, G, R, A at a point of the 1920×1080 layout. */
-				const at = (x, y) => {
-					const i = Math.round(y * sy) * frame.stride + Math.round(x * sx) * 4;
-					return frame.pixels.subarray(i, i + 4);
-				};
 				// The time stamp: 32 blocks of 16 px from (40, 128).
-				let word = 0;
-				for (let bit = 0; bit < 32; bit++) {
-					const [b, g, r] = at(40 + bit * 16 + 8, 136);
-					word = word * 2 + ((r + g + b) / 3 > 128 ? 1 : 0);
-				}
-				const stamp = Math.floor(word / 256);
+				const stamped = word(128);
+				const stamp = Math.floor(stamped / 256);
 				const sum =
 					(stamp & 255) + ((stamp >> 8) & 255) + ((stamp >> 16) & 255);
-				if (sum % 256 === word % 256) {
+				if (sum % 256 === stamped % 256) {
 					if (stamp !== lastStamp) {
 						stats.fresh++;
 						const latency =
 							((Date.now() % STAMP_WRAP) - stamp + STAMP_WRAP) % STAMP_WRAP;
-						if (latency < 10_000) stats.latencies.push(latency);
+						if (latency < 10_000) {
+							stats.latencies.push(latency);
+							if (show && show.latency === undefined) show.latency = latency;
+						}
+						fresh(count, now);
 					}
 					lastStamp = stamp;
 				} else stats.badStamps++;
 				// The patches, about once a second.
-				if (now - checkedAt > 1000) {
+				if (patches && now - checkedAt > 1000) {
 					checkedAt = now;
 					PATCHES.forEach((want, p) => {
 						const got = [0, 0, 0, 0];
@@ -475,10 +714,66 @@ function summarise(name, stats) {
 			intervalMs: percentiles(stats.intervals),
 			latencyMs: percentiles(stats.latencies),
 			badStamps: stats.badStamps,
+			lost: stats.lost,
+			freshIntervalMs: percentiles(stats.freshIntervals),
+			...(stats.shows.length || stats.markers.length
+				? { entry: { count: together(stats.shows), marker: together(stats.markers) } }
+				: {}),
 			colourError: stats.colourError,
 			alphaError: stats.alphaError,
-			correct: stats.worst ? stats.worst.score <= 1 : false,
+			// Nothing checked (a real out page): neither right nor wrong.
+			correct: stats.worst ? stats.worst.score <= 1 : null,
 			worstPatch: stats.worst,
+	};
+}
+
+/** bench.html's count, when its check sum holds: show, frame of the show, the page's own frame. */
+function readCount(word) {
+	const entry = Math.floor(word / 2 ** 24) % 256;
+	const frame = Math.floor(word / 2 ** 16) % 256;
+	const drawn = Math.floor(word / 2 ** 8) % 256;
+	if (((entry + frame + drawn) & 255) !== word % 256) return undefined;
+	return { entry, frame, drawn };
+}
+
+/** #entry: the place of the white marker on the track, 0–63; -1 for none. */
+function markerPlace(at) {
+	for (let place = 0; place < 64; place++) {
+		const [b, g, r] = at(40 + place * 16 + 8, 184);
+		if ((r + g + b) / 3 > 128) return place;
+	}
+	return -1;
+}
+
+/** What arrived of one show: from which frame, and which of its frames never did. */
+function arrived({ first, frames, latency }) {
+	const lost = [];
+	for (let k = 0; k < SHOW_FRAMES; k++) if (!frames.has(k)) lost.push(k);
+	return {
+		first,
+		lost,
+		missing: lost.length,
+		missingAtStart: lost.filter((k) => k < SHOW_START).length,
+		...(latency !== undefined ? { latency } : {}),
+	};
+}
+
+/** Shows together: how many arrived from frame 0, from which frames the rest, what was missing. */
+function together(shows) {
+	const firstFrames = {};
+	for (const s of shows) firstFrames[s.first] = (firstFrames[s.first] ?? 0) + 1;
+	/** Which frames of the shows never arrived, and in how many shows. */
+	const lostFrames = {};
+	for (const s of shows) for (const k of s.lost) lostFrames[k] = (lostFrames[k] ?? 0) + 1;
+	const latencies = shows.map((s) => s.latency).filter((l) => l !== undefined);
+	return {
+		shows: shows.length,
+		fromFrame0: shows.filter((s) => s.first === 0).length,
+		firstFrames,
+		missingAtStart: shows.reduce((n, s) => n + s.missingAtStart, 0),
+		missing: shows.reduce((n, s) => n + s.missing, 0),
+		lostFrames,
+		...(latencies.length ? { startLatencyMs: percentiles(latencies) } : {}),
 	};
 }
 
@@ -690,7 +985,7 @@ function printReport(r) {
 	console.log(
 		`machine   ${r.machine.platform}, ${r.machine.cpu}, ${r.machine.memoryGB} GB`,
 	);
-	console.log(`render    ${r.render || "?"}`);
+	console.log(`render    ${r.render || "?"}${r.adapter ? ` — ${r.adapter}` : ""}`);
 	for (const line of r.senderSays) console.log(`          ${line}`);
 	const kinds = Object.entries(r.cpu.byKind)
 		.filter(([, v]) => v >= 0.1)
@@ -709,9 +1004,26 @@ function printReport(r) {
 			? ` (worst: patch ${x.worstPatch.patch}, ${x.worstPatch.got.join(",")} for ${x.worstPatch.expect.join(",")})`
 			: "";
 		console.log(
-			`${x.source}: ${x.size} ${x.fourcc}, ${x.fps} fps (declared ${x.declaredFps}), ${x.freshFps} fresh fps, interval p50 ${x.intervalMs.p50} / p95 ${x.intervalMs.p95} / max ${x.intervalMs.max} ms, latency p50 ${x.latencyMs.p50} / p95 ${x.latencyMs.p95} ms, colours ${x.correct ? "right" : "WRONG"} (off by ${x.colourError} at most, alpha by ${x.alphaError})${x.correct ? "" : worst}`,
+			`${x.source}: ${x.size} ${x.fourcc}, ${x.fps} fps (declared ${x.declaredFps}), ${x.freshFps} fresh fps, interval p50 ${x.intervalMs.p50} / p95 ${x.intervalMs.p95} / p99 ${x.intervalMs.p99} / max ${x.intervalMs.max} ms, latency p50 ${x.latencyMs.p50} / p95 ${x.latencyMs.p95} ms, ${x.correct === null ? "colours not checked" : `colours ${x.correct ? "right" : "WRONG"} (off by ${x.colourError} at most, alpha by ${x.alphaError})${x.correct ? "" : worst}`}`,
 		);
+		const f = x.freshIntervalMs;
+		console.log(
+			`          ${x.lost} frame(s) the page drew never arrived; between new frames p50 ${f.p50} / p99 ${f.p99} / max ${f.max} ms`,
+		);
+		if (x.entry) {
+			for (const [how, e] of [
+				["by script (the count)", x.entry.count],
+				["on the compositor (the marker)", x.entry.marker],
+			])
+				console.log(
+					`          shows ${how}: ${e.fromFrame0} of ${e.shows} arrived from frame 0 (first frames ${JSON.stringify(e.firstFrames)}), ${e.missingAtStart} frame(s) missing from their first ${SHOW_START}, ${e.missing} in all${e.missing ? ` (which, in how many shows: ${JSON.stringify(e.lostFrames)})` : ""}${e.startLatencyMs ? `, first frame ${e.startLatencyMs.p50} ms after it was drawn (p50)` : ""}`,
+				);
+		}
 	}
+	for (const p of r.pipeline ?? [])
+		console.log(
+			`sender    ${p.source}: ${p.painted} painted, ${p.replaced} replaced waiting, ${p.converted} converted, ${p.fresh} sent new and ${p.repeats} again, ${p.dropped} dropped by the clock${p.skipped ? `, ${p.skipped} skipped` : ""}`,
+		);
 }
 
 // ----------------------------------------------------------------- small
@@ -727,17 +1039,6 @@ function parseArgs(argv) {
 		} else args[key] = true;
 	}
 	return args;
-}
-
-function percentiles(values) {
-	if (!values.length) return { p50: null, p95: null, max: null };
-	const sorted = [...values].sort((a, b) => a - b);
-	const at = (q) =>
-		round(
-			sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))],
-			1,
-		);
-	return { p50: at(0.5), p95: at(0.95), max: round(sorted.at(-1), 1) };
 }
 
 function average(values) {

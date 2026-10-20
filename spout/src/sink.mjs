@@ -19,6 +19,8 @@
 
 /** How long a first frame may take once the page is loaded (see NativeSink). */
 const FIRST_FRAME_MS = 5000;
+/** Without the sender's tally (../../ndi/src/telemetry.mjs), nothing is counted. */
+const UNCOUNTED = { count() {}, time() {}, took() {}, gaveBack() {} };
 
 export class SpoutSink {
 	/**
@@ -31,8 +33,9 @@ export class SpoutSink {
 	 * @param {{ vendorId?: number, deviceId?: number }} [options.gpu] the GPU Chromium draws on
 	 * @param {(line: string) => void} options.log
 	 * @param {(reason: string) => void} [options.onFail] another sink should take over
+	 * @param {import("../../ndi/src/telemetry.mjs").Tally} [options.tally] the out's: what becomes of its frames
 	 */
-	constructor({ native, config, shared, gpu = {}, log, onFail = () => {} }) {
+	constructor({ native, config, shared, gpu = {}, log, onFail = () => {}, tally = UNCOUNTED }) {
 		this.config = config;
 		this.log = log;
 		this.onFail = onFail;
@@ -47,6 +50,9 @@ export class SpoutSink {
 		/** The newest paint that had to wait: a texture, or a bitmap's rectangle. */
 		this.waiting = undefined;
 		this.totals = { frames: 0, skipped: 0, gpuMs: 0, totalMs: 0 };
+		this.tally = tally;
+		/** When a frame was last written for receivers. */
+		this.wroteAt = undefined;
 		this.out = new native.SpoutOut({
 			name: config.ndiName,
 			alpha: config.alpha,
@@ -79,8 +85,8 @@ export class SpoutSink {
 		);
 	}
 
-	/** A painted frame, as a texture this sink has to release. */
-	paintTexture(texture) {
+	/** A painted frame, as a texture this sink has to release; painted at `paintedAt`. */
+	paintTexture(texture, paintedAt = performance.now()) {
 		if (this.failed || this.stopped) {
 			texture.release();
 			return;
@@ -89,12 +95,22 @@ export class SpoutSink {
 			this.framed = true;
 			clearTimeout(this.frameTimer);
 		}
+		this.tally.took();
+		const painted = { texture, paintedAt };
 		if (this.busy) {
-			this.waiting?.texture?.release();
-			this.waiting = { texture };
+			if (this.waiting) this.tally.count("replaced");
+			this.letGo(this.waiting);
+			this.waiting = painted;
 			return;
 		}
-		this.draw({ texture });
+		this.draw(painted);
+	}
+
+	/** Gives a painted frame's texture, if it has one, back to Chromium. */
+	letGo(painted) {
+		if (!painted?.texture) return;
+		painted.texture.release();
+		this.tally.gaveBack(painted.paintedAt);
 	}
 
 	/** A painted picture, changed inside `dirty`. */
@@ -107,7 +123,8 @@ export class SpoutSink {
 			waiting?.image && sameSize(waiting.size, size)
 				? union(waiting.dirty, dirty)
 				: dirty;
-		this.waiting = { image, dirty: clip(rect, size), size };
+		if (waiting?.image) this.tally.count("replaced");
+		this.waiting = { image, dirty: clip(rect, size), size, paintedAt: performance.now() };
 		if (!this.busy) {
 			const next = this.waiting;
 			this.waiting = undefined;
@@ -117,6 +134,7 @@ export class SpoutSink {
 
 	async draw(frame) {
 		this.busy = true;
+		if (frame.paintedAt !== undefined) this.tally.time("wait", performance.now() - frame.paintedAt);
 		try {
 			let done;
 			if (frame.texture) {
@@ -147,34 +165,47 @@ export class SpoutSink {
 				this.width = done.width;
 				this.height = done.height;
 				const t = this.totals;
-				if (done.skipped) t.skipped++;
-				else {
+				if (done.skipped) {
+					t.skipped++;
+					this.tally.count("skipped");
+				} else {
 					this.sent++;
 					t.frames++;
 					t.gpuMs += done.gpuMs;
 					t.totalMs += done.totalMs;
+					this.wrote(done.totalMs);
 				}
 			}
 		} catch (error) {
 			this.fail(`Spout could not take a frame: ${error.message}`);
 		} finally {
 			// Only now: the GPU is done reading it.
-			frame.texture?.release();
+			this.letGo(frame);
 			this.busy = false;
 		}
 		const next = this.waiting;
 		this.waiting = undefined;
 		if (next) {
-			if (this.failed || this.stopped) next.texture?.release();
+			if (this.failed || this.stopped) this.letGo(next);
 			else this.draw(next);
 		}
+	}
+
+	/** A frame is in the texture receivers read: a new one for them. */
+	wrote(ms) {
+		const now = performance.now();
+		this.tally.count("converted");
+		this.tally.count("fresh");
+		this.tally.time("convert", ms);
+		if (this.wroteAt !== undefined) this.tally.time("send", now - this.wroteAt);
+		this.wroteAt = now;
 	}
 
 	fail(reason) {
 		if (this.failed || this.stopped) return;
 		this.failed = true;
 		clearTimeout(this.frameTimer);
-		this.waiting?.texture?.release();
+		this.letGo(this.waiting);
 		this.waiting = undefined;
 		this.onFail(reason);
 	}
@@ -193,7 +224,7 @@ export class SpoutSink {
 		if (this.stopped) return;
 		this.stopped = true;
 		clearTimeout(this.frameTimer);
-		this.waiting?.texture?.release();
+		this.letGo(this.waiting);
 		this.waiting = undefined;
 		this.out.close();
 	}

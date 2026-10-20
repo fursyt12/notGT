@@ -11,7 +11,9 @@
  *    pulls the clock towards that moment, by at most `LOCK` of a frame;
  *  - repeats keep the clock as it is — timers run late, and late must not
  *    mean slower.
- * Nothing goes out while nobody receives the source.
+ * Nothing goes out while nobody receives the source. What goes out new,
+ * what goes out again and what is dropped is counted in the out's tally
+ * (telemetry.mjs).
  *
  * Why it follows: Chromium paints on a clock of its own, whose 60 fps is
  * every 16 666 µs (16.6667 ms cut to whole microseconds; measured over
@@ -20,6 +22,8 @@
  * frame after seven minutes, when one was dropped and the wait began again —
  * latency going round from 26 to 41 ms at 60 fps.
  */
+
+import { Tally } from "./telemetry.mjs";
 
 /** How far a frame may move the clock, as a share of a frame. */
 export const LOCK = 0.005;
@@ -50,6 +54,7 @@ export class FrameClock {
 	 *   false when there was nothing in it to send
 	 * @param {() => number} [options.now] milliseconds; tests bring their own
 	 * @param {{ set: typeof setTimeout, clear: typeof clearTimeout }} [options.timers]
+	 * @param {Tally} [options.tally] counts what goes out, again or not at all
 	 */
 	constructor({
 		fps,
@@ -61,9 +66,13 @@ export class FrameClock {
 			set: (fn, ms) => setTimeout(fn, ms),
 			clear: (timer) => clearTimeout(timer),
 		},
+		tally = new Tally(),
 	}) {
 		this.frameMs = 1000 / fps;
 		this.transmit = transmit;
+		this.tally = tally;
+		/** When the last frame went out while watched: the gaps are timed. */
+		this.lastSentAt = undefined;
 		this.now = now;
 		this.timers = timers;
 		this.watching = false;
@@ -98,6 +107,8 @@ export class FrameClock {
 	/** A new frame is in `slot`. */
 	frameReady(slot) {
 		if (this.stopped) return;
+		// Watched, a frame still waiting for its turn is one no receiver gets.
+		if (this.watching && this.readySlot !== null) this.tally.count("dropped", 1, `slot ${this.readySlot}`);
 		this.readySlot = slot;
 		this.latestSlot = slot;
 		const now = this.now();
@@ -110,6 +121,7 @@ export class FrameClock {
 			this.due = Math.max(now, this.sentAt + 0.25 * this.frameMs);
 			this.anchor = true;
 		}
+		this.tally.note("ready", `slot ${slot}, due in ${(this.due - now).toFixed(1)} ms${moving ? "" : ", motion starts"}`);
 		if (this.due - now <= 0.25 * this.frameMs) this.sendReady(true);
 		else if (!(this.timerDue <= this.due)) this.at(this.due);
 	}
@@ -119,12 +131,13 @@ export class FrameClock {
 		this.watching = watching;
 		if (!watching) {
 			this.cancel();
+			this.lastSentAt = undefined;
 			return;
 		}
 		// The newest frame there is, at once.
 		if (this.readySlot !== null) this.sendReady(false);
 		else if (this.latestSlot !== null) {
-			this.send(this.latestSlot, false);
+			this.send(this.latestSlot, false, this.latestSlot !== this.sentSlot);
 			this.again();
 		}
 	}
@@ -135,10 +148,14 @@ export class FrameClock {
 		this.cancel();
 	}
 
-	send(slot, follow) {
+	/** `fresh`: a frame not sent before. */
+	send(slot, follow, fresh) {
 		if (!this.transmit(slot)) return;
 		this.sentSlot = slot;
 		const now = this.now();
+		this.tally.count(fresh ? "fresh" : "repeats", 1, `slot ${slot}, ${(now - this.due).toFixed(1)} ms after due${follow ? ", followed" : ""}`);
+		if (this.lastSentAt !== undefined) this.tally.time("send", now - this.lastSentAt);
+		this.lastSentAt = now;
 		if (this.anchor) {
 			this.anchor = false;
 			this.due = now + this.frameMs;
@@ -151,7 +168,7 @@ export class FrameClock {
 	sendReady(follow) {
 		const slot = this.readySlot;
 		this.readySlot = null;
-		this.send(slot, follow);
+		this.send(slot, follow, true);
 		this.again();
 	}
 
@@ -173,7 +190,7 @@ export class FrameClock {
 					return;
 				}
 				if (this.sentSlot === null) return;
-				this.send(this.sentSlot, false);
+				this.send(this.sentSlot, false, false);
 				this.again();
 			},
 			Math.max(0, time - this.now()),

@@ -10,14 +10,16 @@
  */
 import { FrameClock } from "./clock.mjs";
 import { FramePair, union } from "./frame.mjs";
+import { Tally } from "./telemetry.mjs";
 
 export class CpuSink {
 	/**
 	 * @param {object} options
 	 * @param {import("./ndi.mjs").Ndi} options.ndi
 	 * @param {import("./controller.mjs").OutputConfig} options.config
+	 * @param {Tally} [options.tally] the out's: what becomes of its frames
 	 */
-	constructor({ ndi, config }) {
+	constructor({ ndi, config, tally = new Tally() }) {
 		this.config = config;
 		/** Frames come as bitmaps, not as shared textures. */
 		this.shared = false;
@@ -30,10 +32,12 @@ export class CpuSink {
 		this.busyMs = 0;
 		/** The newest picture painted and not yet sent, and what changed. */
 		this.pending = undefined;
+		this.tally = tally;
 		// One "slot": the picture waiting, or the last one sent again.
 		this.clock = new FrameClock({
 			fps: config.fps,
 			transmit: () => this.transmit(),
+			tally,
 		});
 		this.stopped = false;
 	}
@@ -104,7 +108,10 @@ export class CpuSink {
 		if (this.pending) {
 			const began = performance.now();
 			buffer = this.convertPending();
-			this.busyMs += performance.now() - began;
+			const ms = performance.now() - began;
+			this.busyMs += ms;
+			this.tally.count("converted");
+			this.tally.time("convert", ms);
 		}
 		if (!buffer) return false;
 		this.sender.sendAsync(buffer, this.frames.width, this.frames.height, {

@@ -23,12 +23,13 @@
  *
  * It talks to `sink.mjs` in the main process:
  *   → texture (sharedTexture), "stop"
- *   ← "ready", "done" (a texture may be reused), "stats", "log", "failed",
- *     "stopped"
+ *   ← "ready", "done" (a texture may be reused), "stats", "log", "trace",
+ *     "failed", "stopped"
  */
 import { createRequire } from "node:module";
 import { FrameClock } from "../clock.mjs";
 import { loadNdi } from "../ndi.mjs";
+import { Tally } from "../telemetry.mjs";
 import {
 	VERTEX_SHADER,
 	colourStandard,
@@ -291,6 +292,13 @@ let connections = 0;
 let clock;
 /** What the frames cost, since the last stats. */
 const totals = { frames: 0, gpuMs: 0, readMs: 0 };
+/**
+ * What was converted, and what the clock sent new, again or not at all:
+ * drained into the out's tally in the main process with each stats.
+ */
+const tally = new Tally({
+	trace: process.env.NOTGT_NDI_TRACE ? (line) => send("trace", line) : undefined,
+});
 
 function transmit(index) {
 	sender.sendAsync(
@@ -353,6 +361,8 @@ async function handle(imported, id) {
 			totals.frames++;
 			totals.gpuMs += times.gpuMs;
 			totals.readMs += times.readMs;
+			tally.count("converted");
+			tally.time("convert", times.gpuMs + times.readMs);
 			clock.frameReady(index);
 		} finally {
 			frame.close();
@@ -384,7 +394,7 @@ async function start() {
 	ndi = loadNdi(config.ndiFile ? [config.ndiFile] : undefined);
 	sender = ndi.createSender(config.ndiName, { groups: config.groups });
 	kind = await chooseConverter();
-	clock = new FrameClock({ fps: config.fps, transmit });
+	clock = new FrameClock({ fps: config.fps, transmit, tally });
 	sharedTexture.setSharedTextureReceiver(
 		async ({ importedSharedTexture }, id) => {
 			queue = queue.then(() => handle(importedSharedTexture, id));
@@ -400,6 +410,7 @@ async function start() {
 			converted: totals.frames,
 			gpuMs: totals.gpuMs / n,
 			readMs: totals.readMs / n,
+			tally: tally.drain(),
 		});
 		totals.frames = totals.gpuMs = totals.readMs = 0;
 	}, 1000);
