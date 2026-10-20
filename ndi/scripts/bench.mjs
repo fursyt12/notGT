@@ -29,6 +29,12 @@
  * show, as notGT puts code titles), shown and hidden over its API as an
  * operator would. The title is the server's only for the run.
  *
+ * `--connect 0,250,500,1000` (with `--real`): no receiver between shows; one
+ * connects that many ms into each show in turn, and the bench says how soon
+ * the show's frame of the moment arrived, which frame that was, and what
+ * was missing after it — whether a receiver that connects late gets the out
+ * as it is.
+ *
  * `--every <s>`: one long run, reported every <s> seconds for --seconds in
  * all — a JSON line a window with --json — to see what changes over time
  * (memory that grows, a rate that drifts, a picture that breaks).
@@ -106,10 +112,19 @@ async function main() {
 		// --first <n>: number the sources from n, for several benches at once.
 		first: Math.max(1, Number(args.first) || 1),
 		real: typeof args.real === "string" ? args.real.replace(/\/$/, "") : "",
+		// --connect: a receiver joins each show this many ms in, in turn.
+		connect:
+			typeof args.connect === "string"
+				? args.connect.split(",").map(Number).filter((ms) => ms >= 0)
+				: [],
 	};
 	// --real: shows of a code title on a real server's out page.
 	const real = options.real ? await realShows(options, args) : undefined;
 	if (real) options.page = "entry";
+	if (options.connect.length && !real) {
+		console.error("--connect needs --real: the bench has to start the shows itself");
+		process.exit(1);
+	}
 	firstSource = options.first;
 	const say = args.json ? () => {} : (line) => console.log(line);
 
@@ -159,8 +174,10 @@ async function main() {
 	process.on("SIGINT", () => process.exit(130));
 
 	// One receiver per source, each in its own thread. flag[0]: 0 settling,
-	// 1 measuring, 2 done; flag[1]: the window being measured (--every).
-	const flag = new Int32Array(new SharedArrayBuffer(8));
+	// 1 measuring, 2 done; flag[1]: the window being measured (--every);
+	// --connect: flag[2] 1 while a receiver is to be connected, flag[3] the
+	// show it joins.
+	const flag = new Int32Array(new SharedArrayBuffer(16));
 	const windowResults = new Map();
 	const workers = Array.from({ length: options.outs }, (_, i) => {
 		const worker = new Worker(fileURLToPath(import.meta.url), {
@@ -172,6 +189,7 @@ async function main() {
 				alpha: options.alpha,
 				// A real out page has none of bench.html's colour patches.
 				patches: !real,
+				connect: options.connect,
 				flag,
 			},
 		});
@@ -196,7 +214,17 @@ async function main() {
 	}
 	// Let it settle: first frames, receivers connected, painting at the full rate.
 	await sleep(5000);
-	real?.start();
+	real?.start({
+		shown: (n) => {
+			if (!options.connect.length) return;
+			setTimeout(() => {
+				Atomics.store(flag, 3, n);
+				Atomics.store(flag, 2, 1);
+				Atomics.notify(flag, 2);
+			}, options.connect.at((n - 1) % options.connect.length));
+		},
+		hidden: () => Atomics.store(flag, 2, 0),
+	});
 	if (options.every) {
 		await everyWindow({ options, sender, server, flag, windowResults, args, say });
 		Atomics.store(flag, 0, 2);
@@ -369,17 +397,20 @@ async function realShows(options, args) {
 	let stopped = false;
 	return {
 		url,
-		start() {
+		/** `shown(n)` once show n is on its way, `hidden(n)` as it is hidden. */
+		start({ shown: onShown = () => {}, hidden: onHidden = () => {} } = {}) {
 			timer = setInterval(async () => {
-				shown++;
+				const n = ++shown;
 				try {
-					await api("POST", `/titles/${TITLE_ID}/show`, { out: out.id, data: { bench: { show: shown } } });
+					await api("POST", `/titles/${TITLE_ID}/show`, { out: out.id, data: { bench: { show: n } } });
 				} catch (error) {
 					console.error(error.message);
 					return;
 				}
+				onShown(n);
 				const later = setTimeout(() => {
 					hides.delete(later);
+					onHidden(n);
 					hide().catch((error) => console.error(error.message));
 				}, (SHOW_FRAMES * 1000) / options.fps + 500);
 				hides.add(later);
@@ -508,9 +539,13 @@ async function everyWindow({ options, sender, server, flag, windowResults, args,
 }
 
 // --------------------------------------------------------- the receivers
-async function receive({ name, ips, width, height, alpha, patches, flag }) {
+async function receive({ name, ips, width, height, alpha, patches, connect: joinMs = [], flag }) {
 	const { loadNdi } = await import("../src/ndi.mjs");
 	const ndi = loadNdi();
+	/** --connect: receivers come and go with the shows while measuring. */
+	const late = joinMs.length > 0;
+	/** The source, once found. */
+	let found;
 	/** Finds the source again, as receivers do when one comes back elsewhere. */
 	const connect = () => {
 		let source;
@@ -520,6 +555,7 @@ async function receive({ name, ips, width, height, alpha, patches, flag }) {
 				.find((candidate) => candidate.name.endsWith(`(${name})`));
 		}
 		if (!source) return undefined;
+		found = source;
 		parentPort.postMessage({ connected: source.name });
 		return ndi.createReceiver(source, `bench receiver for ${name}`);
 	};
@@ -545,6 +581,8 @@ async function receive({ name, ips, width, height, alpha, patches, flag }) {
 		/** #entry: each show that ended, by the count and by the marker. */
 		shows: [],
 		markers: [],
+		/** --connect: each receiver that joined a show. */
+		joins: [],
 	});
 	let stats = newStats();
 	let window = 0;
@@ -594,7 +632,17 @@ async function receive({ name, ips, width, height, alpha, patches, flag }) {
 		}
 		lastFresh = count ? { ...count, at: now } : undefined;
 	};
-	while (receiver && Atomics.load(flag, 0) < 2) {
+	/** --connect: the show the receiver now connected joined, and what it got of it. */
+	let join;
+	const endJoin = () => {
+		if (join?.currentMs !== undefined) {
+			let missing = 0;
+			for (let k = join.firstFrame; k < SHOW_FRAMES; k++) if (!join.frames.has(k)) missing++;
+			stats.joins.push({ offset: join.offset, ms: join.currentMs, frame: join.firstFrame, missing });
+		} else if (join) stats.joins.push({ offset: join.offset, ms: null, frame: null, missing: null });
+		join = undefined;
+	};
+	while ((receiver || late) && Atomics.load(flag, 0) < 2) {
 		const measuring = Atomics.load(flag, 0) === 1;
 		if (Atomics.load(flag, 1) !== window) {
 			// --every: the window closed; report it, start the next.
@@ -603,14 +651,31 @@ async function receive({ name, ips, width, height, alpha, patches, flag }) {
 			stats = newStats();
 			lastArrival = undefined;
 		}
-		if (performance.now() - heardAt > 3000) {
-			receiver.destroy();
+		if (late && measuring) {
+			if (Atomics.load(flag, 2) !== 1) {
+				// Between shows: nobody receives.
+				if (receiver) {
+					receiver.destroy();
+					receiver = undefined;
+					endJoin();
+				}
+				Atomics.wait(flag, 2, 0, 50);
+				continue;
+			}
+			if (!receiver) {
+				receiver = ndi.createReceiver(found, `bench receiver for ${name}`);
+				const n = Atomics.load(flag, 3);
+				lastStamp = lastArrival = lastFresh = undefined;
+				join = { entry: (n % 255) + 1, offset: joinMs.at((n - 1) % joinMs.length), at: performance.now(), frames: new Set() };
+			}
+		} else if (!receiver || performance.now() - heardAt > 3000) {
+			receiver?.destroy();
 			receiver = connect();
 			heardAt = performance.now();
 			if (!receiver) break;
 		}
 		receiver.captureVideo(
-			100,
+			late ? 20 : 100,
 			(frame) => {
 				const now = performance.now();
 				heardAt = now;
@@ -630,6 +695,14 @@ async function receive({ name, ips, width, height, alpha, patches, flag }) {
 				};
 				const count = readCount(word(152));
 				follow(count, markerPlace(at), measuring);
+				// --connect: the first frame of the show joined, and the rest of it.
+				if (join && count?.entry === join.entry) {
+					if (join.currentMs === undefined) {
+						join.currentMs = now - join.at;
+						join.firstFrame = count.frame;
+					}
+					join.frames.add(count.frame);
+				}
 				if (!measuring) return;
 				stats.frames++;
 				stats.size = `${frame.width}×${frame.height}`;
@@ -716,6 +789,7 @@ function summarise(name, stats) {
 			badStamps: stats.badStamps,
 			lost: stats.lost,
 			freshIntervalMs: percentiles(stats.freshIntervals),
+			...(stats.joins.length ? { joins: joined(stats.joins) } : {}),
 			...(stats.shows.length || stats.markers.length
 				? { entry: { count: together(stats.shows), marker: together(stats.markers) } }
 				: {}),
@@ -756,6 +830,27 @@ function arrived({ first, frames, latency }) {
 		missingAtStart: lost.filter((k) => k < SHOW_START).length,
 		...(latency !== undefined ? { latency } : {}),
 	};
+}
+
+/**
+ * --connect: the joins by how far into the show they came — how soon the
+ * show's frame of the moment arrived, which frames those were, what was
+ * missing after them.
+ */
+function joined(joins) {
+	const byOffset = {};
+	for (const j of joins) (byOffset[j.offset] ??= []).push(j);
+	return Object.entries(byOffset).map(([offset, list]) => {
+		const got = list.filter((j) => j.ms !== null);
+		return {
+			offset: Number(offset),
+			joins: list.length,
+			never: list.length - got.length,
+			ms: percentiles(got.map((j) => j.ms)),
+			frames: got.map((j) => j.frame),
+			missing: got.reduce((n, j) => n + j.missing, 0),
+		};
+	});
 }
 
 /** Shows together: how many arrived from frame 0, from which frames the rest, what was missing. */
@@ -1010,6 +1105,10 @@ function printReport(r) {
 		console.log(
 			`          ${x.lost} frame(s) the page drew never arrived; between new frames p50 ${f.p50} / p99 ${f.p99} / max ${f.max} ms`,
 		);
+		for (const j of x.joins ?? [])
+			console.log(
+				`          joined ${j.offset} ms into a show (${j.joins}×): its frame of the moment came after p50 ${j.ms.p50} / max ${j.ms.max} ms, frames ${j.frames.join(" ")}${j.never ? `, ${j.never} never` : ""}; ${j.missing} missing after them`,
+			);
 		if (x.entry) {
 			for (const [how, e] of [
 				["by script (the count)", x.entry.count],

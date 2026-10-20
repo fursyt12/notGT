@@ -17,22 +17,39 @@
  *  - Chromium paints only when something on the page moves, so a still title
  *    or an empty out costs no drawing and no converting; the last frame is
  *    sent again at the out's rate, because receivers want a steady one;
- *  - with nobody receiving the source, the page is painted once a second at
- *    most and nothing is converted or sent — it keeps running, so a title on
- *    air is there the moment someone connects. (Pausing painting outright
- *    looks cheaper, but Chromium then resumes with the picture from before
- *    the pause, and whatever changed in between never shows.)
+ *  - with nobody receiving the source and no title on the out, the page is
+ *    painted ten times a second at most and nothing is sent — it keeps running,
+ *    so what is on the out is there the moment someone connects. (Pausing
+ *    painting outright looks cheaper, but Chromium then resumes with the
+ *    picture from before the pause, and whatever changed in between never
+ *    shows.)
+ *  - with a title on the out (notGT's out page says how many: out-preload.cjs)
+ *    it is painted at the full rate, received or not: an animation's first
+ *    frames are drawn when they happen, and a receiver that connects in the
+ *    middle of one gets the frame of the moment;
  *  - NDI compresses and sends on its own threads.
  */
+import { fileURLToPath } from "node:url";
 import { BrowserWindow } from "electron";
 import { CpuSink } from "./cpu-sink.mjs";
 import { GpuSink } from "./gpu/sink.mjs";
 import { NativeSink } from "./native-sink.mjs";
 import { Tally, describeWindow } from "./telemetry.mjs";
 
-const WATCH_MS = 500;
-/** Painting rate while nobody receives: the lowest Chromium takes. */
-const IDLE_FPS = 1;
+/** How often the receivers are counted: one that connects is painted for within this. */
+const WATCH_MS = 50;
+/** Frames still painted at the full rate after the last title has left the out. */
+const TAIL_FRAMES = 30;
+const PRELOAD = fileURLToPath(new URL("./out-preload.cjs", import.meta.url));
+/**
+ * Painting rate while nobody receives and no title is on the out. Not 1:
+ * Chromium takes a new rate only at its next frame at the old one, so from
+ * 1 fps the out stood still for up to a second once a receiver or a title
+ * came (measured: no paint in the first 250 ms back at 60, 16 in the second
+ * after); from 10 it moves again within 100 ms. A still page is not painted
+ * at any rate.
+ */
+const IDLE_FPS = 10;
 const RETRY_MS = 3000;
 /** What each converter is called in the log and the dashboard. */
 const LABELS = {
@@ -65,6 +82,11 @@ export class Output {
 		this.error = undefined;
 		this.connections = 0;
 		this.watching = false;
+		/** A title is on the out (or only just left it): painted at the full rate. */
+		this.onAir = false;
+		this.offAir = undefined;
+		/** Whether Chromium was last asked for the full rate. */
+		this.fullRate = undefined;
 		this.fps = 0;
 		this.window = undefined;
 		this.timers = [];
@@ -208,6 +230,7 @@ export class Output {
 			enableLargerThanScreen: true,
 			paintWhenInitiallyHidden: true,
 			webPreferences: {
+				preload: PRELOAD,
 				offscreen: {
 					useSharedTexture: this.sink.shared,
 					deviceScaleFactor: this.scale,
@@ -223,9 +246,15 @@ export class Output {
 		});
 		this.window = window;
 		const contents = window.webContents;
-		contents.setFrameRate(
-			this.watching ? Math.round(this.config.fps) : IDLE_FPS,
-		);
+		// A new page says again what is on it.
+		clearTimeout(this.offAir);
+		this.offAir = undefined;
+		this.onAir = false;
+		this.fullRate = this.watching;
+		contents.setFrameRate(this.fullRate ? Math.round(this.config.fps) : IDLE_FPS);
+		contents.ipc.on("notgt:on-air", (_event, count) => {
+			if (this.window === window) this.setOnAir(count > 0);
+		});
 		contents.setAudioMuted(true);
 
 		contents.on("paint", (event, dirty, image) => {
@@ -333,7 +362,6 @@ export class Output {
 	/** Follows the receivers: paints for them, rests without them. */
 	watch() {
 		if (this.stopped || !this.window) return;
-		const contents = this.window.webContents;
 		this.connections = this.sink.connections();
 		if (this.connections > 0 && !this.watching) {
 			this.debug(
@@ -341,17 +369,49 @@ export class Output {
 			);
 			this.watching = true;
 			this.sink.setWatching(true);
-			// Chromium paints at whole rates; 29.97 is painted at 30 and sent as 30000/1001.
-			contents.setFrameRate(Math.round(this.config.fps));
-			contents.invalidate();
+			this.pace();
+			// A picture for it now, even of a page standing still: the CPU sink
+			// sends only one painted since.
+			this.window.webContents.invalidate();
 			if (this.state === "idle") this.state = "sending";
 		} else if (this.connections === 0 && this.watching) {
 			this.debug(`${this.config.ndiName}: no receivers, resting`);
 			this.watching = false;
 			this.sink.setWatching(false);
-			contents.setFrameRate(IDLE_FPS);
+			this.pace();
 			if (this.state === "sending") this.state = "idle";
 		}
+	}
+
+	/** A title is on the out, or none is any more. */
+	setOnAir(onAir) {
+		if (onAir) {
+			clearTimeout(this.offAir);
+			this.offAir = undefined;
+			if (this.onAir) return;
+			this.onAir = true;
+			this.debug(`${this.config.ndiName}: a title is on the out, painting`);
+			this.pace();
+		} else if (this.onAir && !this.offAir) {
+			// The last one has gone: a few frames more, then rest unless received.
+			this.offAir = setTimeout(() => {
+				this.offAir = undefined;
+				this.onAir = false;
+				this.pace();
+			}, (TAIL_FRAMES / this.config.fps) * 1000);
+		}
+	}
+
+	/** Paints at the out's rate while received or on air, else at IDLE_FPS. */
+	pace() {
+		if (this.stopped || !this.window || this.window.isDestroyed()) return;
+		const full = this.watching || this.onAir;
+		if (full === this.fullRate) return;
+		this.fullRate = full;
+		const contents = this.window.webContents;
+		// Chromium paints at whole rates; 29.97 is painted at 30 and sent as 30000/1001.
+		contents.setFrameRate(full ? Math.round(this.config.fps) : IDLE_FPS);
+		if (full) contents.invalidate();
 	}
 
 	paint(event, dirty, image) {
@@ -468,6 +528,7 @@ export class Output {
 		clearTimeout(this.retry);
 		clearTimeout(this.retrySink);
 		clearTimeout(this.repaint);
+		clearTimeout(this.offAir);
 		if (this.window && !this.window.isDestroyed()) this.window.destroy();
 		this.window = undefined;
 		return this.sink.stop();

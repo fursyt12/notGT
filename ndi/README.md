@@ -26,9 +26,10 @@ little as it can:
   changes, so a title that is standing still, or an empty out, is neither drawn nor
   converted. The last frame still goes out at the out's frame rate, because receivers —
   OBS, Resolume, NDI Studio Monitor — want a steady one; only NDI's compression runs.
-- **Nobody watches, nothing is sent.** Until a receiver connects the page paints at most
-  once a second and no frame is converted or sent. The page keeps running all the same,
-  so whatever is on air is there the moment Resolume connects.
+- **Nobody watches, nothing is sent.** Until a receiver connects nothing is sent, and the
+  page paints at most ten times a second — unless a title is on the out: then it is
+  painted at the full rate all the same, so a receiver that connects in the middle of a
+  title gets it as it is at that moment.
 - **Only what changed is touched.** Chromium paints premultiplied alpha and NDI wants it
   straight; the conversion is done only inside the rectangle that changed — a lower third
   sliding in costs its own box, not the two million pixels around it. The conversion runs
@@ -361,6 +362,10 @@ by script, as a code title draws, and on the compositor, as a layers title moves
 the bench reads it back: for every show, the first frame that arrived (0 when nothing is
 lost), which frames never did, and beside them the sender's own counts, which say where
 on the way a frame was lost.
+
+With `--connect 0,250,500,1000` the second leaves the out with no receiver between shows
+and connects one that many ms into each show in turn. For each it says how soon the show
+arrived as it was at that moment, which frame that was, and what was missing after it.
 
 ## Tests
 

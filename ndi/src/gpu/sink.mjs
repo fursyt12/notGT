@@ -5,7 +5,7 @@
  * never pass through this process.
  *
  * Every texture goes to the processor, watched or not (unwatched, the page
- * paints once a second at most): a still page paints once, and an
+ * paints ten times a second at most): a still page paints once, and an
  * invalidate() does not bring a texture back, so a picture thrown away is
  * one that may never come again.
  *
@@ -95,6 +95,9 @@ export class GpuSink {
 		);
 		contents.ipc.on("trace", (_event, line) => log(`${config.ndiName}: ${line}`));
 		contents.ipc.on("done", (_event, id) => this.done(id));
+		contents.ipc.on("connections", (_event, connections) => {
+			this.stats = { ...this.stats, connections };
+		});
 		contents.ipc.on("stats", (_event, stats) => {
 			this.stats = stats;
 			// What the processor converted, and what its clock sent, again or not at all.

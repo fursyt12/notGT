@@ -150,6 +150,17 @@ const timersRep = nodecg.Replicant<Timer[]>(REPLICANTS.timers, BUNDLE_NAME, {
 
 const slots = new Map<string, Slot>();
 
+/**
+ * How many titles are on this out — coming in, held or going — said on the
+ * page's root as `data-notgt-on-air`. The NDI and Spout sender paints the out
+ * at its full rate while it is above 0, received or not, so a title's first
+ * frames are drawn when they happen (ndi/src/output.mjs). Only slots go into
+ * the stage, and a slot leaves it once its exit is over.
+ */
+new MutationObserver(() => {
+	document.documentElement.dataset["notgtOnAir"] = String(stage.childElementCount);
+}).observe(stage, { childList: true });
+
 /** The server's clock: a timer shows the same second here as everywhere else. */
 const clock = new ServerClock();
 function syncClock(): void {

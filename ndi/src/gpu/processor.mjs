@@ -18,13 +18,13 @@
  * out's frame clock (`../clock.mjs`), every sink's: no more frames than the
  * out's rate, following Chromium's own clock, and the last one again while
  * nothing is painted. Frames are converted
- * whether anyone watches or not (unwatched, the page paints once a second
+ * whether anyone watches or not (unwatched, the page paints ten times a second
  * at most), so the newest is there the moment a receiver connects.
  *
  * It talks to `sink.mjs` in the main process:
  *   → texture (sharedTexture), "stop"
- *   ← "ready", "done" (a texture may be reused), "stats", "log", "trace",
- *     "failed", "stopped"
+ *   ← "ready", "done" (a texture may be reused), "connections" (as they
+ *     change), "stats", "log", "trace", "failed", "stopped"
  */
 import { createRequire } from "node:module";
 import { FrameClock } from "../clock.mjs";
@@ -315,7 +315,10 @@ function transmit(index) {
 
 function watch() {
 	if (failed || !sender) return;
-	connections = sender.connections(0);
+	const counted = sender.connections(0);
+	// Told at once: the main process paints for receivers as soon as it knows.
+	if (counted !== connections) send("connections", counted);
+	connections = counted;
 	if (connections > 0 && !watching) {
 		watching = true;
 		clock.setWatching(true);
@@ -400,7 +403,7 @@ async function start() {
 			queue = queue.then(() => handle(importedSharedTexture, id));
 		},
 	);
-	setInterval(watch, 250);
+	setInterval(watch, 50);
 	setInterval(() => {
 		const n = totals.frames || 1;
 		send("stats", {
