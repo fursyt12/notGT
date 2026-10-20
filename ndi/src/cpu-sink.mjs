@@ -90,6 +90,8 @@ export class CpuSink {
 				alpha: this.config.alpha,
 			});
 		}
+		// The picture waiting goes first if its turn has come; else it is merged.
+		this.clock.sendDue();
 		this.pending = {
 			dirty: this.pending ? union(this.pending.dirty, dirty) : dirty,
 			image,

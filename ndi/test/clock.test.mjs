@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { FrameClock } from "../src/clock.mjs";
+import { Tally } from "../src/telemetry.mjs";
 
 /** A clock at 30 fps on mocked time, and what it sent. */
 function clock() {
@@ -258,4 +259,24 @@ test("its own timers work where setTimeout insists on its `this`, as in a page",
 	} finally {
 		globalThis.setTimeout = real;
 	}
+});
+
+test("a frame whose turn has come when the next one does goes out, late rather than dropped", () => {
+	const s = scheduler();
+	const tally = new Tally();
+	const c = new FrameClock({ fps: 60, now: s.now, timers: s.timers, tally, transmit: () => true });
+	c.setWatching(true);
+	c.frameReady(c.freeSlot());
+	s.run(1000);
+	// A motion that starts off Chromium's beat, as traced: its second frame only
+	// 8 ms after the first, the rest on the beat — and the clock's timers 4 ms late.
+	const at = [0, 7.9, 19.9, 37.1, 54.6, 70.5];
+	while (at.length < 60) at.push(at.at(-1) + 1000 / 60);
+	for (const t of at) {
+		s.run(1000 + t, 4);
+		c.frameReady(c.freeSlot());
+	}
+	s.run(1000 + at.at(-1) + 100, 4);
+	assert.equal(tally.counts.dropped, 0);
+	assert.equal(tally.counts.fresh, 61, "the still picture and all 60 frames of the motion");
 });

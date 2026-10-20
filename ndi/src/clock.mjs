@@ -4,7 +4,9 @@
  * being written — the CPU one with a single picture):
  *  - no more frames go out than the out's rate: a frame that is ready a
  *    quarter of a frame early or more waits for its turn, and a newer one
- *    replaces it meanwhile;
+ *    replaces it meanwhile — unless its turn has come by then: it goes out
+ *    then, late, rather than lost to a timer that ran late or to a motion
+ *    whose first frame came off Chromium's beat;
  *  - while nothing new is ready, the last frame goes out again at the out's
  *    rate — receivers stutter on a source that sends less often;
  *  - the clock follows Chromium's: a frame sent the moment it was painted
@@ -107,6 +109,7 @@ export class FrameClock {
 	/** A new frame is in `slot`. */
 	frameReady(slot) {
 		if (this.stopped) return;
+		this.sendDue();
 		// Watched, a frame still waiting for its turn is one no receiver gets.
 		if (this.watching && this.readySlot !== null) this.tally.count("dropped", 1, `slot ${this.readySlot}`);
 		this.readySlot = slot;
@@ -124,6 +127,15 @@ export class FrameClock {
 		this.tally.note("ready", `slot ${slot}, due in ${(this.due - now).toFixed(1)} ms${moving ? "" : ", motion starts"}`);
 		if (this.due - now <= 0.25 * this.frameMs) this.sendReady(true);
 		else if (!(this.timerDue <= this.due)) this.at(this.due);
+	}
+
+	/**
+	 * A newer frame is about to be ready: the one waiting goes now if its
+	 * turn has come, or is as near as a frame sent at once may be.
+	 */
+	sendDue() {
+		if (!this.watching || this.stopped || this.readySlot === null) return;
+		if (this.due - this.now() <= 0.25 * this.frameMs) this.sendReady(true);
 	}
 
 	setWatching(watching) {
