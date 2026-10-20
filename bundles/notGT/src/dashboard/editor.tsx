@@ -2650,9 +2650,11 @@ export function EditorApp() {
 
 	const createTemplate = (kind: TemplateKind) => {
 		if (!confirmDiscard()) return;
+		// At the size of the out it is made on, as a new layers animation is.
 		const saved = saveTemplate({
 			...newTemplate(kind),
 			name: kind === "code" ? t("New code animation") : t("New animation"),
+			...(out ? { width: out.width, height: out.height } : {}),
 		});
 		if (out) {
 			const item = addItem(out.id, saved.id);
