@@ -3,14 +3,19 @@
  * tells the server how they are doing. Nothing here touches Electron or NDI:
  * the outputs come from the factory it is given.
  *
- *   GET  /api/ndi         { outs: [{ id, ndiName, url, width, height, designWidth, designHeight, fps, alpha, groups? }] }
- *   POST /api/ndi/status  { id, host, version, ndi, outs: [{ id, ndiName, state, connections, fps, width, height, error? }] }
+ *   GET  /api/ndi         { outs: [{ id, kind?, ndiName, url, width, height, designWidth, designHeight, fps, alpha, groups? }] }
+ *   POST /api/ndi/status  { id, host, version, ndi, outs: [{ id, kind?, ndiName, state, connections, fps, width, height, error? }] }
+ *
+ * `kind: "spout"`: the out is shared as a Spout sender on this computer
+ * (Windows), `ndiName` its Spout name; only a sender that asks for them
+ * (`/api/ndi?spout=1`) is given those. An out may come twice, once each way.
  */
 
 /**
  * @typedef {object} OutputConfig
  * @property {string} id
- * @property {string} ndiName
+ * @property {"spout"} [kind] a Spout sender rather than an NDI source
+ * @property {string} ndiName      NDI or Spout name
  * @property {string} url          absolute address of the out page
  * @property {number} width        size of the NDI picture
  * @property {number} height
@@ -44,6 +49,7 @@ export function configsFromServer(body, server) {
 		const designHeight = evenSize(out.designHeight ?? out.height ?? 1080);
 		configs.push({
 			id: out.id,
+			...(out.kind === "spout" ? { kind: "spout" } : {}),
 			ndiName: String(out.ndiName || out.name || out.id),
 			url: new URL(out.url, server).href,
 			width: evenSize(out.width ?? designWidth),
@@ -63,6 +69,7 @@ export function configsFromServer(body, server) {
 /** Two configs that would make the same source. */
 function sameSource(a, b) {
 	return (
+		a.kind === b.kind &&
 		a.ndiName === b.ndiName &&
 		a.url === b.url &&
 		a.width === b.width &&
@@ -73,6 +80,17 @@ function sameSource(a, b) {
 		a.alpha === b.alpha &&
 		(a.groups ?? "") === (b.groups ?? "")
 	);
+}
+
+/** What tells outputs apart: an out may go out over NDI and Spout at once. */
+export function outputKey(config) {
+	return config.kind ? `${config.kind}:${config.id}` : config.id;
+}
+
+function describe(config) {
+	return config.kind === "spout"
+		? `“${config.ndiName}” over Spout`
+		: `“${config.ndiName}”`;
 }
 
 export class Controller {
@@ -92,7 +110,7 @@ export class Controller {
 
 	/** Starts what is new, restarts what changed, stops what is gone. */
 	apply(configs) {
-		const wanted = new Map(configs.map((config) => [config.id, config]));
+		const wanted = new Map(configs.map((config) => [outputKey(config), config]));
 		for (const [id, entry] of this.outputs) {
 			const next = wanted.get(id);
 			// A source that could not start is tried again on every round.
@@ -101,30 +119,31 @@ export class Controller {
 			this.outputs.delete(id);
 			if (!next) {
 				this.failures.delete(id);
-				if (entry.output) this.log(`stopped “${entry.config.ndiName}”`);
+				if (entry.output) this.log(`stopped ${describe(entry.config)}`);
 			}
 		}
 		for (const config of configs) {
-			if (this.outputs.has(config.id)) continue;
+			const key = outputKey(config);
+			if (this.outputs.has(key)) continue;
 			try {
 				const output = this.create(config);
 				output.start();
-				this.outputs.set(config.id, { config, output });
-				this.failures.delete(config.id);
+				this.outputs.set(key, { config, output });
+				this.failures.delete(key);
 				this.log(
-					`sending “${config.ndiName}” ${config.width}×${config.height} @ ${config.fps} fps`,
+					`sending ${describe(config)} ${config.width}×${config.height} @ ${config.fps} fps`,
 				);
 			} catch (error) {
 				// Kept, so the dashboard hears why; tried again next round.
-				this.outputs.set(config.id, {
+				this.outputs.set(key, {
 					config,
 					output: null,
 					error: error.message,
 				});
-				if (this.failures.get(config.id) !== error.message) {
-					this.log(`“${config.ndiName}”: ${error.message}`);
+				if (this.failures.get(key) !== error.message) {
+					this.log(`${describe(config)}: ${error.message}`);
 				}
-				this.failures.set(config.id, error.message);
+				this.failures.set(key, error.message);
 			}
 		}
 	}
@@ -135,6 +154,7 @@ export class Controller {
 				? output.status()
 				: {
 						id: config.id,
+						...(config.kind ? { kind: config.kind } : {}),
 						ndiName: config.ndiName,
 						state: "error",
 						connections: 0,
@@ -239,10 +259,16 @@ export function followServer({
 
 /** Talks to the notGT server's `/api`. */
 export class ServerClient {
-	constructor({ server, token, fetch = globalThis.fetch }) {
+	/**
+	 * @param {object} o
+	 * @param {boolean} [o.spout] ask for the outs shared over Spout too: only
+	 *   Windows has Spout
+	 */
+	constructor({ server, token, fetch = globalThis.fetch, spout = process.platform === "win32" }) {
 		this.server = server.endsWith("/") ? server : `${server}/`;
 		this.token = token;
 		this.fetch = fetch;
+		this.spout = spout;
 	}
 
 	headers(extra = {}) {
@@ -278,7 +304,10 @@ export class ServerClient {
 	}
 
 	async outputs() {
-		return configsFromServer(await this.request("api/ndi"), this.server);
+		return configsFromServer(
+			await this.request(this.spout ? "api/ndi?spout=1" : "api/ndi"),
+			this.server,
+		);
 	}
 
 	async report(status) {

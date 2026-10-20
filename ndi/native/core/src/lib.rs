@@ -14,6 +14,9 @@
 //!  - `vulkan`: on Linux, the dmabufs Chromium shares its frames as; on
 //!    Windows, the D3D11 textures it shares them as (NT handles).
 //!
+//! And `spout` (Windows): an out shared as a Spout 2 sender, Chromium's
+//! texture drawn into the texture Spout receivers open.
+//!
 //! What is common to all of them is here: the frame, the layout of what NDI
 //! is given, the colour standard, and the reference conversion the GPU's
 //! result is checked against.
@@ -25,6 +28,8 @@ pub mod reference;
 pub mod dmabuf;
 #[cfg(any(target_os = "linux", windows))]
 pub mod vulkan;
+#[cfg(windows)]
+pub mod spout;
 
 /// What can go wrong, said for the log and the dashboard.
 pub type Result<T> = std::result::Result<T, String>;

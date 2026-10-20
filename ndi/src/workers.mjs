@@ -122,6 +122,7 @@ export class WorkerOutput {
 	status() {
 		const base = this.last ?? {
 			id: this.config.id,
+			...(this.config.kind ? { kind: this.config.kind } : {}),
 			ndiName: this.config.ndiName,
 			state: "loading",
 			connections: 0,

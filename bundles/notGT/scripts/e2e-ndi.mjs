@@ -12,7 +12,10 @@
  *   3. a sender that stops reporting drops out of the panel;
  *   4. with the sign-in on, the senders' key opens `/api/ndi` and nothing else;
  *   5. the settings: transparency and NDI groups reach the sender, and the
- *      settings menu of the panel changes the frame rate and the size.
+ *      settings menu of the panel changes the frame rate and the size;
+ *   6. Spout: an out shared over Spout is given only to a sender that asks
+ *      (`/api/ndi?spout=1`, Windows), next to its NDI source; its report is
+ *      shown on the Spout row and not the NDI one, and the switch turns it off.
  *
  * The sender itself (rendering, NDI) is tested in `ndi/` — see ndi/README.md.
  *
@@ -159,6 +162,32 @@ async function main() {
 			entry?.url,
 		);
 
+		// ------------------------------------------------------------ 6. spout
+		const spouted = await api("PATCH", `/api/outs/${out.id}`, {
+			spout: { enabled: true, name: "E2E\\Spout", fps: 30, alpha: false },
+		});
+		check(
+			"Spout is switched on through the API, its name cleaned",
+			spouted.status === 200 && spouted.body.out?.spout?.enabled === true && spouted.body.out.spout.name === "E2E/Spout",
+			JSON.stringify(spouted.body.out?.spout),
+		);
+		const plain = await api("GET", "/api/ndi");
+		check(
+			"a sender that does not ask is given no Spout out",
+			!plain.body.outs?.some((candidate) => candidate.kind === "spout"),
+		);
+		const windows = (await api("GET", "/api/ndi?spout=1")).body.outs ?? [];
+		const shared = windows.find((candidate) => candidate.id === out.id && candidate.kind === "spout");
+		check(
+			"a sender on Windows is given it, at the out's size, next to its NDI source",
+			shared?.ndiName === "E2E/Spout" &&
+				shared.fps === 30 &&
+				shared.alpha === false &&
+				shared.width === even(out.width) &&
+				windows.some((candidate) => candidate.id === out.id && !candidate.kind),
+			JSON.stringify(shared),
+		);
+
 		// ------------------------------------------------------------ 2. status
 		const reported = await api("POST", "/api/ndi/status", report(out.id));
 		check("a sender's report is taken", reported.status === 200, String(reported.status));
@@ -180,6 +209,33 @@ async function main() {
 			check("…and the sender is listed", senders.includes("e2e-host") && senders.includes("6.3.2"), senders);
 			const command = await panel.page.$eval(".tt-ndi-senders__how input", (el) => el.value).catch(() => "");
 			check("…with the command that starts one", command.includes("npm start") && command.includes(BASE), command);
+
+			// ---------------------------------------------------- 6b. spout
+			await api("POST", "/api/ndi/status", {
+				...report(out.id),
+				id: "e2e-windows",
+				host: "e2e-win",
+				platform: "win32-x64",
+				ndi: "",
+				outs: [
+					{ id: out.id, kind: "spout", ndiName: "E2E/Spout", state: "sending", connections: 1, fps: 29.5, width: 1920, height: 1080 },
+				],
+			});
+			await sleep(800);
+			const spoutRow = await panel.page.$eval(`[data-spout="${out.id}"]`, (el) => el.textContent ?? "").catch(() => "");
+			check("the Spout row shows where it is shared from", spoutRow.includes("e2e-win") && spoutRow.includes("29.5"), spoutRow);
+			check("…and the NDI row does not take it for NDI", !(await panel.read()).includes("e2e-win"));
+			const windowsSender = await panel.page
+				.$eval(`[data-sender="e2e-windows"]`, (el) => el.textContent ?? "")
+				.catch(() => "");
+			check("a sender without NDI is listed without an NDI version", windowsSender.includes("win32-x64") && !windowsSender.includes("NDI"), windowsSender);
+			await panel.page.click(`[data-spout="${out.id}"] .tt-ndi__line input`);
+			await sleep(800);
+			const offAgain = (await api("GET", "/api/ndi?spout=1")).body.outs ?? [];
+			check(
+				"the Spout switch turns it off, NDI left on",
+				!offAgain.some((candidate) => candidate.kind === "spout") && offAgain.some((candidate) => candidate.id === out.id),
+			);
 
 			// ---------------------------------------------------- 5. the menu
 			await panel.page.click(`[data-ndi-open="${out.id}"]`);
@@ -234,7 +290,7 @@ async function main() {
 		const after = await api("GET", "/api/ndi");
 		check("switched off, the out is not sent", !after.body.outs?.some((candidate) => candidate.id === out.id));
 	} finally {
-		await api("PATCH", `/api/outs/${out.id}`, { ndi: before.ndi ?? null });
+		await api("PATCH", `/api/outs/${out.id}`, { ndi: before.ndi ?? null, spout: before.spout ?? null });
 	}
 
 	console.log(failures.length ? `\n${failures.length} check(s) failed` : "\nAll NDI checks passed");

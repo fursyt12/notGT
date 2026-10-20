@@ -517,5 +517,15 @@
 	"Receivers list it as “<computer> (name)”. A smaller picture and a lower rate cost much less — on a Raspberry Pi start with 1280×720 or 960×540. A change restarts the source for a moment.": "Приёмники показывают его как «<компьютер> (имя)». Картинка поменьше и частота пониже обходятся намного дешевле — на Raspberry Pi начните с 1280×720 или 960×540. После изменения источник на мгновение перезапускается.",
 	"the out's size": "размер out'а",
 	"Transparency": "Прозрачность",
-	"None is running. The notGT launcher on Windows and Docker Compose with the ndi profile start one together with the server; on another machine, run the command below.": "Ни один не запущен. Лаунчер notGT на Windows и Docker Compose с профилем ndi запускают его вместе с сервером; на другой машине выполните команду ниже."
+	"None is running. The notGT launcher on Windows and Docker Compose with the ndi profile start one together with the server; on another machine, run the command below.": "Ни один не запущен. Лаунчер notGT на Windows и Docker Compose с профилем ndi запускают его вместе с сервером; на другой машине выполните команду ниже.",
+	"Shared on {host} · the picture stands still": "Передаётся с {host} · картинка стоит",
+	"Shared on {host} · {fps} fps": "Передаётся с {host} · {fps} к/с",
+	"Spout sender name": "Имя отправителя Spout",
+	"Spout frame rate": "Частота кадров Spout",
+	"Off: the picture goes out opaque, over black": "Выключено: картинка уходит непрозрачной, на чёрном",
+	"Spout shares the picture on the GPU with programs on the same Windows computer — Resolume, TouchDesigner, OBS with the Spout2 plugin: at the out's size, uncompressed, with nothing on the network. It needs the sender running on that computer; the notGT launcher starts one. A change restarts the sender for a moment.": "Spout передаёт картинку прямо на видеокарте программам на этом же компьютере с Windows — Resolume, TouchDesigner, OBS с плагином Spout2: в размере out, без сжатия и без сети. Нужен отправитель, запущенный на этом компьютере; лаунчер notGT запускает его сам. Изменение ненадолго перезапускает отправителя.",
+	"Also share this out as a Spout sender on Windows": "Также передавать этот out как отправитель Spout в Windows",
+	"Spout settings": "Настройки Spout",
+	"For Resolume, TouchDesigner and other programs on this Windows computer": "Для Resolume, TouchDesigner и других программ на этом компьютере с Windows",
+	"No sender on Windows has picked it up yet — Spout needs one on the computer that receives it": "Ни один отправитель на Windows его ещё не взял — для Spout он нужен на том компьютере, который принимает"
 }

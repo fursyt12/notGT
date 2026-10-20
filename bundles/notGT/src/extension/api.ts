@@ -11,7 +11,7 @@ import {
 	type TitleData,
 	type TitleTemplate,
 } from "../shared/types";
-import { normalizeNdi } from "../shared/ndi";
+import { normalizeNdi, normalizeSpout } from "../shared/ndi";
 import {
 	type Access,
 	type ApiRequest,
@@ -416,9 +416,10 @@ export function createApiRouter(
 
 	// ------------------------------------------------------------------- ndi
 	// The NDI sender (`ndi/` at the root of the repository) asks what to send
-	// and says how it went; the dashboard shows that next to each out.
-	router.get("/ndi", (_req, res) => {
-		json(res, 200, hooks.ndi.list());
+	// and says how it went; the dashboard shows that next to each out. A
+	// sender on Windows also asks for the outs shared over Spout.
+	router.get("/ndi", (req, res) => {
+		json(res, 200, hooks.ndi.list({ spout: req.query["spout"] === "1" }));
 	});
 
 	router.post("/ndi/status", (req, res) => {
@@ -600,6 +601,7 @@ export function normalizeOut(input: Record<string, unknown>, existing?: Out): Ou
 				)
 			: base.items,
 		ndi: "ndi" in input ? normalizeNdi(input["ndi"]) : base.ndi,
+		spout: "spout" in input ? normalizeSpout(input["spout"]) : base.spout,
 		updatedAt: Date.now(),
 	};
 }

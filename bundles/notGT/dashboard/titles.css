@@ -80,6 +80,11 @@
 	min-width: 0;
 }
 
+/* NDI and Spout one above the other: their switches and summaries line up. */
+.tt-ndi__line .switch__label {
+	min-width: 3.4em;
+}
+
 /* The summary is the button that opens the settings. */
 .tt-ndi__open {
 	justify-content: flex-start;

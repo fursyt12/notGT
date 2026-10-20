@@ -173,3 +173,47 @@ test("a key given as a function is read on every request", async () => {
 	await client.outputs();
 	assert.deepEqual(seen, [undefined, "Bearer ndi_new"]);
 });
+
+test("an out shared over Spout and sent over NDI is two outputs", () => {
+	const outputs = fakeOutputs();
+	const controller = new Controller({ create: outputs.create });
+	const [main] = configsFromServer(answer, SERVER);
+	const [spout] = configsFromServer(
+		{ outs: [{ ...answer.outs[0], kind: "spout", ndiName: "notGT Main", fps: 60 }] },
+		SERVER,
+	);
+	assert.equal(spout.kind, "spout");
+	assert.equal(main.kind, undefined);
+
+	controller.apply([main, spout]);
+	assert.equal(controller.outputs.size, 2);
+	controller.apply([main]);
+	assert.equal(controller.outputs.size, 1, "switching Spout off leaves NDI alone");
+	assert.equal(outputs.log.filter((line) => line.startsWith("stop")).length, 1);
+	assert.equal([...controller.outputs.values()][0].config.kind, undefined);
+});
+
+test("a Spout out that cannot start says so as a Spout one", () => {
+	const controller = new Controller({
+		create: () => {
+			throw new Error("Spout is only on Windows");
+		},
+	});
+	const [spout] = configsFromServer({ outs: [{ ...answer.outs[0], kind: "spout" }] }, SERVER);
+	controller.apply([spout]);
+	const [status] = controller.status();
+	assert.equal(status.kind, "spout");
+	assert.equal(status.state, "error");
+	assert.equal(status.error, "Spout is only on Windows");
+});
+
+test("only a sender that has Spout asks for the Spout outs", async () => {
+	const urls = [];
+	const fetch = async (url) => {
+		urls.push(String(url));
+		return new Response(JSON.stringify({ outs: [] }));
+	};
+	await new ServerClient({ server: SERVER, fetch, spout: true }).outputs();
+	await new ServerClient({ server: SERVER, fetch, spout: false }).outputs();
+	assert.deepEqual(urls, [`${SERVER}api/ndi?spout=1`, `${SERVER}api/ndi`]);
+});

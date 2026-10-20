@@ -169,9 +169,45 @@ needs no key, unless `apiToken` is set — then `--token` is the `apiToken`.
 | `--fps <n>`       | `30`                    | with `--url`: frames a second                                            |
 | `--groups <list>` | —                       | with `--url`: NDI groups                                                 |
 | `--opaque`        | off                     | with `--url`: no transparency, over black                                |
+| `--spout`         | off                     | with `--url`: share it as a Spout sender (Windows) instead of NDI        |
 
 `NOTGT_NDI_DEBUG=1` makes it say, every two seconds, what each source sends and what that
 costs.
+
+## Spout (Windows)
+
+Resolume, TouchDesigner, OBS with the Spout2 plugin and many other programs on Windows
+also take **Spout**: a texture shared on the GPU between programs on one computer. In
+**Titles & Outs**, the **Spout** switch sits under the NDI one; switched on, the sender on
+that computer lists the out as a Spout sender — `notGT <out>` unless named otherwise in
+its settings, with its frame rate (60 fps unless set) and whether it keeps its
+transparency.
+
+```
+notGT out page ─ Chromium (GPU) ─► D3D11 texture ─► Resolume · TouchDesigner · OBS
+```
+
+- **On the GPU, as it is.** With the GPU, Chromium's frame stays a texture: one draw on
+  the GPU copies it into the texture Spout receivers open (dividing the alpha out — Spout
+  receivers want it straight; or setting it to opaque). No copy through memory, no
+  compression, nothing on the network. On the CPU, only the rectangle that changed is
+  uploaded.
+- **At the out's size**, always: on one GPU a smaller picture saves next to nothing.
+- **Only on Windows, on the computer that receives it.** Spout does not leave the
+  computer. The notGT launcher starts the sender together with the server, so with the
+  Windows package there is nothing to do; elsewhere start the sender on the Windows
+  machine as for NDI. A sender on Linux or macOS does not ask for Spout outs at all.
+- **No NDI needed.** The Spout outs work without the NDI runtime; they need the native
+  addon (`native/`, in the Windows package).
+- **Spout cannot count receivers**, so a Spout out is painted at its rate all the time —
+  but only when something moves: a still title costs nothing.
+- An out can go out over NDI and Spout at once. Each is then drawn by a process of its
+  own (the page is drawn twice), so switch on only what is received.
+
+It follows the Spout SDK's protocol (Spout 2.007): the sender is in Spout's list of
+senders, has its info and its access mutex, and counts its frames — receivers that ask
+for new frames only get them. Two Spout senders cannot have one name: the second says so
+under the out.
 
 ## Docker
 
@@ -336,7 +372,17 @@ with the native converter. `scripts/bench.mjs` is the single measurement underne
 
 ```bash
 npm test                                        # frame conversion, the frame clock, the sync with the server
-NOTGT_BASE=http://127.0.0.1:9090 node ../bundles/notGT/scripts/e2e-ndi.mjs   # the server's side
+NOTGT_BASE=http://127.0.0.1:9090 node ../bundles/notGT/scripts/e2e-ndi.mjs   # the server's side, NDI and Spout
+cd native && cargo test --release -p notgt-ndi-core                        # on Windows: the Spout sender too
+```
+
+On Linux the Spout tests run under wine (which draws, but cannot share textures between
+devices; that part is left to Windows):
+
+```bash
+cd native && cargo build --release --target x86_64-pc-windows-gnu -p notgt-ndi-core --tests
+WINEPREFIX=/tmp/wine-spout WINE_D3D_CONFIG=renderer=gl xvfb-run -a wine \
+  target/x86_64-pc-windows-gnu/release/deps/spout-*.exe --test-threads=1
 ```
 
 The fixture page `test/fixtures/page.html` has pixels whose values are known (opaque

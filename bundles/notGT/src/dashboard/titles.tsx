@@ -2,7 +2,7 @@
  * notGT — Titles & Outs dashboard panel (fullbleed): setup only.
  *
  * Left: the outs — name, size, the OBS address, whether it also goes out over
- * NDI, and which animations sit on each. Right: the animation library. Where a placement sits and how it plays
+ * NDI or Spout, and which animations sit on each. Right: the animation library. Where a placement sits and how it plays
  * is edited where it can be seen: on the canvas in the Editor, and next to the
  * on-air switch in Control.
  */
@@ -23,6 +23,10 @@ import {
 	ndiScale,
 	ndiSize,
 	ndiSourceName,
+	spoutAlpha,
+	spoutFps,
+	spoutReportsFor,
+	spoutSenderName,
 } from "../shared/ndi";
 import { TEAM_BASE } from "../shared/team";
 import type { Out, OutItem, TitleTemplate } from "../shared/types";
@@ -44,6 +48,7 @@ import {
 	triggerItem,
 	updateItem,
 	updateOutNdi,
+	updateOutSpout,
 	useIsAdmin,
 	useMe,
 	useNdiStatus,
@@ -322,13 +327,144 @@ function NdiRow({ out }: { out: Out }) {
 	);
 }
 
+// -------------------------------------------------------------------- spout
+
+function spoutReport(sender: NdiSenderStatus, out: NdiOutStatus): { text: string; tone: "ok" | "warn" | "muted" } {
+	const where = sender.host;
+	if (out.state === "error") return { text: `${where}: ${out.error ?? t("error")}`, tone: "warn" };
+	if (out.state === "loading") return { text: t("Opening on {host}…", { host: where }), tone: "muted" };
+	if (out.warning) return { text: `${where}: ${out.warning}`, tone: "warn" };
+	// Spout draws only what moves: a still picture is 0 new frames a second.
+	if (out.fps === 0) return { text: t("Shared on {host} · the picture stands still", { host: where }), tone: "ok" };
+	return { text: t("Shared on {host} · {fps} fps", { host: where, fps: String(out.fps) }), tone: "ok" };
+}
+
+type SpoutPatch = Partial<NonNullable<Out["spout"]>>;
+
+/** How an out is shared over Spout. A change restarts the sender. */
+function SpoutSettings({ out, set }: { out: Out; set: (patch: SpoutPatch) => void }) {
+	const fallbackName = `notGT ${out.name}`;
+	const fps = spoutFps(out);
+	const rates: number[] = (NDI_FPS as readonly number[]).includes(fps)
+		? [...NDI_FPS]
+		: [...NDI_FPS, fps].sort((a, b) => a - b);
+
+	return (
+		<div className="tt-ndi__settings" data-spout-settings={out.id}>
+			<div className="tt-ndi__grid">
+				<label className="field tt-ndi__wide">
+					{t("Spout sender name")}
+					<NameInput
+						className="tt-ndi__name"
+						label={t("Spout sender name")}
+						value={spoutSenderName(out)}
+						onCommit={(name) => set({ name: name === fallbackName ? undefined : name })}
+					/>
+				</label>
+				<label className="field">
+					{t("Frame rate")}
+					<select
+						aria-label={t("Spout frame rate")}
+						data-spout-fps
+						value={String(fps)}
+						onChange={(event) => set({ fps: Number(event.target.value) })}
+					>
+						{rates.map((rate) => (
+							<option key={rate} value={String(rate)}>
+								{t("{fps} fps", { fps: ndiFpsLabel(rate) })}
+							</option>
+						))}
+					</select>
+				</label>
+				<div className="field tt-ndi__alpha">
+					<Switch
+						checked={spoutAlpha(out)}
+						label={t("Transparency")}
+						title={t("Off: the picture goes out opaque, over black")}
+						data-spout-alpha={out.id}
+						onChange={(alpha) => set({ alpha: alpha ? undefined : false })}
+					/>
+				</div>
+			</div>
+			<span className="hint">
+				{t(
+					"Spout shares the picture on the GPU with programs on the same Windows computer — Resolume, TouchDesigner, OBS with the Spout2 plugin: at the out's size, uncompressed, with nothing on the network. It needs the sender running on that computer; the notGT launcher starts one. A change restarts the sender for a moment.",
+				)}
+			</span>
+		</div>
+	);
+}
+
+/** The out as a Spout sender: on or off, how it goes, and its settings behind a button. */
+function SpoutRow({ out }: { out: Out }) {
+	const status = useNdiStatus();
+	const [open, setOpen] = useState(false);
+	const spout = out.spout ?? { enabled: false };
+	const set = (patch: SpoutPatch) => updateOutSpout(out.id, patch);
+	const reports = spoutReportsFor(status, out.id);
+	const summary = [
+		spoutSenderName(out),
+		`${out.width}×${out.height}`,
+		t("{fps} fps", { fps: ndiFpsLabel(spoutFps(out)) }),
+		spoutAlpha(out) ? "" : t("no transparency"),
+	]
+		.filter(Boolean)
+		.join(" · ");
+
+	return (
+		<div className={`tt-ndi tt-spout${spout.enabled ? " is-on" : ""}`} data-spout={out.id}>
+			<div className="tt-ndi__line">
+				<Switch
+					checked={spout.enabled}
+					label="Spout"
+					title={t("Also share this out as a Spout sender on Windows")}
+					onChange={(enabled) => set({ enabled })}
+				/>
+				<button
+					type="button"
+					className="ghost small tt-ndi__open grow"
+					aria-expanded={open}
+					data-spout-open={out.id}
+					title={t("Spout settings")}
+					onClick={() => setOpen((value) => !value)}
+				>
+					<Icon name="sliders" size={14} />
+					<span className="truncate grow">
+						{spout.enabled ? summary : t("For Resolume, TouchDesigner and other programs on this Windows computer")}
+					</span>
+					<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
+				</button>
+			</div>
+			{open ? <SpoutSettings out={out} set={set} /> : null}
+			{spout.enabled ? (
+				<div className="tt-ndi__status">
+					{reports.length === 0 ? (
+						<span className="tt-ndi__state is-warn">
+							{t("No sender on Windows has picked it up yet — Spout needs one on the computer that receives it")}
+						</span>
+					) : (
+						reports.map(({ sender, out: report }) => {
+							const { text, tone } = spoutReport(sender, report);
+							return (
+								<span key={sender.id} className={`tt-ndi__state is-${tone}`} title={`${report.ndiName} · ${report.width}×${report.height}`}>
+									{text}
+								</span>
+							);
+						})
+					)}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
 /** The senders that report, and how to start one. */
 function NdiSenders({ outs }: { outs: Out[] }) {
 	const status = useNdiStatus();
 	const me = useMe();
 	const admin = useIsAdmin();
 	const senders = Object.values(status);
-	const wanted = outs.some((out) => out.ndi?.enabled);
+	const wanted = outs.some((out) => out.ndi?.enabled || out.spout?.enabled);
 	if (!wanted && senders.length === 0) return null;
 
 	const key = me?.ndiKey;
@@ -364,7 +500,8 @@ function NdiSenders({ outs }: { outs: Out[] }) {
 							<strong>{sender.host}</strong>
 							<span className="hint">
 								{" "}
-								· {sender.platform} · NDI {sender.ndi.replace(/^.*?(\d+\.\d+\.\d+).*$/, "$1")}
+								· {sender.platform}
+								{sender.ndi ? ` · NDI ${sender.ndi.replace(/^.*?(\d+\.\d+\.\d+).*$/, "$1")}` : ""}
 							</span>
 						</span>
 						<span className="hint">{t("outs: {count}", { count: String(sender.outs.length) })}</span>
@@ -543,6 +680,7 @@ function OutCard({ out }: { out: Out }) {
 			</div>
 
 			<NdiRow out={out} />
+			<SpoutRow out={out} />
 
 			{items.length === 0 ? (
 				<div className="empty tt-out__empty">

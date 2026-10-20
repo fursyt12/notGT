@@ -4,7 +4,12 @@
  *   electron . --server http://127.0.0.1:9090 [--token <apiToken>]
  *       sends every out that has NDI switched on in the dashboard;
  *   electron . --url <page> [--name <source>] [--size 1920x1080] [--fps 30]
- *       sends one page, no server needed.
+ *       sends one page, no server needed;
+ *   electron . --url <page> --spout …
+ *       shares one page as a Spout sender (Windows) instead.
+ *
+ * The outs with Spout switched on are shared as Spout senders by a sender on
+ * Windows (src/spout-sink.mjs); they need the native addon, not NDI.
  *
  * See README.md for the flags and for running it on a Raspberry Pi.
  */
@@ -41,6 +46,7 @@ const HELP = `notGT NDI sender ${version}
   --fps <n>          frame rate for --url (default 30)
   --groups <list>    NDI groups for --url
   --opaque           for --url: send it without transparency, over black
+  --spout            for --url: share it as a Spout sender (Windows), not NDI
 
   --render <how>     auto (default): on the GPU where there is a usable one,
                      else on the CPU; gpu: on the GPU even if it is emulated;
@@ -175,6 +181,30 @@ async function start() {
 		}
 	}
 
+	// Spout senders draw with the native addon, NDI or no NDI.
+	let spout;
+	const spoutNative = async () => {
+		if (spout) return spout;
+		if (process.platform !== "win32") {
+			spout = { why: "Spout is only on Windows" };
+			return spout;
+		}
+		const { loadNative } = await import("./src/native.mjs");
+		const found = loadNative();
+		spout = found.module
+			? { module: found.module, ...(gpu ? await chromiumGpu() : {}) }
+			: { why: `${found.why} — Spout needs it` };
+		if (spout.why) log(spout.why);
+		return spout;
+	};
+	const workerConfig = args.worker
+		? JSON.parse(Buffer.from(String(args.config ?? ""), "base64").toString("utf8"))
+		: undefined;
+	const onlySpout = workerConfig?.kind === "spout" || (typeof args.url === "string" && args.spout);
+	// Following a server on Windows, Spout outs may come at any round.
+	if (onlySpout || (process.platform === "win32" && !args.worker && typeof args.url !== "string"))
+		await spoutNative();
+
 	let ndi;
 	let missing = "";
 	/** Opens the NDI library; says why not, once per reason. */
@@ -195,8 +225,8 @@ async function start() {
 			return false;
 		}
 	};
-	tryLoad();
-	if (!ndi && typeof args.url === "string" && !args.worker) {
+	if (!onlySpout) tryLoad();
+	if (!ndi && !onlySpout && typeof args.url === "string" && !args.worker) {
 		app.exit(2);
 		return;
 	}
@@ -208,6 +238,10 @@ async function start() {
 
 	const controller = new Controller({
 		create: (config) => {
+			if (config.kind === "spout") {
+				if (!spout) throw new Error("the native addon is still being loaded");
+				return new Output({ config, log, gpu, spout });
+			}
 			if (!ndi && !tryLoad()) throw new Error(missingText());
 			return new Output({ ndi, config, log, gpu, converters, native });
 		},
@@ -231,10 +265,7 @@ async function start() {
 		// One out, for bin/notgt-ndi.mjs (src/workers.mjs): its config comes
 		// on the command line, its status goes back over IPC, and it ends
 		// when the sender that started it does.
-		const config = JSON.parse(
-			Buffer.from(String(args.config ?? ""), "base64").toString("utf8"),
-		);
-		controller.apply([config]);
+		controller.apply([workerConfig]);
 		const report = () =>
 			process.send?.({
 				type: "status",
@@ -257,6 +288,7 @@ async function start() {
 		controller.apply([
 			{
 				id: "url",
+				...(args.spout ? { kind: "spout" } : {}),
 				ndiName: typeof args.name === "string" ? args.name : "notGT",
 				url: new URL(args.url).href,
 				width: evenSize(designWidth * scale),

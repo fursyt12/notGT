@@ -377,6 +377,13 @@ export function updateOutNdi(outId: string, patch: Partial<NonNullable<Out["ndi"
 	saveOut({ ...clone(out), ndi: { enabled: false, ...out.ndi, ...patch } });
 }
 
+/** Changes an out's Spout settings the same way. */
+export function updateOutSpout(outId: string, patch: Partial<NonNullable<Out["spout"]>>): void {
+	const out = getOut(outId);
+	if (!out) return;
+	saveOut({ ...clone(out), spout: { enabled: false, ...out.spout, ...patch } });
+}
+
 export function updateItemPlayback(
 	outId: string,
 	itemId: string,

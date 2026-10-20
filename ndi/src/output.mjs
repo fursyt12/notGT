@@ -1,5 +1,7 @@
 /**
- * One out as one NDI source: the out page rendered in an offscreen window,
+ * One out as one NDI source — or, for a config of kind "spout", one Spout
+ * sender (spout-sink.mjs: the GPU's texture when Chromium shares it, the
+ * bitmap otherwise): the out page rendered in an offscreen window,
  * each painted frame handed to NDI by a sink. When Chromium draws on the GPU
  * the frame stays a texture there, converted to NDI's own format by:
  *  - `NativeSink` (native-sink.mjs): the native addon, in this process;
@@ -26,6 +28,7 @@ import { BrowserWindow } from "electron";
 import { CpuSink } from "./cpu-sink.mjs";
 import { GpuSink } from "./gpu/sink.mjs";
 import { NativeSink } from "./native-sink.mjs";
+import { SpoutSink } from "./spout-sink.mjs";
 
 const WATCH_MS = 500;
 /** Painting rate while nobody receives: the lowest Chromium takes. */
@@ -35,6 +38,7 @@ const RETRY_MS = 3000;
 const LABELS = {
 	native: "the native GPU converter",
 	webgl: "WebGL2 on the GPU",
+	spout: "Spout on the GPU",
 	cpu: "the CPU",
 };
 
@@ -49,8 +53,10 @@ export class Output {
 	 *   first: "native", "webgl"
 	 * @param {{ module?: any, renderNode?: string, vendorId?: number, deviceId?: number, why?: string }} [options.native]
 	 *   the native addon, or why there is none
+	 * @param {{ module?: any, vendorId?: number, deviceId?: number, why?: string }} [options.spout]
+	 *   for a Spout out: the native addon, or why there is none
 	 */
-	constructor({ ndi, config, log, gpu = false, converters = ["webgl"], native }) {
+	constructor({ ndi, config, log, gpu = false, converters = ["webgl"], native, spout }) {
 		this.ndi = ndi;
 		this.config = config;
 		this.log = log;
@@ -80,8 +86,9 @@ export class Output {
 		/** Said in the dashboard when the picture cannot come out at its size. */
 		this.warning = undefined;
 		this.native = native;
+		this.spout = spout;
 		/** Converters still to try, best first; the CPU is always last. */
-		this.chain = gpu ? [...converters] : [];
+		this.chain = gpu ? (config.kind === "spout" ? ["spout"] : [...converters]) : [];
 		/** Why a converter was given up, for the dashboard. */
 		this.renderNote = undefined;
 		this.sink = this.nextSink();
@@ -100,7 +107,21 @@ export class Output {
 			}
 		}
 		this.sinkKind = "cpu";
+		if (this.config.kind === "spout") return this.spoutSink(false);
 		return new CpuSink({ ndi: this.ndi, config: this.config });
+	}
+
+	spoutSink(shared) {
+		if (!this.spout?.module)
+			throw new Error(this.spout?.why ?? "Spout needs the native addon");
+		return new SpoutSink({
+			native: this.spout.module,
+			config: this.config,
+			shared,
+			gpu: this.spout,
+			log: this.log,
+			onFail: (reason) => this.fallBack(reason),
+		});
 	}
 
 	makeSink(kind) {
@@ -117,6 +138,7 @@ export class Output {
 				onFail,
 			});
 		}
+		if (kind === "spout") return this.spoutSink(true);
 		if (kind === "webgl")
 			return new GpuSink({
 				config: this.config,
@@ -402,6 +424,7 @@ export class Output {
 	status() {
 		return {
 			id: this.config.id,
+			...(this.config.kind ? { kind: this.config.kind } : {}),
 			ndiName: this.config.ndiName,
 			state: this.state,
 			connections: this.connections,

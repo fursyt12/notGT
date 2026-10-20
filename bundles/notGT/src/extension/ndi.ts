@@ -12,6 +12,9 @@ import {
 	ndiFps,
 	ndiSize,
 	ndiSourceName,
+	spoutAlpha,
+	spoutFps,
+	spoutSenderName,
 } from "../shared/ndi";
 import { BUNDLE_NAME, REPLICANTS } from "../shared/types";
 import type { ServerAPI, Store } from "./store";
@@ -22,8 +25,12 @@ import type { ServerAPI, Store } from "./store";
  * stops asking is dropped from the status after `NDI_SENDER_TTL_MS`.
  */
 export interface NdiHub {
-	/** `GET /api/ndi`: the outs with NDI switched on. */
-	list(): { outs: NdiOutConfig[] };
+	/**
+	 * `GET /api/ndi`: the outs with NDI switched on, and with `spout` (a
+	 * sender on Windows asks) the outs shared over Spout — an out with both
+	 * comes twice. Older senders never ask, so never send a Spout out over NDI.
+	 */
+	list(options?: { spout?: boolean }): { outs: NdiOutConfig[] };
 	/** `POST /api/ndi/status`. Returns an error message when the report is not one. */
 	report(body: unknown): string | undefined;
 	dispose(): void;
@@ -49,6 +56,7 @@ function outStatus(value: unknown): NdiOutStatus | undefined {
 	const warning = text(input["warning"], 300);
 	return {
 		id,
+		...(input["kind"] === "spout" ? { kind: "spout" as const } : {}),
 		ndiName: text(input["ndiName"], 120),
 		state,
 		connections: Math.round(count(input["connections"])),
@@ -113,24 +121,41 @@ export function createNdiHub(nodecg: ServerAPI, store: Store): NdiHub {
 	}, 2000);
 
 	return {
-		list() {
-			return {
-				outs: store
-					.listOuts()
-					.filter((out) => out.ndi?.enabled)
-					.map((out) => ({
-						id: out.id,
-						name: out.name,
-						ndiName: ndiSourceName(out),
-						url: store.outUrl(out.id),
-						designWidth: out.width,
-						designHeight: out.height,
-						...ndiSize(out),
-						fps: ndiFps(out),
-						alpha: ndiAlpha(out),
-						...(out.ndi?.groups ? { groups: out.ndi.groups } : {}),
-					})),
-			};
+		list(options = {}) {
+			const outs = store.listOuts();
+			const ndi: NdiOutConfig[] = outs
+				.filter((out) => out.ndi?.enabled)
+				.map((out) => ({
+					id: out.id,
+					name: out.name,
+					ndiName: ndiSourceName(out),
+					url: store.outUrl(out.id),
+					designWidth: out.width,
+					designHeight: out.height,
+					...ndiSize(out),
+					fps: ndiFps(out),
+					alpha: ndiAlpha(out),
+					...(out.ndi?.groups ? { groups: out.ndi.groups } : {}),
+				}));
+			// At the out's own size: on the same GPU, a smaller one saves nothing worth it.
+			const spout: NdiOutConfig[] = options.spout
+				? outs
+						.filter((out) => out.spout?.enabled)
+						.map((out) => ({
+							id: out.id,
+							kind: "spout" as const,
+							name: out.name,
+							ndiName: spoutSenderName(out),
+							url: store.outUrl(out.id),
+							designWidth: out.width,
+							designHeight: out.height,
+							width: Math.max(2, Math.round(out.width / 2) * 2),
+							height: Math.max(2, Math.round(out.height / 2) * 2),
+							fps: spoutFps(out),
+							alpha: spoutAlpha(out),
+						}))
+				: [];
+			return { outs: [...ndi, ...spout] };
 		},
 
 		report(body) {

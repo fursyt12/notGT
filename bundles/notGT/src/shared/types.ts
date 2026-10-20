@@ -4,7 +4,7 @@
  * This module is imported by the extension (Node), the dashboard panels (browser)
  * and the graphics runtime (browser/CEF). Keep it free of any runtime dependency.
  */
-import type { OutNdi } from "./ndi";
+import type { OutNdi, OutSpout } from "./ndi";
 
 export const BUNDLE_NAME = "notGT";
 
@@ -368,6 +368,8 @@ export interface Out {
 	items: OutItem[];
 	/** Also sent as an NDI source (see `shared/ndi.ts`). */
 	ndi?: OutNdi;
+	/** Also shared as a Spout sender on Windows (see `shared/ndi.ts`). */
+	spout?: OutSpout;
 	createdAt: number;
 	updatedAt: number;
 }
