@@ -1070,19 +1070,20 @@ function readPersisted() {
 				host: typeof parsed.host === "string" ? parsed.host : null,
 				port: isValidPort(parsed.port) ? parsed.port : null,
 				lang: isLang(parsed.lang) ? parsed.lang : null,
+				debug: parsed.debug === true,
 			};
 		}
 	} catch {
 		/* missing or corrupt -> ignore */
 	}
-	return { host: null, port: null, lang: null };
+	return { host: null, port: null, lang: null, debug: false };
 }
 
 function persistSettings(host, port) {
 	try {
 		fs.writeFileSync(
 			PERSIST_PATH,
-			JSON.stringify({ host, port, lang }, null, 2) + "\n",
+			JSON.stringify({ host, port, lang, ...(senderDebug ? { debug: true } : {}) }, null, 2) + "\n",
 			"utf8",
 		);
 	} catch {
@@ -1096,6 +1097,12 @@ function persistSettings(host, port) {
 
 const persisted = readPersisted();
 lang = isLang(args.lang) ? args.lang : (persisted.lang ?? systemLang());
+/**
+ * The sender writes what each out sends and what it costs, every two
+ * seconds, into the log (NOTGT_NDI_DEBUG): switched in the launcher's log
+ * window, and remembered.
+ */
+let senderDebug = persisted.debug;
 
 const state = {
 	host: args.host ?? persisted.host ?? defaultHost(),
@@ -1168,6 +1175,7 @@ function statePayload() {
 		port: state.port,
 		status: state.status,
 		lang,
+		debug: senderDebug,
 		statusText: say(state.statusText),
 		running: state.status === "running",
 		warning: say(state.warning),
@@ -2166,7 +2174,11 @@ function startSender(port) {
 				cwd: ndiDir,
 				stdio: ["ignore", "pipe", "pipe"],
 				windowsHide: true,
-				env: { ...process.env, NOTGT_TOKEN_FILE: NDI_KEY_FILE },
+				env: {
+					...process.env,
+					NOTGT_TOKEN_FILE: NDI_KEY_FILE,
+					...(senderDebug ? { NOTGT_NDI_DEBUG: "1" } : {}),
+				},
 			},
 		);
 	} catch (err) {
@@ -2566,6 +2578,36 @@ async function handleRequest(req, res) {
 		}
 		lang = body.lang;
 		persistSettings(state.host, state.port);
+		sendJson(res, 200, statePayload());
+		return;
+	}
+
+	if (method === "POST" && pathname === "/api/debug") {
+		const body = isJsonRequest(req) ? await readJsonBody(req) : {};
+		if (typeof body.debug !== "boolean") {
+			sendJson(res, 400, { ok: false, message: "debug: true | false" });
+			return;
+		}
+		if (body.debug !== senderDebug) {
+			senderDebug = body.debug;
+			persistSettings(state.host, state.port);
+			pushLog(
+				T(
+					senderDebug
+						? "[launcher] Подробный журнал отправителя включён: раз в две секунды он пишет, что отправляет каждый выход и во что это обходится."
+						: "[launcher] Подробный журнал отправителя выключен.",
+					senderDebug
+						? "[launcher] The sender's detailed log is on: every two seconds it says what each out sends and what it costs."
+						: "[launcher] The sender's detailed log is off.",
+				),
+			);
+			// The sender reads it when it starts: start it again, if it runs.
+			if (state.sender && state.status === "running") {
+				const port = state.port;
+				await stopSender();
+				if (state.status === "running" && state.port === port) startSender(port);
+			}
+		}
 		sendJson(res, 200, statePayload());
 		return;
 	}

@@ -375,6 +375,23 @@ async function main() {
 			"POST /api/lang refuses a language it does not speak",
 			noSuchLang.status === 400,
 		);
+		check("the sender's detailed log starts off", st.debug === false, String(st.debug));
+		const debugOn = await postJson(`${control.url}/api/debug`, { debug: true });
+		check(
+			"POST /api/debug switches the sender's detailed log on, and it is remembered",
+			debugOn.status === 200 &&
+				debugOn.json?.debug === true &&
+				JSON.parse(fs.readFileSync(settingsPath, "utf8")).debug === true,
+		);
+		const debugOff = await postJson(`${control.url}/api/debug`, { debug: false });
+		check(
+			"…and off again, the setting gone from the file",
+			debugOff.json?.debug === false && !("debug" in JSON.parse(fs.readFileSync(settingsPath, "utf8"))),
+		);
+		check(
+			"POST /api/debug wants true or false",
+			(await postJson(`${control.url}/api/debug`, { debug: "yes" })).status === 400,
+		);
 		check(
 			"the page carries its English next to its Russian, and the RU / EN switch",
 			uiHtml.includes('id="langRu"') &&

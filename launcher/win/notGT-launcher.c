@@ -104,6 +104,7 @@ enum {
 	ID_NET_REMOVE,
 	ID_NET_RESULT,
 	ID_LOG_TEXT,
+	ID_LOG_DEBUG,
 	ID_TRAY_OPEN,
 	ID_TRAY_SHOW,
 	ID_TRAY_QUIT,
@@ -115,7 +116,7 @@ enum {
 };
 
 /* How a button is drawn; kept in its GWLP_USERDATA. */
-enum { BTN_NORMAL, BTN_PRIMARY, BTN_GHOST, BTN_SELECT, BTN_LANG };
+enum { BTN_NORMAL, BTN_PRIMARY, BTN_GHOST, BTN_SELECT, BTN_LANG, BTN_CHECK };
 
 /* ------------------------------------------------------------------- state */
 
@@ -150,6 +151,7 @@ typedef struct {
 	Interface interfaces[MAX_INTERFACES];
 	int interfaceCount;
 	int lang; /* 0 = Russian, 1 = English */
+	BOOL debug; /* the sender's detailed log */
 	wchar_t *logs; /* the server log, lines joined with CRLF */
 	int logCount;
 } AppState;
@@ -164,6 +166,7 @@ typedef enum {
 	ACT_FW_REMOVE,
 	ACT_DIAGNOSE,
 	ACT_LANG,
+	ACT_DEBUG,
 	ACT_FFMPEG_INSTALL,
 } ActionKind;
 
@@ -200,6 +203,8 @@ static BOOL g_userTouched;
 /* A language was just chosen here and the backend has not confirmed it yet:
  * until it does, an older answer must not switch the window back. */
 static BOOL g_langPending;
+/* The same for the debug checkbox: what was just clicked, until confirmed. */
+static int g_debugPending = -1;
 
 static HANDLE g_pollNow, g_actionReady, g_quit;
 static CRITICAL_SECTION g_actionLock;
@@ -414,7 +419,30 @@ static void draw_button(const DRAWITEMSTRUCT *item, COLORREF ground) {
 		ink = disabled ? C_FAINT : C_TEXT;
 	}
 
-	if (kind == BTN_SELECT) {
+	if (kind == BTN_CHECK) {
+		BOOL on = g_debugPending >= 0 ? g_debugPending : g_state && g_state->debug;
+		RECT box = r, line = r;
+		int size = S(16);
+		box.top = (r.top + r.bottom - size) / 2;
+		box.bottom = box.top + size;
+		box.right = box.left + size;
+		fill_round(dc, &box, S(4), on ? C_SIGNAL : hot ? C_FAINT : C_LINE, ground);
+		if (!on) {
+			RECT inner = box;
+			InflateRect(&inner, -S(1), -S(1));
+			fill_round(dc, &inner, S(3), C_WELL, hot ? C_FAINT : C_LINE);
+		} else {
+			POINT tick[3] = { { box.left + S(4), box.top + S(8) }, { box.left + S(7), box.top + S(11) },
+				{ box.left + S(12), box.top + S(5) } };
+			HPEN pen = CreatePen(PS_SOLID, S(2), C_BG);
+			HPEN oldPen = (HPEN)SelectObject(dc, pen);
+			Polyline(dc, tick, 3);
+			SelectObject(dc, oldPen);
+			DeleteObject(pen);
+		}
+		line.left = box.right + S(8);
+		text(dc, label, line, g_font, disabled ? C_FAINT : C_TEXT, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+	} else if (kind == BTN_SELECT) {
 		/* Looks like a field: it opens the list of interfaces. */
 		RECT inner = r, arrow = r;
 		fill_round(dc, &r, S(6), hot ? C_FAINT : C_LINE, ground);
@@ -439,7 +467,7 @@ static void draw_button(const DRAWITEMSTRUCT *item, COLORREF ground) {
 		text(dc, label, r, kind == BTN_GHOST ? g_font : kind == BTN_LANG ? g_fontCaps : g_fontBold, ink,
 			DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 	}
-	if (item->itemState & ODS_FOCUS && !(item->itemState & ODS_NOFOCUSRECT)) {
+	if (item->itemState & ODS_FOCUS && !(item->itemState & ODS_NOFOCUSRECT) && kind != BTN_CHECK) {
 		RECT focus = item->rcItem;
 		HPEN pen = CreatePen(PS_SOLID, S(1), kind == BTN_PRIMARY ? C_TEXT : C_SIGNAL);
 		HPEN oldPen = (HPEN)SelectObject(dc, pen);
@@ -556,6 +584,7 @@ static AppState *state_from_json(const JVal *root) {
 		state->interfaceCount++;
 	}
 	state->lang = !wcscmp(json_str(root, L"lang"), L"en");
+	state->debug = json_bool(root, L"debug");
 	state->logs = join_logs(json_get(root, L"logs"));
 	state->logCount = (int)json_num(root, L"logCount", 0);
 	return state;
@@ -652,6 +681,10 @@ static DWORD WINAPI action_thread(LPVOID unused) {
 				strcpy(body, "{\"lang\":");
 				backend_json_string(body, sizeof(body), action->a);
 				strcat(body, "}");
+				break;
+			case ACT_DEBUG:
+				path = L"/api/debug";
+				strcpy(body, action->port ? "{\"debug\":true}" : "{\"debug\":false}");
 				break;
 			case ACT_DIAGNOSE:
 				method = L"GET";
@@ -983,6 +1016,7 @@ static void close_main(void) {
 #define TITLE_LOGIN T(L"Вход по паролю", L"Sign-in")
 #define TITLE_NETWORK T(L"Сеть и брандмауэр", L"Network and firewall")
 #define TITLE_LOG T(L"Журнал сервера", L"Server log")
+#define LABEL_DEBUG T(L"Подробный журнал отправителя NDI и Spout (кадры, время кадра)", L"Detailed NDI and Spout sender log (frames, frame times)")
 
 static int g_logShown = -1;
 
@@ -1013,6 +1047,7 @@ static void relabel(void) {
 	}
 	if (g_logWnd) {
 		SetWindowTextW(g_logWnd, TITLE_LOG);
+		SetDlgItemTextW(g_logWnd, ID_LOG_DEBUG, LABEL_DEBUG);
 		g_logShown = -1; /* the "empty" notice is a text too */
 	}
 }
@@ -1304,6 +1339,7 @@ static void paint_log(HWND hwnd, HDC dc) {
 
 static void update_log_window(void) {
 	HWND edit;
+	if (g_logWnd) InvalidateRect(GetDlgItem(g_logWnd, ID_LOG_DEBUG), NULL, FALSE);
 	if (!g_logWnd || !g_state || g_state->logCount == g_logShown) return;
 	g_logShown = g_state->logCount;
 	edit = GetDlgItem(g_logWnd, ID_LOG_TEXT);
@@ -1315,6 +1351,7 @@ static void update_log_window(void) {
 static LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 	switch (msg) {
 	case WM_CREATE:
+		make_button(hwnd, ID_LOG_DEBUG, LABEL_DEBUG, BTN_CHECK, 12, 6, 400, 28);
 		make_edit(hwnd, ID_LOG_TEXT, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, 0, 0, 10, 10,
 			g_fontMono);
 		SendDlgItemMessageW(hwnd, ID_LOG_TEXT, EM_SETLIMITTEXT, 0, 0);
@@ -1323,7 +1360,8 @@ static LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 		update_log_window();
 		return 0;
 	case WM_SIZE:
-		MoveWindow(GetDlgItem(hwnd, ID_LOG_TEXT), S(10), S(8), LOWORD(lp) - S(12), HIWORD(lp) - S(10), TRUE);
+		MoveWindow(GetDlgItem(hwnd, ID_LOG_DEBUG), S(12), S(6), LOWORD(lp) - S(24), S(28), TRUE);
+		MoveWindow(GetDlgItem(hwnd, ID_LOG_TEXT), S(10), S(40), LOWORD(lp) - S(12), HIWORD(lp) - S(42), TRUE);
 		return 0;
 	case WM_GETMINMAXINFO:
 		((MINMAXINFO *)lp)->ptMinTrackSize.x = S(360);
@@ -1331,7 +1369,16 @@ static LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 		return 0;
 	case WM_COMMAND:
 		if (LOWORD(wp) == IDCANCEL) DestroyWindow(hwnd);
+		if (LOWORD(wp) == ID_LOG_DEBUG && g_state) {
+			int on = g_debugPending >= 0 ? g_debugPending : g_state->debug;
+			g_debugPending = !on;
+			enqueue(ACT_DEBUG, NULL, NULL, g_debugPending);
+			InvalidateRect(GetDlgItem(hwnd, ID_LOG_DEBUG), NULL, FALSE);
+		}
 		return 0;
+	case WM_DRAWITEM:
+		draw_button((const DRAWITEMSTRUCT *)lp, C_WELL);
+		return TRUE;
 	case WM_CTLCOLOREDIT:
 	case WM_CTLCOLORSTATIC:
 		return edit_colors((HDC)wp);
@@ -1356,6 +1403,10 @@ static void handle_result(ActionResult *result) {
 	switch (result->kind) {
 	case ACT_LANG:
 		g_langPending = FALSE; /* from here on the backend's answers are in it */
+		break;
+	case ACT_DEBUG:
+		g_debugPending = -1;
+		if (g_logWnd) InvalidateRect(GetDlgItem(g_logWnd, ID_LOG_DEBUG), NULL, FALSE);
 		break;
 	case ACT_START:
 	case ACT_STOP:
