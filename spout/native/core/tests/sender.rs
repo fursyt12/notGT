@@ -44,22 +44,11 @@ fn pattern() -> Vec<u8> {
 	px
 }
 
-/// What a receiver should read: the alpha divided out.
-fn straight(px: &[u8]) -> Vec<u8> {
-	px.chunks(4)
-		.flat_map(|p| {
-			let a = p[3] as f32;
-			let c = |v: u8| if a == 0.0 { 0 } else { ((v as f32 * 255.0 / a).round()).min(255.0) as u8 };
-			if p[3] == 0 { [0, 0, 0, 0] } else { [c(p[0]), c(p[1]), c(p[2]), p[3]] }
-		})
-		.collect()
-}
-
 fn close_enough(got: &[u8], want: &[u8]) {
 	assert_eq!(got.len(), want.len());
 	for (i, (g, w)) in got.iter().zip(want).enumerate() {
-		// The alpha and the colours of opaque pixels are exact; dividing a
-		// colour by a small alpha in floats may round the other way.
+		// Copied as Chromium drew it: a faint pixel keeps its faint colour.
+		// One step is left to the driver's rounding.
 		assert!(g.abs_diff(*w) <= 1, "byte {i}: got {g}, want {w}");
 	}
 }
@@ -141,21 +130,21 @@ fn read_texture(device: &ID3D11Device, context: &ID3D11DeviceContext, texture: &
 }
 
 #[test]
-fn a_cpu_frame_reaches_a_receiver_with_straight_alpha() {
+fn a_cpu_frame_reaches_a_receiver_premultiplied() {
 	let px = pattern();
 	let mut sender = open_sender("notGT test cpu", true);
 	assert_eq!(sender.name(), "notGT test cpu");
 	assert!(listed().contains(&"notGT test cpu".to_string()), "listed: {:?}", listed());
 	let sent = sender.send_pixels(W, H, &px, W * 4, (0, 0, W, H)).unwrap();
 	assert!(!sent.skipped);
-	close_enough(&sender.read_back().unwrap(), &straight(&px));
+	close_enough(&sender.read_back().unwrap(), &px);
 
 	// Only a rectangle changed: the rest stays.
 	let mut changed = px.clone();
 	let at = (W * 4 + 4) as usize; // (1, 1)
 	changed[at..at + 4].copy_from_slice(&[0, 0, 128, 128]);
 	sender.send_pixels(W, H, &changed[at..], W * 4, (1, 1, 1, 1)).unwrap();
-	close_enough(&sender.read_back().unwrap(), &straight(&changed));
+	close_enough(&sender.read_back().unwrap(), &changed);
 
 	// What a receiver reads in the sender's info.
 	let info = read_map("notGT test cpu", 280).unwrap();
@@ -176,7 +165,7 @@ fn a_cpu_frame_reaches_a_receiver_with_straight_alpha() {
 		let opened = unsafe { device.OpenSharedResource(HANDLE(u(0) as usize as *mut c_void), &mut texture) }
 			.and_then(|_| texture.ok_or_else(|| windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)));
 		let texture = opened.unwrap_or_else(|e| panic!("a receiver cannot open the texture: {}", e.message()));
-		close_enough(&read_texture(&device, &context, &texture), &straight(&changed));
+		close_enough(&read_texture(&device, &context, &texture), &changed);
 	}
 
 	drop(sender);
@@ -233,7 +222,7 @@ fn a_gpu_frame_is_drawn_from_its_nt_handle() {
 	// A frame larger than what is visible of it: only that part goes out.
 	let sent = sender.send_shared(handle.0 as usize, (2, 1, 4, 2)).unwrap();
 	assert_eq!((sent.width, sent.height), (4, 2));
-	let want: Vec<u8> = straight(&px)
+	let want: Vec<u8> = px
 		.chunks(W as usize * 4)
 		.skip(1)
 		.take(2)

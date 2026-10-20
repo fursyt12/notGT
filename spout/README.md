@@ -19,8 +19,8 @@ notGT out page ─ Chromium (GPU) ─► D3D11 texture ─► Resolume · TouchD
 ```
 
 - **On the GPU, as it is.** With the GPU, Chromium's frame stays a texture: one draw on
-  the GPU copies it into the texture Spout receivers open (dividing the alpha out — Spout
-  receivers want it straight; or setting it to opaque). No copy through memory, no
+  the GPU copies it into the texture Spout receivers open, with its alpha premultiplied as
+  Chromium draws it and as Resolume and TouchDesigner take it (or opaque, over black). No copy through memory, no
   compression, nothing on the network. On the CPU, only the rectangle that changed is
   uploaded.
 - **At the out's size**, always: on one GPU a smaller picture saves next to nothing.

@@ -13,9 +13,12 @@
 //!  - `<name>_SpoutAccessMutex` is held while the texture is written or read;
 //!  - `<name>_Count_Semaphore` counts the frames, for receivers that ask.
 //!
-//! The texture is BGRA with straight alpha, as receivers take it; Chromium's
-//! frames are premultiplied, so each one is drawn into it by a pixel shader
-//! that divides the alpha out (or sets it to 1, sent opaque).
+//! The texture is BGRA with premultiplied alpha, as Chromium draws it and as
+//! Resolume and TouchDesigner take it: a glow at a tenth of its alpha keeps a
+//! tenth of its colour. (Divided out to straight alpha, faint pixels came out
+//! at full colour, and Resolume showed every glow as a solid blob.) A pixel
+//! shader draws each frame into it — its visible part, or over black with
+//! the alpha set to 1, sent opaque.
 //!
 //! Windows only: elsewhere the crate is empty.
 #![cfg(windows)]
@@ -65,7 +68,7 @@ float4 vs(uint id : SV_VertexID) : SV_Position {
 float4 ps(float4 position : SV_Position) : SV_Target {
 	float4 c = frame.Load(int3(int2(position.xy) + origin, 0));
 	if (opaque != 0) return float4(c.rgb, 1);
-	return c.a > 0 ? float4(saturate(c.rgb / c.a), c.a) : float4(0, 0, 0, 0);
+	return c;
 }
 ";
 
