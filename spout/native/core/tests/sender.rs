@@ -7,13 +7,14 @@ use std::ffi::c_void;
 
 use notgt_spout_core::Sender;
 use windows::core::{Interface, PCSTR};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE};
+use windows::Win32::Foundation::{CloseHandle, DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, HMODULE};
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP};
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{IDXGIResource1, DXGI_SHARED_RESOURCE_READ};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::Win32::System::Memory::{MapViewOfFile, OpenFileMappingA, UnmapViewOfFile, FILE_MAP_ALL_ACCESS};
+use windows::Win32::System::Threading::GetCurrentProcess;
 
 /// Wine draws, but shares no textures: there the sender's texture is
 /// checked on its own device, and what receivers open is not.
@@ -229,17 +230,26 @@ fn a_gpu_frame_is_drawn_from_its_nt_handle() {
 		.flat_map(|row| row[8..24].to_vec())
 		.collect();
 	close_enough(&sender.read_back().unwrap(), &want);
+	// Said as GitHub annotations too: CI's logs cannot be read without a token.
+	if !sent.opened {
+		println!("::error::the first frame did not open Chromium's texture");
+	}
 	assert!(sent.opened, "the first frame opens the texture");
 	// The same texture again, with a handle of its own, as Electron hands every
+	// frame — Chromium shares a texture once and duplicates that handle for each
 	// frame — the first one closed: kept open, not opened again.
-	let again = unsafe {
-		texture.as_ref().unwrap().cast::<IDXGIResource1>().unwrap().CreateSharedHandle(None, DXGI_SHARED_RESOURCE_READ.0, None)
+	let mut again = HANDLE::default();
+	unsafe {
+		let me = GetCurrentProcess();
+		DuplicateHandle(me, handle, me, &mut again, 0, false, DUPLICATE_SAME_ACCESS).unwrap();
 	}
-	.unwrap();
 	unsafe {
 		let _ = CloseHandle(handle);
 	}
 	let sent = sender.send_shared(again.0 as usize, (2, 1, 4, 2)).unwrap();
+	if sent.opened {
+		println!("::error::the same texture, through a duplicated NT handle, was opened again (not known by CompareObjectHandles)");
+	}
 	assert!(!sent.opened, "the same texture is not opened again");
 	close_enough(&sender.read_back().unwrap(), &want);
 	unsafe {
