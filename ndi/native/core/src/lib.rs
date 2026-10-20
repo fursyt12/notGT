@@ -23,6 +23,8 @@ pub mod reference;
 
 #[cfg(target_os = "linux")]
 pub mod dmabuf;
+#[cfg(windows)]
+pub mod textures;
 #[cfg(any(target_os = "linux", windows))]
 pub mod vulkan;
 

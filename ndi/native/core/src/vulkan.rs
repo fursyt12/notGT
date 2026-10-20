@@ -76,7 +76,7 @@ struct Plan {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Key {
-	/// Which buffer: (device, inode) of a dmabuf, or (handle, 0).
+	/// Which buffer: (device, inode) of a dmabuf, or (texture id, 0) on Windows.
 	id: (u64, u64),
 	width: u32,
 	height: u32,
@@ -126,6 +126,9 @@ pub struct Vulkan {
 	fences: [vk::Fence; SLOTS],
 	output: Option<Output>,
 	imports: Vec<Imported>,
+	/// Windows: which of Chromium's textures a frame's handle is on.
+	#[cfg(windows)]
+	known: crate::textures::Known,
 	tick: u64,
 	broken: Option<String>,
 	pub report: DeviceReport,
@@ -529,14 +532,16 @@ impl Vulkan {
 		})
 	}
 
+	/// Which texture a frame is in: the texture, not its handle's value — each
+	/// frame comes with a handle of its own (textures.rs).
 	#[cfg(windows)]
-	fn key_for(&self, frame: &SharedFrame, format: vk::Format) -> Result<Key> {
+	fn key_for(&mut self, frame: &SharedFrame, format: vk::Format) -> Result<Key> {
 		let FrameHandle::D3d11 { handle } = &frame.handle else {
 			return Err("frames come as D3D11 textures on Windows".into());
 		};
 		self.check_layout(format, 0, 1)?;
 		Ok(Key {
-			id: (*handle as u64, 0),
+			id: (self.known.id(*handle), 0),
 			width: frame.width,
 			height: frame.height,
 			format,
@@ -1197,6 +1202,8 @@ impl Parts {
 			fences: self.fences,
 			output: None,
 			imports: Vec::new(),
+			#[cfg(windows)]
+			known: crate::textures::Known::default(),
 			tick: 0,
 			broken: None,
 			report: self.report,
