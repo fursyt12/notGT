@@ -82,6 +82,8 @@ ready to use the moment it starts.
 - **Excel as data.** Drop a workbook on the Data panel, or track one on the server: each
   sheet becomes a list, the file is re-read when it is saved, and an edit in the
   dashboard is written back into it.
+- **The show in one file.** Every animation, out and variable, with the media they use,
+  saved as one `.ngt` file — and opened here or on another server.
 - **A library to start from.** Eleven ready-made titles in one style: lower thirds, a
   score bug, a live poll, a ticker, a countdown, a clock, a weather card and more.
 - **Yours to read.** The interface is in English and Russian, in a dark and a light

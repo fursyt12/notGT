@@ -31,6 +31,7 @@ import {
 import { TEAM_BASE } from "../shared/team";
 import type { Out, OutItem, TitleTemplate } from "../shared/types";
 import { N_, getLang, t, tr, useLang, type Phrase } from "./i18n";
+import { useProjectFile } from "./project";
 import {
 	addExample,
 	addItem,
@@ -785,6 +786,8 @@ function LibraryRow({ template, outs }: { template: TitleTemplate; outs: Out[] }
 function Library() {
 	const templates = useTemplates();
 	const outs = useOuts();
+	const admin = useIsAdmin();
+	const project = useProjectFile();
 
 	const create: MenuItem[] = [
 		{
@@ -811,9 +814,25 @@ function Library() {
 					<Icon name="plus" size={14} />
 					{t("New animation")}
 				</Menu>
+				{admin ? (
+					<Menu items={project.items} label={t("Project file")}>
+						<Icon name="file" size={14} />
+						{project.busy ? t("Working…") : t("Project")}
+					</Menu>
+				) : null}
+				{project.input}
 				<ThemeSwitch />
 				<LangSwitch />
 			</header>
+			{project.note ? (
+				<p
+					className={project.note.error ? "err tt-note" : "hint tt-note"}
+					role={project.note.error ? "alert" : "status"}
+					data-project-note
+				>
+					{project.note.text}
+				</p>
+			) : null}
 			<section className="panel tt-lib">
 				{templates.length === 0 ? (
 					<div className="empty">

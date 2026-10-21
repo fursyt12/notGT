@@ -99,7 +99,7 @@ export function createSources(
 	store: Store,
 	dir: string,
 	authCheck: Handler,
-): { router: unknown; start(): void } {
+): { router: unknown; variables(): string[]; start(): void } {
 	const log = nodecg.log;
 	const sources = nodecg.Replicant<DataSource[]>(REPLICANTS.sources, BUNDLE_NAME, {
 		defaultValue: [],
@@ -509,6 +509,10 @@ export function createSources(
 
 	return {
 		router,
+		/** The variables the connected workbooks mirror. */
+		variables(): string[] {
+			return list().flatMap((source) => source.sheets.map((mapped) => mapped.variable));
+		},
 		/**
 		 * Picks the connections up after a restart. A tracked file may have
 		 * changed while the server was down, so it is read; a loaded copy only

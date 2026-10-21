@@ -35,6 +35,12 @@
 	padding-left: 16px;
 }
 
+/* How the last save or open of the project went. */
+.tt-note {
+	margin: 0;
+	padding-left: 16px;
+}
+
 /* --------------------------------------------------------------------- outs */
 
 .tt-out__name {

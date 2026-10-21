@@ -33,6 +33,7 @@ draw what they are sent, so the state in the API always matches what is on scree
 - [OBS Studio](#obs-studio)
 - [NDI](#ndi)
 - [Persistence](#persistence)
+- [Project files (.ngt)](#project-files-ngt)
 - [Writing a code animation](#writing-a-code-animation)
   - [Transitions: entrance and exit](#transitions-entrance-and-exit)
   - [Ready-made examples](#ready-made-examples)
@@ -379,6 +380,10 @@ The make-up of the show: which outs exist, which animations, and what sits on wh
   the variables the animation reads, the **“Place”** button and a `⋯` menu (duplicate,
   delete). **`+ New animation`** creates an animation from layers or from code, or adds a
   ready-made one — **“From an example”** opens the [gallery](#ready-made-examples).
+- **Project** (next to “New animation”, for an administrator) — **“Save project”** gives
+  one `.ngt` file with every animation, out and variable and the media they use; **“Open
+  project…”** puts such a file in place of all of that. See
+  [Project files (.ngt)](#project-files-ngt).
 
 Under an out's address sits its **NDI** switch, with the source name, the picture size
 and the frame rate — see [NDI](#ndi).
@@ -1368,6 +1373,77 @@ means in practice.
 In a Docker deployment `db`, `assets` and `logs` are volumes declared in
 `docker-compose.yml`; they survive `docker compose down` and an image rebuild. Delete a
 volume and the show's configuration is gone.
+
+---
+
+## Project files (.ngt)
+
+A `.ngt` file is the whole show in one file: to keep a copy, to take the show to another
+server, or to go back to how it was before a rehearsal. **Titles & Outs → Project** saves
+and opens it; only an administrator has the menu.
+
+What is in it:
+
+- every animation, with its layers or code, transitions and playback;
+- every out, with its placements, size and NDI/Spout settings;
+- every variable, and the row chosen in each list;
+- the media files the animations and the variables point at — files of the media folder
+  (`/assets/notGT/media/…`), uploaded videos included. A link elsewhere (`https://…`)
+  stays a link.
+
+Not in it: timers, connected workbooks, the team and its keys, NodeCG's own settings.
+
+Opening a file:
+
+- replaces every animation, out and variable on this server and takes everything off
+  air. A placement that was switched on in the file comes back switched off;
+- writes its media into the media folder. The same file already there is used as it is;
+  a different file under a name that is taken is saved as `name-2.ext`, and the
+  animations point at it;
+- leaves alone the lists a connected workbook mirrors: they keep the workbook's rows, so
+  opening a project never writes into a workbook;
+- reads the whole file first: a damaged, cut-off or foreign file is refused and nothing
+  changes.
+
+Over HTTP it is the same two calls, with the dashboard's session (not the API token), for
+an administrator:
+
+| Method | Path                          | What                                                     |
+| ------ | ----------------------------- | -------------------------------------------------------- |
+| `GET`  | `/bundles/notGT/project/save` | the `.ngt` file of this server; `?name=` names the download |
+| `POST` | `/bundles/notGT/project/open` | body: the bytes of a `.ngt` file                         |
+
+### The format
+
+Every integer is little-endian. The file starts with a header:
+
+| Bytes | Field                                                  |
+| ----- | ------------------------------------------------------ |
+| 8     | magic `89 4E 47 54 0D 0A 1A 0A` (`\x89NGT\r\n\x1a\n`) |
+| 4     | format version, `u32` — `1`                            |
+
+and goes on with chunks:
+
+| Bytes | Field                                   |
+| ----- | --------------------------------------- |
+| 4     | type, four ASCII letters                |
+| 8     | length of the payload, `u64`            |
+| n     | the payload                             |
+| 4     | CRC-32 of the type and the payload      |
+
+| Type   | Payload                                                                                |
+| ------ | -------------------------------------------------------------------------------------- |
+| `INFO` | deflated JSON: `{ app, version, schemaVersion, savedAt, titles, outs, variables, media }` |
+| `TITL` | deflated JSON: the animations, `TitleTemplate[]`                                       |
+| `OUTS` | deflated JSON: the outs, `Out[]`                                                       |
+| `VARS` | deflated JSON: `{ data, selection }`                                                   |
+| `MDIA` | one media file: `u16` length of its name, the name in UTF-8, then the file's bytes     |
+| `DONE` | empty; the last chunk                                                                  |
+
+“Deflated” is raw deflate (RFC 1951), without a zlib or gzip wrapper. A reader skips the
+chunk types it does not know, so a later notGT can add one; a file of a newer format
+version is refused. The code is `src/extension/ngt.ts`, the test
+`scripts/e2e-project.mjs`.
 
 ---
 

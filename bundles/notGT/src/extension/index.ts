@@ -5,6 +5,7 @@ import { createApiRouter } from "./api";
 import { createAccess, type Handler } from "./auth";
 import { createMediaRouter } from "./media";
 import { createNdiHub, keepNdiKeyFile } from "./ndi";
+import { createProjectRouter } from "./project";
 import { probeDurationMs } from "./video-duration";
 import { syncFileAnimations } from "./file-animations";
 import { createSources } from "./sources";
@@ -152,6 +153,22 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	);
 	mount(`/bundles/${BUNDLE_NAME}/sources`, sources.router);
 	sources.start();
+
+	// The show as one file: saved from here, opened here or on another server.
+	mount(
+		`/bundles/${BUNDLE_NAME}/project`,
+		createProjectRouter(nodecg, store, {
+			mediaDir,
+			mediaUrlPrefix,
+			sessionCheck: nodecg.util.authCheck as unknown as Handler,
+			team,
+			boundVariables: () => sources.variables(),
+			offAir: () => {
+				scheduler.stopOut(null);
+				store.hide();
+			},
+		}),
+	);
 
 	// One-shot triggers from the dashboard / other bundles.
 	nodecg.listenFor(MESSAGES.trigger, ((data: any, ack: any) => {

@@ -129,6 +129,9 @@ const ICONS = {
 		</>
 	),
 	moon: <path d="M20 14.6A8.2 8.2 0 0 1 9.4 4a8.2 8.2 0 1 0 10.6 10.6z" />,
+	download: <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />,
+	upload: <path d="M12 16V5M7 10l5-5 5 5M5 20h14" />,
+	file: <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5" />,
 	/** Empty: keeps the labels of a menu aligned next to items that have an icon. */
 	blank: null,
 } as const;
