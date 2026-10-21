@@ -548,5 +548,9 @@
 	"The project file is larger than 16 GB.": "Файл проекта больше 16 ГБ.",
 	"Only an administrator saves and opens projects.": "Сохранять и открывать проекты может только администратор.",
 	"Could not open the project: {error}": "Не удалось открыть проект: {error}",
-	"Could not save the project: {error}": "Не удалось сохранить проект: {error}"
+	"Could not save the project: {error}": "Не удалось сохранить проект: {error}",
+	"The animation is {box} and the out {out}: its code is drawn in a {box} frame and scaled to fit.": "Анимация {box}, а out {out}: её код рисуется в кадре {box} и масштабируется под out.",
+	"Make the animation {out}": "Сделать анимацию {out}",
+	"Its frame becomes the size of the out, and it covers the whole out: position 0, scale 1, no crop or bounds.": "Её кадр станет размером с out, и она займёт весь out: положение 0, масштаб 1, без обрезки и границ.",
+	"The animation is now {size}": "Теперь анимация {size}"
 }

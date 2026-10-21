@@ -1645,6 +1645,7 @@ function PlacementInspector({
 	onPlayback,
 	onRemove,
 	onFitOut,
+	onSizeToOut,
 	onCrop,
 	onBounds,
 }: {
@@ -1655,6 +1656,8 @@ function PlacementInspector({
 	onPlayback: (patch: Partial<PlaybackConfig>) => void;
 	onRemove: () => void;
 	onFitOut: () => void;
+	/** Gives the animation the out's size, and the placement the whole out. */
+	onSizeToOut: () => void;
 	/** Turns the crop tool on. */
 	onCrop: () => void;
 	/** Turns the Scale Bounds tool on. */
@@ -1663,6 +1666,15 @@ function PlacementInspector({
 	const playback = item.playback ?? defaultPlayback();
 	const crop = item.crop ? cropBox(item, template) : null;
 	const bounds = item.bounds ? windowBox(item, template) : null;
+	// A code animation is drawn in a frame of its own size and scaled: on an
+	// out of another shape it keeps its own shape, whatever its code does.
+	const box = `${template.width}×${template.height}`;
+	const outSize = `${out.width}×${out.height}`;
+	const otherShape =
+		template.kind === "code" &&
+		template.height > 0 &&
+		out.height > 0 &&
+		Math.abs(template.width / template.height - out.width / out.height) > 0.01 * (out.width / out.height);
 
 	return (
 		<div className="ed-panel-body">
@@ -1703,6 +1715,26 @@ function PlacementInspector({
 					<Icon name="fit" size={14} />
 					{t("Fit out width")}
 				</button>
+				{otherShape ? (
+					<>
+						<p className="ed-hint" data-shape-hint>
+							{t("The animation is {box} and the out {out}: its code is drawn in a {box} frame and scaled to fit.", {
+								box,
+								out: outSize,
+							})}
+						</p>
+						<button
+							type="button"
+							className="small ed-start"
+							title={t("Its frame becomes the size of the out, and it covers the whole out: position 0, scale 1, no crop or bounds.")}
+							onClick={onSizeToOut}
+							data-size-to-out
+						>
+							<Icon name="expand" size={14} />
+							{t("Make the animation {out}", { out: outSize })}
+						</button>
+					</>
+				) : null}
 			</Section>
 
 			<Section title={t("Crop")}>
@@ -2495,6 +2527,18 @@ export function EditorApp() {
 		updateItem(out.id, item.id, { scale: round(out.width / template.width, 4) });
 	};
 
+	const sizeItemToOut = (item: OutItem) => {
+		if (!out) return;
+		const stored = getTemplate(item.templateId);
+		if (!stored) return;
+		const size = { width: out.width, height: out.height };
+		// Only the size is saved: whatever else is being edited stays a draft.
+		saveTemplate({ ...stored, ...size });
+		setDraft((prev) => (prev && prev.id === stored.id ? { ...prev, ...size } : prev));
+		updateItem(out.id, item.id, { x: 0, y: 0, scale: 1, crop: undefined, bounds: undefined });
+		notify(t("The animation is now {size}", { size: `${out.width}×${out.height}` }));
+	};
+
 	// ------------------------------------------------ crop + scale bounds tools
 
 	/**
@@ -3206,6 +3250,7 @@ export function EditorApp() {
 										onPlayback={(patch) => patchItemPlayback(activeItem.id, patch)}
 										onRemove={() => removeItemFromOut(activeItem.id)}
 										onFitOut={() => fitItemToOut(activeItem)}
+										onSizeToOut={() => sizeItemToOut(activeItem)}
 										onCrop={() => {
 											if (tool !== "crop") toggleTool("crop");
 										}}
