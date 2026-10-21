@@ -559,5 +559,8 @@
 	"A title that shows {{{path}}} will then need {{{path}.{column}}}": "Титру, который показывает {{{path}}}, тогда понадобится {{{path}.{column}}}",
 	"A column name cannot contain . [ ] { }": "В названии столбца не может быть . [ ] { }",
 	"There is already a column “{name}”": "Столбец «{name}» уже есть",
-	"The two columns need different names": "Столбцам нужны разные названия"
+	"The two columns need different names": "Столбцам нужны разные названия",
+	"Delete column": "Удалить столбец",
+	"Delete the column “{name}”": "Удалить столбец «{name}»",
+	"Delete the column “{name}” and its values in every row?": "Удалить столбец «{name}» вместе с его значениями во всех строках?"
 }

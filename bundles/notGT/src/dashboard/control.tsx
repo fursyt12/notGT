@@ -31,6 +31,7 @@ import {
 	makeArray,
 	mergeData,
 	moveArrayItem,
+	removeArrayColumn,
 	removeArrayItem,
 	removeDataValue,
 	replaceData,
@@ -532,6 +533,18 @@ function tableColumns(list: unknown[]): string[] | null {
 	return columns.length > 0 && columns.length <= MAX_TABLE_COLUMNS ? columns : null;
 }
 
+/** Every field of a list's rows, for a list that is not shown as a table. */
+function recordFields(list: unknown[]): string[] {
+	const fields: string[] = [];
+	for (const element of list) {
+		if (!isPlainObject(element)) continue;
+		for (const leaf of flattenData(element as TitleData)) {
+			if (!fields.includes(leaf.path)) fields.push(leaf.path);
+		}
+	}
+	return fields;
+}
+
 /** A row that is a value of its own, not fields: a table keeps it in a column. */
 function holdsValue(row: unknown): boolean {
 	return row !== null && row !== undefined && row !== "" && typeof row !== "object";
@@ -744,16 +757,41 @@ function ListBlock({
 	const list = row.value as unknown[];
 	const current = chosenIndex(list.length, selection[row.path]);
 	const columns = useMemo(() => tableColumns(list), [list]);
+	const fields = useMemo(() => (columns ? [] : recordFields(list)), [columns, list]);
 	const [addingColumn, setAddingColumn] = useState(false);
 
-	const menu: MenuItem[] = [
-		{
-			label: t("Delete list"),
-			icon: "trash",
-			danger: true,
-			onSelect: () => removeDataValue(row.path),
-		},
-	];
+	// Its values go from every row, so a column that has any asks first.
+	const deleteColumn = (column: string) => {
+		const filled = list.some(
+			(element) =>
+				isPlainObject(element) &&
+				flattenData(element as TitleData).some((leaf) => leaf.path === column && holdsValue(leaf.value)),
+		);
+		if (
+			filled &&
+			!window.confirm(t("Delete the column “{name}” and its values in every row?", { name: column }))
+		) {
+			return;
+		}
+		removeArrayColumn(row.path, column);
+	};
+
+	const menu: MenuItem[] = [];
+	// A table deletes a column from its head; a list shown field by field has none.
+	if (fields.length > 0) {
+		menu.push({
+			label: t("Delete column"),
+			icon: "x",
+			children: fields.map((field) => ({ label: field, onSelect: () => deleteColumn(field) })),
+		});
+	}
+	menu.push({
+		label: t("Delete list"),
+		icon: "trash",
+		danger: true,
+		separated: menu.length > 0,
+		onSelect: () => removeDataValue(row.path),
+	});
 
 	return (
 		<div className="vlist" data-path={row.path}>
@@ -808,15 +846,28 @@ function ListBlock({
 			) : null}
 
 			{columns && list.length > 0 ? (
-				<div className="vlist__row vlist__row--head" aria-hidden="true">
+				<div className="vlist__row vlist__row--head">
 					<span />
 					<div
 						className="vlist__cells"
 						style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
 					>
 						{columns.map((column) => (
-							<span className="mono truncate" key={column}>
-								{column}
+							<span className="vlist__col" key={column}>
+								{/* Every input of the column already names its field. */}
+								<span className="mono truncate" aria-hidden="true">
+									{column}
+								</span>
+								<button
+									type="button"
+									className="ghost icon small vlist__col-del"
+									title={t("Delete the column “{name}”", { name: column })}
+									aria-label={t("Delete the column “{name}”", { name: column })}
+									onClick={() => deleteColumn(column)}
+									data-remove-column={column}
+								>
+									<Icon name="x" size={12} />
+								</button>
 							</span>
 						))}
 					</div>

@@ -306,6 +306,36 @@
 	padding-left: 10px;
 }
 
+/* A column's name, and the × that takes the column out of every row. */
+.vlist__col {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	min-width: 0;
+}
+
+.vlist__col .mono {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.vlist__col button.icon.vlist__col-del {
+	width: 20px;
+	height: 20px;
+	opacity: 0;
+}
+
+.vlist__col:hover button.icon.vlist__col-del,
+.vlist__col button.icon.vlist__col-del:focus-visible {
+	opacity: 1;
+}
+
+@media (hover: none) {
+	.vlist__col button.icon.vlist__col-del {
+		opacity: 1;
+	}
+}
+
 .vlist__cells {
 	display: grid;
 	gap: 6px;

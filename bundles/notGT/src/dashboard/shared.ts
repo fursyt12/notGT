@@ -551,6 +551,29 @@ export function addArrayColumn(path: string, name: string, valueColumn = "value"
 	writeArray(path, list.length > 0 ? list : [{ [field]: "" }]);
 }
 
+/**
+ * Takes a field out of every row of a list, and a group it leaves empty with
+ * it. A row left with no fields is an empty value again, as the rows of a
+ * list made with “Turn into a list” are.
+ */
+export function removeArrayColumn(path: string, column: string): void {
+	const groups = column.split(".").slice(0, -1);
+	const list = readArray(path).map((row) => {
+		if (row === null || typeof row !== "object" || Array.isArray(row)) return row;
+		const next = clone(row) as Record<string, unknown>;
+		deleteByPath(next, column);
+		for (let depth = groups.length; depth > 0; depth -= 1) {
+			const group = groups.slice(0, depth).join(".");
+			const value = getByPathRaw(next, group);
+			if (value !== null && typeof value === "object" && Object.keys(value).length === 0) {
+				deleteByPath(next, group);
+			}
+		}
+		return Object.keys(next).length > 0 ? next : "";
+	});
+	writeArray(path, list);
+}
+
 /** Appends a value; defaults to a copy of the last element (or an empty object). */
 export function appendArrayItem(path: string, value?: unknown): number {
 	const list = [...readArray(path)];

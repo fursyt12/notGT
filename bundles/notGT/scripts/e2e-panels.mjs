@@ -864,6 +864,38 @@ async function main() {
 					JSON.stringify({ wider, closed }),
 				);
 
+				// The × in a column's head takes the column out of every row, asking
+				// first when it holds values; with its last column gone, a row is an
+				// empty value again.
+				const removeColumn = (name, column) =>
+					page.click(`.vlist[data-path="${name}"] [data-remove-column="${column}"]`);
+				await removeColumn("Panel_Cols", "City");
+				await sleep(700);
+				const noCity = await stored("Panel_Cols");
+				let asked = "";
+				page.once("dialog", (dialog) => {
+					asked = dialog.message();
+					void dialog.accept();
+				});
+				await removeColumn("Panel_Cols", "Name");
+				await sleep(700);
+				const noName = await stored("Panel_Cols");
+				await removeColumn("Panel_Cols", "Role");
+				await sleep(700);
+				const emptied = await stored("Panel_Cols");
+				check(
+					"control.html: a column is deleted from every row, asking first when it holds values",
+					JSON.stringify(noCity) ===
+						JSON.stringify([
+							{ Name: "Anna Reed", Role: "" },
+							{ Name: "Peter Holt", Role: "" },
+						]) &&
+						asked !== "" &&
+						JSON.stringify(noName) === JSON.stringify([{ Role: "" }, { Role: "" }]) &&
+						JSON.stringify(emptied) === JSON.stringify(["", ""]),
+					JSON.stringify({ noCity, asked, noName, emptied }),
+				);
+
 				// A list of empty values has nothing to keep: it just gets the column.
 				await open("Panel_Blank");
 				const blankAsked = Boolean(await page.$(`${form("Panel_Blank")} [data-value-column]`));
