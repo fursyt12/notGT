@@ -382,7 +382,11 @@ function setupCodeIframe(
 	iframe.style.width = `${template.width}px`;
 	iframe.style.height = `${template.height}px`;
 	iframe.addEventListener("load", () => {
-		if (slot.renderToken === token) slot.iframeReady = true;
+		if (slot.renderToken !== token) return;
+		slot.iframeReady = true;
+		// Variables that changed while the frame was loading could not be
+		// posted to it yet.
+		scheduleRender();
 	});
 	slot.iframe = iframe;
 
@@ -390,7 +394,10 @@ function setupCodeIframe(
 	// iframe that is inserted with an empty `srcdoc` and filled in a moment
 	// later occasionally keeps its initial about:blank and paints nothing.
 	if (codeSource(template) !== "file" || !template.code?.src) {
-		iframe.srcdoc = buildCodeDocument(template, data);
+		// A list is down to its selected element from the first frame, as
+		// `vars()` sees it later; that much need not be posted again on load.
+		iframe.srcdoc = buildCodeDocument(template, codeData(data));
+		slot.posted = JSON.stringify(codeData(slot.usesTimers ? data : withoutTimers(data)));
 		slot.box.appendChild(iframe);
 		return;
 	}

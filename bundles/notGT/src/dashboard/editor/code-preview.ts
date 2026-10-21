@@ -16,9 +16,10 @@ import {
 	buildSourcedDocument,
 	codeSource,
 } from "../../graphics/code-runtime";
+import { materializeSelection } from "../../shared/binding";
 import { templateUsesTimers } from "../../shared/timer";
 import { CODE_MESSAGES, type TitleData, type TitleTemplate } from "../../shared/types";
-import { useLiveData } from "../shared";
+import { useLiveData, useSelection } from "../shared";
 
 export function useCodeDocument(
 	template: TitleTemplate | undefined,
@@ -27,6 +28,7 @@ export function useCodeDocument(
 	restartToken = 0,
 ): string {
 	const [doc, setDoc] = useState("");
+	const selection = useSelection();
 
 	useEffect(() => {
 		if (!template) {
@@ -35,12 +37,14 @@ export function useCodeDocument(
 		}
 		let cancelled = false;
 		const src = template.code?.src;
+		// A list shows its selected element, as on the out.
+		const shown = materializeSelection(data, selection) as TitleData;
 		const inline = () => {
-			if (!cancelled) setDoc(buildCodeDocument(template, data));
+			if (!cancelled) setDoc(buildCodeDocument(template, shown));
 		};
 
 		if (codeSource(template) === "file" && src) {
-			buildSourcedDocument(src, data)
+			buildSourcedDocument(src, shown)
 				.then((text) => {
 					if (!cancelled) setDoc(text);
 				})
@@ -53,7 +57,7 @@ export function useCodeDocument(
 			cancelled = true;
 		};
 		// `template` is compared by identity: the editor rebuilds it on every edit.
-	}, [template, data, restartToken]);
+	}, [template, data, selection, restartToken]);
 
 	return doc;
 }
@@ -73,13 +77,17 @@ export function useTimerFeed(
 ): () => void {
 	const uses = Boolean(template && templateUsesTimers(template));
 	const live = useLiveData(data, uses);
+	const selection = useSelection();
 	const latest = useRef(live);
 	latest.current = live;
+	const selected = useRef(selection);
+	selected.current = selection;
 	const post = useCallback(() => {
 		if (!uses) return;
-		// A plain copy: the variables are the Replicant's own proxies, which
-		// `postMessage` cannot clone.
-		const data = JSON.parse(JSON.stringify(latest.current)) as TitleData;
+		// A plain copy, each list down to its selected element as on the out:
+		// the variables are the Replicant's own proxies, which `postMessage`
+		// cannot clone.
+		const data = materializeSelection(latest.current, selected.current) as TitleData;
 		frame.current?.contentWindow?.postMessage({ type: CODE_MESSAGES.data, data }, "*");
 	}, [frame, uses]);
 	useEffect(post, [live, post]);

@@ -585,10 +585,47 @@ async function main() {
 			await page.evaluate(() => window.__notgtArrayMarker === "alive"),
 		);
 
+		// A code animation reads the selected element too, from its first
+		// frame on: no later variable change is needed to correct it.
+		await api("POST", "/api/titles/hide", {});
+		await sleep(400);
+		await api("POST", "/api/templates", {
+			id: "e2e-array-code",
+			name: "E2E array code",
+			kind: "code",
+			width: 1920,
+			height: 1080,
+			layers: [],
+			code: {
+				html: '<div id="token">{{e2e_guests.name ?? нет}}</div><div id="vars"></div>',
+				css: "",
+				js: "onData(() => { document.getElementById('vars').textContent = vars('e2e_guests.name', 'нет'); });",
+			},
+			inTransition: { type: "none", durationMs: 0 },
+			outTransition: { type: "none", durationMs: 0 },
+			playback: { mode: "once", intervalMs: 10000, holdMs: 30000, autoStart: false },
+		});
+		await api("POST", "/api/titles/e2e-array-code/show", {});
+		await page.waitForSelector(".notgt-code-frame", { timeout: 10_000 });
+		await sleep(900);
+		const codeList = await page.evaluate(() => {
+			const doc = document.querySelector(".notgt-code-frame")?.contentDocument;
+			return {
+				token: doc?.getElementById("token")?.textContent ?? "",
+				vars: doc?.getElementById("vars")?.textContent ?? "",
+			};
+		});
+		check(
+			"code animation reads the selected element from its first frame",
+			codeList.token === "Второй" && codeList.vars === "Второй",
+			JSON.stringify(codeList),
+		);
+
 		await api("POST", "/api/titles/hide", {});
 		await api("DELETE", "/api/selection/e2e_guests");
 		await api("DELETE", "/api/data/e2e_guests");
 		await api("DELETE", "/api/templates/e2e-array");
+		await api("DELETE", "/api/templates/e2e-array-code");
 		await sleep(300);
 
 		// --- 4e. "show it and keep it" toggle (held placements) -----------
