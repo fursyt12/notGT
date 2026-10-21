@@ -162,6 +162,7 @@ changes the picture on air at once — without reloading the Browser Source (ver
 test, ~10 ms).
 
 A scalar variable can be turned into a list: the variable's `⋯` menu → “Turn into a list”.
+**`+ Column`** in the list's head makes it a table with fields.
 
 The active show also has a **per-show override**: `data` in the body of
 `POST /api/titles/:id/show` is laid over the global store without changing it. This is
@@ -317,7 +318,10 @@ and the data.
   variable is shown as a table: the mark on the left picks the row that goes into
   `{{...}}`. **`+ Variable`** adds a value by path, **`JSON`** is bulk input (“Add to
   current” = merge, “Replace all” = replace). **`Excel`** connects a workbook — see below.
-  A list's `⋯` menu has “Add a column”, which gives every row a new field.
+  **`+ Column`** in a list's head gives every row a new, empty field. A list of plain
+  values (what “Turn into a list” makes) becomes a table then: its values move into a
+  column of their own, `value` unless named otherwise, so a title that showed `{{list}}`
+  reads `{{list.value}}` from then on.
 
 #### Excel as a data source
 

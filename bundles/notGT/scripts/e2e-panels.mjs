@@ -42,6 +42,7 @@ const PANELS = [
 		expectRu: ["В эфире ничего нет", "Данные"],
 		heldToggle: true,
 		excelData: true,
+		listColumns: true,
 		shot: "panel-control.png",
 	},
 	{
@@ -769,6 +770,117 @@ async function main() {
 					!windowed.native && !windowed.filled && after.desk === before.desk,
 					JSON.stringify({ windowed, after }),
 				);
+			}
+
+			if (panel.listColumns) {
+				// “Turn into a list” makes a list of plain values; a column added to
+				// it makes a table, and the values keep a column of their own.
+				const DATA = `${BASE}/api/data`;
+				const stored = async (name) =>
+					(await (await fetch(`${DATA}?path=${name}&raw=1`)).json()).value;
+				const form = (name) => `.vlist[data-path="${name}"] [data-add-column="${name}"]`;
+				const open = async (name) => {
+					await page.click(`.vlist[data-path="${name}"] [data-add-column-toggle]`);
+					await page.waitForSelector(form(name), { timeout: 5_000 });
+				};
+				const fill = async (selector, text) => {
+					await page.focus(selector);
+					await page.$eval(selector, (input) => input.select());
+					await page.keyboard.type(text);
+				};
+				const refusal = () =>
+					page.evaluate((selector) => {
+						const root = document.querySelector(selector);
+						return {
+							error: root?.querySelector(".err")?.textContent ?? "",
+							disabled: Boolean(root?.querySelector('button[type="submit"]')?.disabled),
+						};
+					}, form("Panel_Cols"));
+
+				await fetch(DATA, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ Panel_Cols: ["Anna Reed", "Peter Holt"], Panel_Blank: [""] }),
+				});
+				await sleep(700);
+
+				await open("Panel_Cols");
+				const nameInput = `${form("Panel_Cols")} [data-column-name]`;
+				const valueInput = `${form("Panel_Cols")} [data-value-column]`;
+				const askedForValues = Boolean(await page.$(valueInput));
+				await fill(valueInput, "Name");
+				await fill(nameInput, "Role");
+				await page.keyboard.press("Enter");
+				await sleep(700);
+				const table = await stored("Panel_Cols");
+				check(
+					"control.html: a column added to a list of plain values makes a table that keeps the values",
+					askedForValues &&
+						JSON.stringify(table) ===
+							JSON.stringify([
+								{ Name: "Anna Reed", Role: "" },
+								{ Name: "Peter Holt", Role: "" },
+							]),
+					JSON.stringify({ askedForValues, table }),
+				);
+				const shown = await page.evaluate(() => ({
+					head: [
+						...document.querySelectorAll('.vlist[data-path="Panel_Cols"] .vlist__row--head .mono'),
+					].map((cell) => cell.textContent),
+					role: document.querySelectorAll('input[data-array="Panel_Cols"][data-leaf="Role"]').length,
+				}));
+				check(
+					"control.html: the new column is shown as a column of the list",
+					shown.head.join("|") === "Name|Role" && shown.role === 2,
+					JSON.stringify(shown),
+				);
+
+				// The form stays for the next column and refuses names that cannot be one.
+				await fill(nameInput, "Role");
+				const duplicate = await refusal();
+				await fill(nameInput, "a.b");
+				const dotted = await refusal();
+				check(
+					"control.html: a column that exists, or a name with a dot, is refused",
+					duplicate.error !== "" && duplicate.disabled && dotted.error !== "" && dotted.disabled,
+					JSON.stringify({ duplicate, dotted }),
+				);
+				await fill(nameInput, "City");
+				await page.keyboard.press("Enter");
+				await sleep(700);
+				const wider = await stored("Panel_Cols");
+				await page.screenshot({
+					path: path.join(outDir, "control-list-columns.png"),
+					fullPage: false,
+				});
+				await page.keyboard.press("Escape");
+				await sleep(200);
+				const closed = !(await page.$(form("Panel_Cols")));
+				check(
+					"control.html: a second column goes into every row, and Escape closes the form",
+					Array.isArray(wider) &&
+						wider.every((entry) => entry.City === "" && entry.Role === "") &&
+						closed,
+					JSON.stringify({ wider, closed }),
+				);
+
+				// A list of empty values has nothing to keep: it just gets the column.
+				await open("Panel_Blank");
+				const blankAsked = Boolean(await page.$(`${form("Panel_Blank")} [data-value-column]`));
+				await fill(`${form("Panel_Blank")} [data-column-name]`, "Name");
+				await page.keyboard.press("Enter");
+				await sleep(700);
+				const blank = await stored("Panel_Blank");
+				check(
+					"control.html: a list of empty values just gets the column",
+					!blankAsked && JSON.stringify(blank) === JSON.stringify([{ Name: "" }]),
+					JSON.stringify({ blankAsked, blank }),
+				);
+
+				for (const name of ["Panel_Cols", "Panel_Blank"]) {
+					await fetch(`${DATA}/${name}`, { method: "DELETE" });
+				}
+				await sleep(400);
 			}
 
 			if (panel.excelData) {

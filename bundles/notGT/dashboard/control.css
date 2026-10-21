@@ -326,6 +326,19 @@
 	gap: 8px;
 }
 
+/* Names a new column, under the list's head. */
+.vlist__tool {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 2px 0 8px;
+}
+
+.vlist__tool .vlist__pair {
+	grid-template-columns: auto minmax(0, 12rem);
+	justify-content: start;
+}
+
 /* ------------------------------------------------------------------ timers */
 
 .tmr {

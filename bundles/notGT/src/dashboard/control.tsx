@@ -532,6 +532,93 @@ function tableColumns(list: unknown[]): string[] | null {
 	return columns.length > 0 && columns.length <= MAX_TABLE_COLUMNS ? columns : null;
 }
 
+/** A row that is a value of its own, not fields: a table keeps it in a column. */
+function holdsValue(row: unknown): boolean {
+	return row !== null && row !== undefined && row !== "" && typeof row !== "object";
+}
+
+/** Why `name` cannot be a new column of `list`; empty when it can. */
+function columnProblem(name: string, list: unknown[]): string {
+	if (/[.[\]{}]/.test(name)) return t("A column name cannot contain . [ ] { }");
+	if (list.some((row) => isPlainObject(row) && Object.prototype.hasOwnProperty.call(row, name))) {
+		return t("There is already a column “{name}”", { name });
+	}
+	return "";
+}
+
+/**
+ * Names a new column of a list. A list of plain values — what “Turn into a
+ * list” makes — becomes a table, so its values get a column of their own.
+ */
+function AddColumn({ path, list, onClose }: { path: string; list: unknown[]; onClose: () => void }) {
+	const [name, setName] = useState("");
+	const [valueName, setValueName] = useState("value");
+	const keepsValues = list.some(holdsValue);
+	const field = name.trim();
+	const valueField = valueName.trim();
+	const problem =
+		(field ? columnProblem(field, list) : "") ||
+		(keepsValues && valueField ? columnProblem(valueField, list) : "") ||
+		(keepsValues && field && field === valueField ? t("The two columns need different names") : "");
+	const ready = Boolean(field) && (!keepsValues || Boolean(valueField)) && !problem;
+
+	return (
+		<form
+			className="vlist__tool"
+			data-add-column={path}
+			onSubmit={(event) => {
+				event.preventDefault();
+				if (!ready) return;
+				addArrayColumn(path, field, valueField);
+				// The form stays for the next column.
+				setName("");
+			}}
+			onKeyDown={(event) => {
+				if (event.key === "Escape") onClose();
+			}}
+		>
+			<div className="row">
+				<input
+					autoFocus
+					className="mono"
+					aria-label={t("Name of the new column")}
+					placeholder={t("Name of the new column")}
+					value={name}
+					onChange={(event) => setName(event.target.value)}
+					data-column-name
+				/>
+				<button type="submit" className="primary small" disabled={!ready}>
+					{t("Add")}
+				</button>
+				<button type="button" className="ghost small" onClick={onClose}>
+					{t("Cancel")}
+				</button>
+			</div>
+			{keepsValues ? (
+				<label className="vlist__pair">
+					<span className="muted">{t("The values already in the list go to the column")}</span>
+					<input
+						className="mono"
+						value={valueName}
+						onChange={(event) => setValueName(event.target.value)}
+						data-value-column
+					/>
+				</label>
+			) : null}
+			{problem ? (
+				<div className="err">{problem}</div>
+			) : keepsValues && valueField ? (
+				<div className="hint">
+					{t("A title that shows {{{path}}} will then need {{{path}.{column}}}", {
+						path,
+						column: valueField,
+					})}
+				</div>
+			) : null}
+		</form>
+	);
+}
+
 function ListRow({
 	path,
 	index,
@@ -657,21 +744,13 @@ function ListBlock({
 	const list = row.value as unknown[];
 	const current = chosenIndex(list.length, selection[row.path]);
 	const columns = useMemo(() => tableColumns(list), [list]);
+	const [addingColumn, setAddingColumn] = useState(false);
 
 	const menu: MenuItem[] = [
-		{
-			label: t("Add a column"),
-			icon: "plus",
-			onSelect: () => {
-				const name = window.prompt(t("Name of the new column"));
-				if (name) addArrayColumn(row.path, name);
-			},
-		},
 		{
 			label: t("Delete list"),
 			icon: "trash",
 			danger: true,
-			separated: true,
 			onSelect: () => removeDataValue(row.path),
 		},
 	];
@@ -706,8 +785,23 @@ function ListBlock({
 					<Icon name="plus" size={14} />
 					{t("Row")}
 				</button>
+				<button
+					type="button"
+					className={`ghost small ctl-add${addingColumn ? " is-on" : ""}`}
+					aria-expanded={addingColumn}
+					title={t("A new field in every row")}
+					onClick={() => setAddingColumn((value) => !value)}
+					data-add-column-toggle
+				>
+					<Icon name="plus" size={14} />
+					{t("Column")}
+				</button>
 				<Menu items={menu} label={t("Actions: {name}", { name: row.path })} />
 			</div>
+
+			{addingColumn ? (
+				<AddColumn path={row.path} list={list} onClose={() => setAddingColumn(false)} />
+			) : null}
 
 			{list.length === 0 ? (
 				<div className="hint">{t("The list is empty. Add a row and it becomes the chosen one.")}</div>

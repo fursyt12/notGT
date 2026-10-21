@@ -531,17 +531,23 @@ export function setArrayItem(path: string, index: number, value: unknown): void 
 }
 
 /**
- * Gives every row of a list of records a new field, empty. Rows that are not
- * records are left alone.
+ * Gives every row of a list a new field, empty. A row that is a plain value
+ * becomes a record: the value moves into `valueColumn`, or is dropped when it
+ * is empty. Rows that are lists themselves are left alone.
  */
-export function addArrayColumn(path: string, name: string): void {
+export function addArrayColumn(path: string, name: string, valueColumn = "value"): void {
 	const field = name.trim();
 	if (!field) return;
-	const list = readArray(path).map((row) =>
-		row !== null && typeof row === "object" && !Array.isArray(row) && !(field in row)
-			? { ...(row as Record<string, unknown>), [field]: "" }
-			: row,
-	);
+	const list = readArray(path).map((row) => {
+		if (Array.isArray(row)) return row;
+		if (row !== null && typeof row === "object") {
+			return Object.prototype.hasOwnProperty.call(row, field)
+				? row
+				: { ...(row as Record<string, unknown>), [field]: "" };
+		}
+		if (row === "" || row === null || row === undefined) return { [field]: "" };
+		return field === valueColumn ? { [field]: row } : { [valueColumn]: row, [field]: "" };
+	});
 	writeArray(path, list.length > 0 ? list : [{ [field]: "" }]);
 }
 

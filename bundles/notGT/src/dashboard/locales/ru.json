@@ -391,7 +391,6 @@
 	"The file can no longer be read as a workbook.": "Файл больше не читается как книга.",
 	"Workbooks": "Книги",
 	"Mirrors the sheet “{sheet}” of {file}": "Повторяет лист «{sheet}» книги {file}",
-	"Add a column": "Добавить столбец",
 	"Name of the new column": "Название нового столбца",
 	"Group name": "Название группы",
 	"Delete group": "Удалить группу",
@@ -552,5 +551,13 @@
 	"The animation is {box} and the out {out}: its code is drawn in a {box} frame and scaled to fit.": "Анимация {box}, а out {out}: её код рисуется в кадре {box} и масштабируется под out.",
 	"Make the animation {out}": "Сделать анимацию {out}",
 	"Its frame becomes the size of the out, and it covers the whole out: position 0, scale 1, no crop or bounds.": "Её кадр станет размером с out, и она займёт весь out: положение 0, масштаб 1, без обрезки и границ.",
-	"The animation is now {size}": "Теперь анимация {size}"
+	"The animation is now {size}": "Теперь анимация {size}",
+	"Column": "Столбец",
+	"A new field in every row": "Новое поле в каждой строке",
+	"Cancel": "Отмена",
+	"The values already in the list go to the column": "Значения, которые уже есть в списке, перейдут в столбец",
+	"A title that shows {{{path}}} will then need {{{path}.{column}}}": "Титру, который показывает {{{path}}}, тогда понадобится {{{path}.{column}}}",
+	"A column name cannot contain . [ ] { }": "В названии столбца не может быть . [ ] { }",
+	"There is already a column “{name}”": "Столбец «{name}» уже есть",
+	"The two columns need different names": "Столбцам нужны разные названия"
 }
