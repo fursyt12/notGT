@@ -205,14 +205,14 @@ checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "notgt-spout-core"
-version = "0.15.5"
+version = "0.15.6"
 dependencies = [
  "windows",
 ]
 
 [[package]]
 name = "notgt-spout-native"
-version = "0.15.5"
+version = "0.15.6"
 dependencies = [
  "napi",
  "napi-build",

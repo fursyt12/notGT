@@ -1,6 +1,6 @@
 {
 	"name": "notgt-spout",
-	"version": "0.15.5",
+	"version": "0.15.6",
 	"private": true,
 	"description": "notGT Spout library: shares an out as a Spout 2 sender on Windows, for the notGT sender in ../ndi.",
 	"license": "MIT",
