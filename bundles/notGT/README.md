@@ -1892,6 +1892,9 @@ The prompt describes the runtime contract, so the model does not invent its own:
 - no network, forms or `localStorage`;
 - the title animates its own entrance and exit through `onShow` / `onHide` — the phase
   contract described in [“Transitions”](#transitions-entrance-and-exit);
+- only `transform` and `opacity` are animated: on the Spout/NDI outputs (Electron
+  offscreen) `clip-path`, `mask` and `filter` animations get dropped, so a wipe slides a
+  child inside a static `overflow: hidden` wrapper;
 - brand values go into CSS variables at the top of `code.css`;
 - the answer contains three code blocks and a legend of variables, ready to be created in
   Control.

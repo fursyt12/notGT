@@ -4,7 +4,8 @@ code.html, code.css, code.js. The code must work as a whole: it animates its
 own entrance, what happens while it is on air, and its exit (see PHASES).
 It renders inside a sandboxed iframe
 (sandbox="allow-scripts allow-same-origin") embedded in an animation
-slot, composited over video in OBS.
+slot: composited over video in OBS, or drawn offscreen by Electron and
+sent out through Spout/NDI.
 
 HARD RUNTIME RULES (do not break these):
 
@@ -65,6 +66,10 @@ HARD RUNTIME RULES (do not break these):
 
 9. No <form> elements, no fetch/XHR to third-party domains, no
    localStorage — the title must be a clean, self-contained fragment.
+
+10. Animate ONLY transform (translate, scale, rotate) and opacity. Never
+    animate clip-path, mask, mask-image or filter: on the Spout/NDI
+    outputs such animations get dropped (see SAFE ANIMATION).
 
 TIMERS (when the title shows a countdown, a stopwatch or a clock of the show)
 
@@ -176,7 +181,7 @@ onShow(() => {
   apply(true);                        // letters / lines fly in
   anims.push($('card').animate(
     [{ opacity: 0, transform: 'translateY(6%)' }, { opacity: 1, transform: 'none' }],
-    { duration: 380, easing: EASE }
+    { duration: 380, easing: EASE, fill: 'backwards' }
   ));
   // particles / pulsing elements live while the title is on air
 });
@@ -194,6 +199,63 @@ onHide(() => {
 }, 600);                              // the same number goes into "exit, ms"
 ```
 
+SAFE ANIMATION (what survives the Spout / NDI outputs)
+
+Besides OBS, notGT sends titles out through Spout and NDI. There a title is drawn by
+Electron's offscreen renderer, which re-rasterises clip-path, mask and filter animations
+on the main thread every frame and intermittently drops or skips them on the first show.
+The visible result: a left-to-right wipe of a card, a pill or a slogan does not play at
+all, while opacity and transform on the same title play fine. A regular browser and
+headless Chromium show such a title correctly, so it cannot be caught there — follow the
+rules instead:
+
+- **Animate only `transform` (translate, scale, rotate) and `opacity`.** They run on the
+  compositor and are stable offscreen. Never animate `clip-path`, `mask`, `mask-image` or
+  `filter`, neither with `element.animate` nor with a CSS `transition` / `@keyframes`. A
+  static `clip-path` (a slanted edge that never changes) is fine.
+- **Wipe / reveal:** put the element inside a static wrapper with `overflow: hidden` (and
+  `border-radius` if needed) and slide the child `translateX(-100%)` → `0` (or
+  `translateY`). The wrapper itself is never animated. The exit is the same in reverse.
+- **A line or bar growing:** `transform: scaleX(0)` → `scaleX(1)` with
+  `transform-origin: left center`.
+- **A pill or text fading in:** `translateX(-16%)` → `0` together with `opacity` 0 → 1.
+- Give the elements that slide `will-change: transform`.
+- **Shadows:** a separate static layer (`box-shadow` on an element of its own) of which
+  only the `opacity` is faded. No `filter: drop-shadow` on an element with animated
+  children.
+- **Font size from JS** (for example when a long name is shrunk to fit): never absolute
+  `px`. Use `calc(var(--fs-name) * k)` or a `vw` value: an output window can be rescaled
+  at run time (the side screens are redrawn at 2×), and `px` does not follow.
+- **A stalled first frame:** the first show after the app starts can stall. Give every
+  entrance animation `fill: 'backwards'`, so its elements wait in the first keyframe. If
+  needed, add a short warm-up: create the animations at once but release them a moment
+  later (a common `delay` of about 100 ms, or `pause()` and then `play()` after two
+  `requestAnimationFrame`s).
+
+A wipe done this way:
+
+```html
+<div class="wipe"><div class="card" id="card">…</div></div>
+```
+
+```css
+.wipe { overflow: hidden; border-radius: var(--brand-radius); }  /* static: never animated */
+.card { will-change: transform; }
+```
+
+```js
+// in onShow
+anims.push($('card').animate(
+  [{ transform: 'translateX(-100%)' }, { transform: 'none' }],
+  { duration: 520, easing: EASE, fill: 'backwards' }
+));
+// in onHide
+all.push($('card').animate(
+  [{ transform: 'none' }, { transform: 'translateX(-100%)' }],
+  { duration: 300, easing: 'ease-in', fill: 'forwards' }
+));
+```
+
 SELF-CHECK BEFORE ANSWERING
 
 - `code.js` has both `onShow` and `onHide`, registered at the top level;
@@ -206,7 +268,11 @@ SELF-CHECK BEFORE ANSWERING
 - the background is transparent, the layout is in percent, and there are no external
   requests;
 - a title that shows a notGT timer reads it through `timer()` / `data-bind` in `onData`,
-  with no `setInterval` of its own, and its digits are `tabular-nums`.
+  with no `setInterval` of its own, and its digits are `tabular-nums`;
+- only `transform` and `opacity` are animated: no `clip-path`, `mask`, `mask-image` or
+  `filter` in any keyframe or transition; a wipe slides a child inside a static
+  `overflow: hidden` wrapper;
+- every entrance animation has `fill: 'backwards'`, and JS never sets a font size in `px`.
 
 REQUIRED OUTPUT FORMAT:
 Reply with exactly three labeled code blocks:
