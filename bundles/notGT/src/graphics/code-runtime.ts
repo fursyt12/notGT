@@ -207,6 +207,8 @@ const FONTS = `<link rel="stylesheet" href="/bundles/${BUNDLE_NAME}/graphics/fon
 export function buildCodeDocument(
 	template: TitleTemplate,
 	data: TitleData,
+	/** Runs before anything else in the document (a render's clock). */
+	prelude = "",
 ): string {
 	const code = template.code ?? { html: "", css: "", js: "" };
 	const html = interpolate(code.html, data);
@@ -215,7 +217,7 @@ export function buildCodeDocument(
 <html lang="en">
 <head>
 <meta charset="utf-8">
-${FONTS}
+${prelude ? `<script>${prelude}</script>\n` : ""}${FONTS}
 <style>${BASE_CSS}
 ${css}</style>
 </head>
@@ -251,6 +253,7 @@ export function interpolateMarkup(html: string, data: TitleData): string {
 export async function buildSourcedDocument(
 	src: string,
 	data: TitleData,
+	prelude = "",
 ): Promise<string> {
 	const url = new URL(src, window.location.origin);
 	const response = await fetch(url.href, { credentials: "same-origin" });
@@ -260,6 +263,7 @@ export async function buildSourcedDocument(
 	const text = interpolateMarkup(await response.text(), data);
 	const baseHref = url.href.slice(0, url.href.lastIndexOf("/") + 1);
 	const injection =
+		(prelude ? `<script>${prelude}</script>` : "") +
 		`<base href="${baseHref}">` +
 		FONTS +
 		`<style>${BASE_CSS}</style>` +

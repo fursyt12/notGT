@@ -414,6 +414,7 @@ function assertBuildOutputs() {
 		path.join(REPO_ROOT, "index.js"),
 		path.join(REPO_ROOT, "package.json"),
 		path.join(BUNDLE_DIR, "extension", "index.js"),
+		path.join(BUNDLE_DIR, "extension", "render-worker.js"),
 		path.join(BUNDLE_DIR, "dashboard", "assets"),
 		path.join(BUNDLE_DIR, "graphics", "assets"),
 	];

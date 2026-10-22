@@ -6,6 +6,7 @@ import { createAccess, type Handler } from "./auth";
 import { createMediaRouter } from "./media";
 import { createNdiHub, keepNdiKeyFile } from "./ndi";
 import { createProjectRouter } from "./project";
+import { createRenderRouter } from "./render";
 import { probeDurationMs } from "./video-duration";
 import { syncFileAnimations } from "./file-animations";
 import { createSources } from "./sources";
@@ -67,6 +68,8 @@ export default function notGTExtension(nodecg: ServerAPI): {
 	// it does not list itself, and about the keys of the OBS links: such a key
 	// opens the page of its out (and the files that page loads), read-only.
 	const graphics = `/bundles/${BUNDLE_NAME}/graphics/`;
+	// The keys of the renderer's own browser, for as long as a render runs.
+	const renderKeys = new Set<string>();
 	(
 		nodecg.util as unknown as {
 			setAccessProvider?(provider: unknown): void;
@@ -76,6 +79,14 @@ export default function notGTExtension(nodecg: ServerAPI): {
 		hasUser: (username: string) => team.hasUser(username),
 		defaultSignIn: () => team.defaultSignIn(),
 		findKey: (key: string) => {
+			if (renderKeys.has(key)) {
+				return {
+					allows: ({ path: requested }: { path: string }) =>
+						requested.startsWith(graphics) || requested.startsWith("/assets/"),
+					sends: ({ bundleName, messageName }: { bundleName: string; messageName: string }) =>
+						bundleName === BUNDLE_NAME && messageName === MESSAGES.clock,
+				};
+			}
 			const outId = team.findOut(key);
 			if (!outId) return undefined;
 			return {
@@ -167,6 +178,16 @@ export default function notGTExtension(nodecg: ServerAPI): {
 				scheduler.stopOut(null);
 				store.hide();
 			},
+		}),
+	);
+
+	// An animation rendered into a video file with alpha, from the Editor.
+	mount(
+		`/bundles/${BUNDLE_NAME}/render`,
+		createRenderRouter(nodecg, store, {
+			rendersDir: path.join(assetsRoot, BUNDLE_NAME, "renders"),
+			sessionCheck: nodecg.util.authCheck as unknown as Handler,
+			keys: renderKeys,
 		}),
 	);
 

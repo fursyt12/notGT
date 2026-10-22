@@ -34,6 +34,7 @@ import {
 	withoutTimers,
 } from "../shared/timer";
 import { phaseMs } from "../shared/motion";
+import { RENDER_CLOCK_PRELUDE } from "../shared/render";
 import {
 	CODE_HOOKS_TIMEOUT_MS,
 	buildCodeDocument,
@@ -105,6 +106,15 @@ const debugEl = document.getElementById("notgt-debug") as HTMLDivElement;
 const params = new URLSearchParams(window.location.search);
 const debug = params.has("debug");
 const explicitOut = params.get("out");
+/**
+ * Render mode (`?render=<templateId>`): instead of what an out plays, the page
+ * shows that one animation alone at 0,0 when extension/render.ts says so
+ * through `window.__notgtRender`, while the renderer moves its clock one
+ * frame at a time.
+ */
+const renderId = params.get("render");
+let renderOn = false;
+let renderPlays = 0;
 
 const nodecg = getNodecg();
 const templatesRep = nodecg.Replicant<TitleTemplate[]>(
@@ -207,7 +217,28 @@ function mergedData(): TitleData {
 	return merged;
 }
 
+/** Render mode: the one animation, alone at 0,0, while the renderer shows it. */
+function renderInstances(): Instance[] {
+	const template = templates().find((candidate) => candidate.id === renderId);
+	if (!renderOn || !template) return [];
+	return [
+		{
+			key: "render",
+			templateId: template.id,
+			x: 0,
+			y: 0,
+			scale: 1,
+			trigger: renderPlays,
+			data: withTimers(baseData(), timers(), clock.now()),
+			crop: null,
+			outW: template.width,
+			outH: template.height,
+		},
+	];
+}
+
 function computeInstances(out: Out | undefined): Instance[] {
+	if (renderId !== null) return renderInstances();
 	const list: Instance[] = [];
 	if (!out) return list;
 	// Every title reads the timers as `timer.<key>.*`, worked out right now.
@@ -396,7 +427,7 @@ function setupCodeIframe(
 	if (codeSource(template) !== "file" || !template.code?.src) {
 		// A list is down to its selected element from the first frame, as
 		// `vars()` sees it later; that much need not be posted again on load.
-		iframe.srcdoc = buildCodeDocument(template, codeData(data));
+		iframe.srcdoc = buildCodeDocument(template, codeData(data), codePrelude());
 		slot.posted = JSON.stringify(codeData(slot.usesTimers ? data : withoutTimers(data)));
 		slot.box.appendChild(iframe);
 		return;
@@ -405,7 +436,7 @@ function setupCodeIframe(
 	slot.box.appendChild(iframe);
 	{
 		const src = template.code.src;
-		buildSourcedDocument(src, codeData(data))
+		buildSourcedDocument(src, codeData(data), codePrelude())
 			.then((document) => {
 				if (slot.iframe === iframe && slot.renderToken === token) {
 					slot.usesTimers = codeUsesTimers(document);
@@ -422,6 +453,11 @@ function setupCodeIframe(
 				}
 			});
 	}
+}
+
+/** On a render, a code animation's frame shares the page's stepped clock. */
+function codePrelude(): string {
+	return renderId !== null ? RENDER_CLOCK_PRELUDE : "";
 }
 
 function rebuildSlot(slot: Slot, template: TitleTemplate, data: TitleData): void {
@@ -748,6 +784,28 @@ function updateDebug(out: Out | undefined, desired: Instance[]): void {
 	debugEl.textContent = lines.join("\n");
 }
 
+/** What extension/render.ts drives the page with in render mode. */
+function exposeRenderControl(): void {
+	const control = {
+		ready: true,
+		hasTemplate: () => templates().some((template) => template.id === renderId),
+		show: () => {
+			renderOn = true;
+			renderPlays += 1;
+			render();
+		},
+		hide: () => {
+			renderOn = false;
+			render();
+		},
+		/** Every code animation's frame has loaded. */
+		loaded: () => [...slots.values()].every((slot) => !slot.iframe || slot.iframeReady),
+		/** Something is still on screen: coming in, held or going. */
+		onAir: () => stage.childElementCount > 0,
+	};
+	(window as unknown as { __notgtRender?: typeof control }).__notgtRender = control;
+}
+
 // --------------------------------------------------------------------- wiring
 
 templatesRep.on("change", scheduleRender);
@@ -789,7 +847,7 @@ void waitForReplicants(
 	selectionRep,
 	timersRep,
 ).then(() => {
-	if (!outConfig()) {
+	if (renderId === null && !outConfig()) {
 		console.warn(
 			`[notGT] No out matching "${explicitOut ?? "(first out)"}". ` +
 				"Create one in the notGT — Titles & Outs panel.",
@@ -797,6 +855,7 @@ void waitForReplicants(
 	}
 
 	render();
+	if (renderId !== null) exposeRenderControl();
 	syncClock();
 	window.setInterval(syncClock, 60_000);
 	tickTimers();

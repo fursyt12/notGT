@@ -100,10 +100,17 @@ WORKDIR /opt/nodecg
 # WebM/WebP with alpha). Build with --build-arg INSTALL_FFMPEG=false to skip it;
 # the editor then reports that server-side conversion is unavailable.
 ARG INSTALL_FFMPEG=true
+# Chromium draws the frames when the Editor renders an animation to a video
+# file with alpha (WebM, ProRes 4444, DXV3). --build-arg INSTALL_CHROMIUM=false
+# leaves it out (about 300 MB); the Render dialog then says it is missing.
+ARG INSTALL_CHROMIUM=true
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends git \
+	&& apt-get install -y --no-install-recommends git tini \
 	&& if [ "$INSTALL_FFMPEG" = "true" ]; then \
 		apt-get install -y --no-install-recommends ffmpeg; \
+	fi \
+	&& if [ "$INSTALL_CHROMIUM" = "true" ]; then \
+		apt-get install -y --no-install-recommends chromium fonts-dejavu-core; \
 	fi \
 	&& rm -rf /var/lib/apt/lists/*
 
@@ -128,4 +135,8 @@ EXPOSE 9090/tcp
 
 # Define command to run NodeCG
 # Using `node` directly is slightly faster than using `nodecg start`.
+# tini is PID 1: it reaps what a render's browser leaves behind (its crash
+# reporter detaches), which Node as PID 1 would keep as zombies. `docker stop`
+# reaches Node as before, and NodeCG shuts down on it.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "/opt/nodecg/index.js"]

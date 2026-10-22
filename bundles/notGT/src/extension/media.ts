@@ -1,10 +1,10 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 import { newId } from "../shared/types";
 import type { ApiRequest, ApiResponse, Handler, NextFn } from "./auth";
-import { mediaToolEnv } from "./media-tools";
+import { ffmpegAvailable, mediaToolEnv } from "./media-tools";
 import type { ServerAPI } from "./store";
 
 interface Router {
@@ -73,11 +73,6 @@ function fileSize(file: string): number {
 	} catch {
 		return 0;
 	}
-}
-
-function ffmpegAvailable(): boolean {
-	const res = spawnSync("ffmpeg", ["-version"], { stdio: "ignore", env: mediaToolEnv() });
-	return res.status === 0;
 }
 
 /**

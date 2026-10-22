@@ -3,6 +3,7 @@
  * notGT build pipeline.
  *
  *  - `src/extension/**.ts`  -> `extension/index.js`            (CommonJS, bundled by esbuild)
+ *    and `extension/render-worker.js` (the renderer's DXV encoder, run in worker threads)
  *  - `src/dashboard/**.tsx` -> `dashboard/assets/*.js`         (ES modules, bundled by Vite)
  *  - `src/graphics/**.ts`   -> `graphics/assets/*.js`          (ES modules, bundled by Vite)
  *
@@ -24,8 +25,11 @@ const SRC = (...p) => path.join(bundleDir, "src", ...p);
 
 async function buildExtension() {
 	const options = {
-		entryPoints: [SRC("extension", "index.ts")],
-		outfile: path.join(bundleDir, "extension", "index.js"),
+		entryPoints: {
+			index: SRC("extension", "index.ts"),
+			"render-worker": SRC("extension", "render-worker.ts"),
+		},
+		outdir: path.join(bundleDir, "extension"),
 		bundle: true,
 		platform: "node",
 		target: "node20",

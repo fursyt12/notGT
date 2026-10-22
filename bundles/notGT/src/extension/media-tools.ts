@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -14,4 +15,10 @@ export function mediaToolEnv(): NodeJS.ProcessEnv {
 	const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
 	const current = process.env[key];
 	return { ...process.env, [key]: current ? `${dir}${path.delimiter}${current}` : dir };
+}
+
+/** ffmpeg runs here: the upload conversion and the renders need it. */
+export function ffmpegAvailable(): boolean {
+	const res = spawnSync("ffmpeg", ["-version"], { stdio: "ignore", env: mediaToolEnv() });
+	return res.status === 0;
 }

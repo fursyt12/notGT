@@ -5,5 +5,7 @@ node_modules/
 # gitignored for the same reason).
 /extension/index.js
 /extension/index.js.map
+/extension/render-worker.js
+/extension/render-worker.js.map
 /dashboard/assets/
 /graphics/assets/

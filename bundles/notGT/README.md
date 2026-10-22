@@ -420,6 +420,8 @@ draw it.
   same “On air” switch Control has (the button turns into **`Take off air`**). Unsaved
   edits are saved first. For an animation that is not on this out, the manual show is
   used.
+- **`Render`** makes a video file with an alpha channel of the animation (see
+  [Render to a video file](#render-to-a-video-file)).
 - **`Save`** writes the edits to layers and the template; while something is unsaved,
   “Unsaved” is shown next to it. Placements apply at once, without saving: a drag must
   never be lost.
@@ -514,6 +516,32 @@ HTML / CSS / JavaScript, a “Reference” for the runtime, and a preview of the
 its own with a “Replay” button (plays the entrance again). The live preview is also drawn
 right on the canvas, where the placement is (or in the centre, if the template is not on
 this out yet). The arrow on the right folds the dock away.
+
+#### Render to a video file
+
+**`Render`** in the toolbar turns the active animation into a video file with an alpha
+channel: its entrance, the time on screen you set, then its exit — drawn exactly as the out
+page draws it, with the variables as they are now (the selected row of every list).
+
+| Format | Codec | For |
+|---|---|---|
+| **WebM · VP9** | VP9, `yuva420p` | OBS, browsers, notGT's own video layers |
+| **MOV · ProRes 4444** | ProRes 4444 with alpha | editing: Premiere, DaVinci Resolve, Final Cut, After Effects |
+| **MOV · DXV3** | Resolume DXV3, DXT5 with premultiplied alpha | Resolume |
+
+Frame rate: 25, 30, 50 or 60. The render is made on the server, frame by frame on a
+stopped clock, so a slow machine makes it slower, never choppier; the toolbar button
+shows how far it is, also with the dialog closed. Unsaved edits are saved first. One
+render runs at a time, and **`Stop`** ends it. The finished file is offered for
+download and kept on the server (`assets/notGT/renders/`) for a day.
+
+- The server needs a **Chromium, Chrome or Edge** to draw the frames: the Docker image
+  has Chromium (`--build-arg INSTALL_CHROMIUM=false` leaves it out), Windows 10 and 11
+  have Edge, on a Mac install Chrome. `NOTGT_BROWSER` names another one.
+- WebM and ProRes are encoded by **ffmpeg** (in the Docker image; the Windows launcher
+  installs it). DXV3 is written by notGT itself — ffmpeg's DXV encoder has no alpha — and
+  stores each frame's texture uncompressed: about a byte per pixel per frame, 50 MB a
+  second at 1080p25.
 
 ### Team (`team.html`)
 

@@ -1289,3 +1289,67 @@ button.ed-danger:hover:not(:disabled) {
 		display: none;
 	}
 }
+
+/* ------------------------------------------------------------------ render */
+
+.ed-render {
+	width: min(460px, calc(100vw - 32px));
+	padding: 0;
+	border: 1px solid var(--ng-line);
+	border-radius: var(--ng-radius);
+	background: var(--ng-bg-2);
+	color: var(--ng-fg);
+	box-shadow: 0 18px 48px var(--ng-shadow);
+}
+
+.ed-render::backdrop {
+	background: rgba(0, 0, 0, 0.45);
+}
+
+.ed-render__body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 16px;
+}
+
+.ed-render__head {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-bottom: 4px;
+}
+
+.ed-render__row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.ed-render__label {
+	min-width: 7.5rem;
+	color: var(--ng-muted);
+}
+
+.ed-render__job {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 4px;
+}
+
+.ed-render__file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	color: var(--ng-accent-ink);
+}
+
+.ed-render__actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 6px;
+}

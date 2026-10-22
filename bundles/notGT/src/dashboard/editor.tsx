@@ -45,6 +45,7 @@ import { useCodeDocument, useTimerFeed } from "./editor/code-preview";
 import { TIMER_VAR, type Timer, layersUseTimers, timerPaths } from "../shared/timer";
 import { Splitter, useDeskFullscreen, useEditorLayout, type LayoutEdge } from "./editor/layout";
 import { MotionTimeline, TransitionFields } from "./editor/motion";
+import { RenderButton } from "./editor/render";
 import {
 	CheckField,
 	ColorField,
@@ -3046,6 +3047,12 @@ export function EditorApp() {
 					<Icon name="play" size={14} />
 					{t("Play")}
 				</button>
+				<RenderButton
+					template={draft ?? templates.find((candidate) => candidate.id === editingTemplateId) ?? null}
+					unsaved={dirty}
+					disabled={!canAct}
+					prepare={resolveForAction}
+				/>
 				<button
 					type="button"
 					className={`ed-air${onAir ? " is-live" : ""}`}
