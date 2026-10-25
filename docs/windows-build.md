@@ -15,6 +15,7 @@ assembled and how a release is cut.
 ```
 notGT-win-x64/
   notGT Launcher.exe      the launcher's window (mingw-w64; absent if not available)
+  notGT Karaoke.exe       lyrics of what Spotify plays, into notGT (mingw-w64; absent if not available)
   notGT.cmd               fallback bootstrap, always present
   launcher/
     index.mjs             what the window drives: NodeCG supervisor (spawns app/index.js)
@@ -119,11 +120,11 @@ LGPL is enough: the converter only needs VP9 (libvpx) and WebP (libwebp).
    caches the zip under `<out>/.cache/`, extracts it (`tar -xf` on Windows,
    `unzip` on Linux — GNU tar cannot read zip) and takes **only `node.exe`**
    and its licence into `node/`: nothing in the package runs npm or corepack.
-5. **Native launcher** — compiles the resources (icon, logo, manifest, version) with
-   `x86_64-w64-mingw32-windres` and `notGT Launcher.exe` with
+5. **Native programs** — compiles the resources (icon, logo, manifest, version) with
+   `x86_64-w64-mingw32-windres` and `notGT Launcher.exe` and `notGT Karaoke.exe` with
    `x86_64-w64-mingw32-gcc -O2 -municode -mwindows`. If mingw-w64 is missing
-   (typical on `windows-latest`) the `.exe` is skipped with a warning and
-   `notGT.cmd` is the entry point — it is fully functional on its own, but shows a
+   (typical on `windows-latest`) both are skipped with a warning: there is no karaoke
+   program then, and `notGT.cmd` is the entry point — it is fully functional on its own, but shows a
    console window and opens the control page in the browser instead of a window of
    its own. `MINGW_GCC` / `MINGW_WINDRES` name another compiler.
 6. **`README.txt`** and `notGT.cmd`.
@@ -254,6 +255,16 @@ state for 20 seconds ends by itself, so a window that crashed leaves nothing beh
 Two switches exist for it and for development: `--control-url http://127.0.0.1:<port>`
 attaches the window to a `launcher/index.mjs` that is already running, and
 `--snapshot <dir>` saves a picture of every window as `.bmp` and exits.
+
+## notGT Karaoke
+
+`notGT Karaoke.exe` sends the lyrics of what Spotify plays on this computer to notGT,
+line by line, for the «Караоке» example of the library. It is the launcher's sibling — the
+same look and the same kind of Win32 program in C — but stands on its own: it reads the
+track from Windows' media controls, finds synced lyrics on the internet and talks to
+notGT over the WebSocket API, so it can run on another computer than the server. Closing
+its window hides it in the notification area. See [`karaoke/README.md`](../karaoke/README.md);
+`scripts/e2e-karaoke.mjs` tests it under wine like the launcher's test does.
 
 ## The chosen interface, and why it is not the bind address
 

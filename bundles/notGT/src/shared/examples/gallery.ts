@@ -11,6 +11,7 @@ import { createCodeSampleTemplate, createDefaultTemplate } from "../defaults";
 import type { TimerFormat, TimerMode } from "../timer";
 import type { TemplateKind, TitleData, TitleTemplate } from "../types";
 import { createExampleTemplates } from "./index";
+import { karaokeExample } from "./karaoke";
 import { kineticExample } from "./kinetic";
 import { layerExamples } from "./layers";
 import { localizeExampleText } from "./localize";
@@ -171,6 +172,7 @@ export const GALLERY: GalleryExample[] = [
 	...layerExamples,
 	kineticExample,
 	pollExample,
+	karaokeExample,
 	ticker,
 	timerExample,
 	countdown,

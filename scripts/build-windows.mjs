@@ -6,6 +6,7 @@
  *
  *   notGT-win-x64/
  *     notGT Launcher.exe      native bootstrap (mingw, when available)
+ *     notGT Karaoke.exe       lyrics of what Spotify plays, into notGT (mingw, when available)
  *     notGT.cmd               fallback bootstrap (always works)
  *     launcher/index.mjs      control UI + server supervisor
  *     launcher/ui.html
@@ -67,6 +68,8 @@ const LAUNCHER_DIR = path.join(REPO_ROOT, "launcher");
 const NDI_DIR = path.join(REPO_ROOT, "ndi");
 const SPOUT_DIR = path.join(REPO_ROOT, "spout");
 const LAUNCHER_C_SRC = path.join(LAUNCHER_DIR, "win", "notGT-launcher.c");
+const KARAOKE_EXE_NAME = "notGT Karaoke.exe";
+const KARAOKE_C_SRC = path.join(REPO_ROOT, "karaoke", "win", "notGT-karaoke.c");
 /** The NodeCG server, relative to the root of an installed tree. */
 const SERVER_ENTRY = path.join(
 	"workspaces",
@@ -708,14 +711,20 @@ async function ensureNodeRuntime(destDir, version) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Native launcher + .cmd fallback
+// 5. Native programs (the launcher, the karaoke) + .cmd fallback
 // ---------------------------------------------------------------------------
 
-function buildLauncherExe() {
-	if (!exists(LAUNCHER_C_SRC)) {
-		warn(
-			`${path.relative(REPO_ROOT, LAUNCHER_C_SRC)} not found — skipping the .exe`,
-		);
+/** Win32 libraries every native program links. */
+const WIN32_LIBS = ["-lwinhttp", "-lgdiplus", "-lole32", "-lshell32", "-lgdi32", "-lcomctl32"];
+
+/**
+ * Compiles one native program of the package with mingw-w64: its resources
+ * (`rc`, next to `source`) with windres, then the program. `whenMissing` says
+ * what the package does without it. Returns whether it was built.
+ */
+function buildNativeExe({ exeName, source, rc, libs, whenMissing }) {
+	if (!exists(source)) {
+		warn(`${path.relative(REPO_ROOT, source)} not found — skipping "${exeName}"`);
 		return false;
 	}
 	const candidates = [];
@@ -725,7 +734,7 @@ function buildLauncherExe() {
 
 	// The icon, the logo, the manifest and the file's version are resources,
 	// compiled by windres — the one that comes with the same toolchain.
-	const winDir = path.dirname(LAUNCHER_C_SRC);
+	const winDir = path.dirname(source);
 	const version = JSON.parse(
 		fs.readFileSync(path.join(BUNDLE_DIR, "package.json"), "utf8"),
 	).version;
@@ -733,7 +742,7 @@ function buildLauncherExe() {
 		.slice(0, 4)
 		.map((part) => Number.parseInt(part, 10) || 0)
 		.join(",");
-	const resObject = path.join(CACHE_DIR, "launcher-res.o");
+	const resObject = path.join(CACHE_DIR, `${path.basename(rc, ".rc")}-res.o`);
 	fs.mkdirSync(CACHE_DIR, { recursive: true });
 	// The version goes in through a header rather than through -D: a quoted
 	// string does not survive cmd.exe, windres and the preprocessor it calls.
@@ -743,7 +752,7 @@ function buildLauncherExe() {
 		"utf8",
 	);
 
-	const outExe = path.join(PACKAGE_DIR, LAUNCHER_EXE_NAME);
+	const outExe = path.join(PACKAGE_DIR, exeName);
 	for (const cc of candidates) {
 		if (!commandExists(cc)) continue;
 		// windres under the compiler's own name; a native Windows toolchain
@@ -759,7 +768,7 @@ function buildLauncherExe() {
 			run(
 				windres,
 				[
-					path.join(winDir, "notGT-launcher.rc"),
+					path.join(winDir, rc),
 					"-I",
 					winDir,
 					"-I",
@@ -777,39 +786,43 @@ function buildLauncherExe() {
 			// Without them the program has no icon, no logo and no manifest
 			// (themed controls, DPI awareness): not something to ship quietly.
 			warn(
-				`windres is unavailable or failed for ${cc}: ${LAUNCHER_EXE_NAME} is not ` +
+				`windres is unavailable or failed for ${cc}: ${exeName} is not ` +
 					"built with this compiler.",
 			);
 			continue;
 		}
-		log(`Compiling ${LAUNCHER_EXE_NAME} with ${cc}…`);
+		log(`Compiling ${exeName} with ${cc}…`);
 		const ok = run(
 			cc,
-			[
-				"-O2",
-				"-municode",
-				"-mwindows",
-				"-o",
-				outExe,
-				LAUNCHER_C_SRC,
-				resObject,
-				"-lwinhttp",
-				"-lgdiplus",
-				"-lole32",
-				"-lshell32",
-				"-lgdi32",
-				"-lcomctl32",
-			],
+			["-O2", "-municode", "-mwindows", "-o", outExe, source, resObject, ...libs],
 			{ optional: true, label: cc },
 		);
 		if (ok && exists(outExe)) return true;
 		fs.rmSync(outExe, { force: true });
 	}
-	warn(
-		`mingw-w64 not found: "${LAUNCHER_EXE_NAME}" was NOT built. ` +
-			`The package still works via notGT.cmd (it opens a console window).`,
-	);
+	warn(`mingw-w64 not found: "${exeName}" was NOT built. ${whenMissing}`);
 	return false;
+}
+
+function buildLauncherExe() {
+	return buildNativeExe({
+		exeName: LAUNCHER_EXE_NAME,
+		source: LAUNCHER_C_SRC,
+		rc: "notGT-launcher.rc",
+		libs: WIN32_LIBS,
+		whenMissing: "The package still works via notGT.cmd (it opens a console window).",
+	});
+}
+
+/** notGT Karaoke (karaoke/win): the media controls, lyrics, and the WebSocket to notGT. */
+function buildKaraokeExe() {
+	return buildNativeExe({
+		exeName: KARAOKE_EXE_NAME,
+		source: KARAOKE_C_SRC,
+		rc: "notGT-karaoke.rc",
+		libs: [...WIN32_LIBS, "-lcrypt32"],
+		whenMissing: "The package has no karaoke program.",
+	});
 }
 
 function writeCmdFallback() {
@@ -1071,6 +1084,19 @@ function readmeText() {
 		"пропускать NDI (mDNS UDP 5353 и TCP с 5960) — NDI Tools обычно сам",
 		"добавляет правила.",
 		"",
+		"Караоке из Spotify",
+		"------------------",
+		"«notGT Karaoke.exe» берёт трек, который играет Spotify на этом",
+		"компьютере (Windows 10 1809 или новее), находит к нему синхронизированный",
+		"текст и передаёт в notGT строку, которую поют сейчас. В библиотеке есть",
+		"пример «Караоке», который её показывает: включите его в Control.",
+		"В окне впишите адрес notGT (по умолчанию localhost:9090) и, если сервер",
+		"его просит, ключ WebSocket (ключи — в панели, вкладка «Команда»).",
+		"Если текст разъезжается с музыкой, выберите другой вариант текста или",
+		"сдвиньте его кнопками — выбор запоминается для трека. Закрытие окна",
+		"прячет программу в область уведомлений; в меню значка те же кнопки и",
+		"«Выйти».",
+		"",
 		"Где что лежит",
 		"-------------",
 		"app\\cfg\\      — конфигурация. nodecg.json (host/port) и notGT.json",
@@ -1140,6 +1166,7 @@ function makeZip() {
 function printSummary(zipPath, exeBuilt) {
 	const shell = [
 		["notGT Launcher.exe", path.join(PACKAGE_DIR, LAUNCHER_EXE_NAME)],
+		["notGT Karaoke.exe", path.join(PACKAGE_DIR, KARAOKE_EXE_NAME)],
 		["notGT.cmd", path.join(PACKAGE_DIR, "notGT.cmd")],
 		["launcher/index.mjs", path.join(PACKAGE_DIR, "launcher", "index.mjs")],
 		["launcher/ui.html", path.join(PACKAGE_DIR, "launcher", "ui.html")],
@@ -1293,6 +1320,7 @@ async function main() {
 	} else log("--no-ndi: the NDI sender is left out");
 
 	const exeBuilt = buildLauncherExe();
+	buildKaraokeExe();
 	writeCmdFallback();
 	fs.writeFileSync(path.join(PACKAGE_DIR, "README.txt"), readmeText(), "utf8");
 

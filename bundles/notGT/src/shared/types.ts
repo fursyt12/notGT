@@ -53,9 +53,10 @@ export const REPLICANTS = {
  *   5 — the whole library was redrawn in the brand colours and fonts;
  *   6 — the file example is gone, and so are its sample variables;
  *   7 — timers: the timer example, the countdown redrawn to show a timer,
- *       and the timers they show.
+ *       and the timers they show;
+ *   8 — the karaoke example.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /**
  * How a spreadsheet is connected.

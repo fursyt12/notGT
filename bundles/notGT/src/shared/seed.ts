@@ -144,4 +144,4 @@ export function seedTimers(lang: ExampleLang, library: TitleTemplate[]): Example
 }
 
 /** Examples that came after the library was first seeded, by the schema version that added them. */
-export const ADDED_IN: Record<string, number> = { "example-timer": 7 };
+export const ADDED_IN: Record<string, number> = { "example-timer": 7, "example-karaoke": 8 };

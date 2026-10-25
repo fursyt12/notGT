@@ -442,7 +442,8 @@ export function createStore(nodecg: ServerAPI): Store {
 		// gallery part of it, v4 redrew the older code examples, v5 redrew
 		// all of them in the brand colours and fonts, v6 dropped the file
 		// example (its template goes with its file, in `syncFileAnimations`;
-		// its untouched sample variables go here). Add what this
+		// its untouched sample variables go here), v7 and v8 added the timer
+		// and the karaoke examples. Add what this
 		// installation is missing, with sample values for the variables it
 		// does not have, and bring the examples nobody edited up to date. An
 		// example the operator deleted on purpose is not resurrected, and one
