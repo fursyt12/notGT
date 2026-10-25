@@ -190,20 +190,56 @@ const dots = Array.from($("wait").children);
 
 $("tag").textContent = "__TAG__";
 
-let seq = null; // the frame the timing below comes from
-let base = 0; // ms into the line when that frame was sent
-let at = 0; // when it arrived (performance.now)
-let playing = false;
-let sing = 0; // ms the line is sung
-let dur = 0; // ms until the next line
-let shown = null; // the line on screen, and whether it was shown waiting
-let waiting = false; // between lines: the next one is shown, not sung
+// karaoke.delay, ms: the text runs this much later (below zero, earlier) than
+// its frames say. Set it live when the words and the music drift apart.
+let delay = 0;
+const frames = []; // the frames received and not yet passed, oldest first
+let seq = null; // the last frame received
+let frame = null; // the frame on screen
+let shown = null; // the line on screen: "wait:", "sing:" or "early:" and its text
+let shownAt = 0; // ms into that line at the last tick
 let words = []; // { el, from, to }: ms in the line (word timing) or letters (without)
 let timed = false; // the words carry their own time
 let letters = 0;
 
-function now() {
-  return playing ? base + (performance.now() - at) : base;
+const count = (text) => text.replace(/\s+/g, "").length;
+
+// ms into the frame's line now: since the frame came, less the delay. Paused,
+// the song stands where it stopped, and a text that runs early stays ahead.
+function elapsed() {
+  if (!frame.playing) return frame.pos + Math.max(0, -delay);
+  return frame.pos + (performance.now() - frame.at) - delay;
+}
+
+// What is on screen t ms into the frame's line: that line, or — when the text
+// runs early and the next line is due — the next one, ahead of its own frame,
+// filled at the pace of this one until its frame brings its timing.
+function view(f, t) {
+  const waiting = !f.cur && Boolean(f.next);
+  if (delay < 0 && f.playing && f.next && t >= f.dur) {
+    const pace = f.cur && f.sing > 0 ? count(f.cur) / f.sing : 0.014; // letters a ms
+    return {
+      key: "early:" + f.next,
+      text: f.next,
+      under: f.next2,
+      waiting: false,
+      t: t - f.dur,
+      sing: count(f.next) / pace,
+      dur: 0,
+      timing: "",
+    };
+  }
+  const text = waiting ? f.next : f.cur;
+  return {
+    key: (waiting ? "wait:" : "sing:") + text,
+    text,
+    under: waiting ? f.next2 : f.next,
+    waiting,
+    t,
+    sing: f.sing,
+    dur: f.dur,
+    timing: waiting ? "" : f.wt,
+  };
 }
 
 // The line as one span per word, so that each word can be filled on its own.
@@ -233,57 +269,71 @@ function build(text, timing, entrance) {
 }
 
 onData(() => {
-  const frame = vars("karaoke.seq");
-  if (frame === seq) return; // another variable changed
-  const before = shown === null ? 0 : now();
-  seq = frame;
-  base = Number(vars("karaoke.pos")) || 0;
-  at = performance.now();
-  playing = vars("karaoke.playing") === "1";
-  dur = Number(vars("karaoke.dur")) || 0;
-  sing = Number(vars("karaoke.sing")) || dur;
-
-  const artist = vars("karaoke.artist");
-  const title = vars("karaoke.title");
-  const cur = vars("karaoke.cur");
-  const next = vars("karaoke.next");
-  waiting = !cur && Boolean(next);
-  $("track").textContent = [artist, title].filter(Boolean).join(" — ");
-  root.classList.toggle("is-empty", (!artist && !title) || (!cur && !next));
-  root.classList.toggle("is-waiting", waiting);
-  root.classList.toggle("is-counting", waiting && dur >= 2500);
-  root.classList.toggle("is-paused", !playing);
-
-  // A new line: other text, the same words sung again (the position went back),
-  // or the line waited for that now begins (it stays, and gets its timing).
-  const text = waiting ? next : cur;
-  const key = (waiting ? "wait:" : "sing:") + text;
-  if (key !== shown || base + 300 < before) {
-    const begins = shown === "wait:" + text && !waiting;
-    shown = key;
-    build(text, waiting ? "" : vars("karaoke.wt"), !begins);
-    $("next").textContent = waiting ? vars("karaoke.next2") : next;
-  }
+  delay = Math.max(-10000, Math.min(10000, Number(vars("karaoke.delay")) || 0));
+  const id = vars("karaoke.seq");
+  if (id === seq) return; // another variable changed
+  seq = id;
+  const dur = Number(vars("karaoke.dur")) || 0;
+  frames.push({
+    at: performance.now(),
+    pos: Number(vars("karaoke.pos")) || 0,
+    playing: vars("karaoke.playing") === "1",
+    dur,
+    sing: Number(vars("karaoke.sing")) || dur,
+    artist: vars("karaoke.artist"),
+    title: vars("karaoke.title"),
+    cur: vars("karaoke.cur"),
+    next: vars("karaoke.next"),
+    next2: vars("karaoke.next2"),
+    wt: vars("karaoke.wt"),
+  });
 });
 
-function fill() {
-  const t = now();
-  if (waiting) {
-    // the dots go out one by one over the pause
-    const left = Math.max(0, dur - t);
-    dots.forEach((dot, i) => dot.classList.toggle("is-on", left > (dur * i) / dots.length));
-    for (const word of words) word.el.style.setProperty("--p", "0");
-  } else {
-    const sung = timed ? t : Math.min(1, t / Math.max(1, sing)) * letters;
-    for (const word of words) {
-      const p = Math.max(0, Math.min(1, (sung - word.from) / Math.max(1, word.to - word.from)));
-      const value = p.toFixed(3);
-      if (word.el.style.getPropertyValue("--p") !== value) word.el.style.setProperty("--p", value);
-    }
+function draw() {
+  const f = frame;
+  const v = view(f, elapsed());
+  const track = [f.artist, f.title].filter(Boolean).join(" — ");
+  if ($("track").textContent !== track) $("track").textContent = track;
+  root.classList.toggle("is-empty", (!f.artist && !f.title) || (!f.cur && !f.next));
+  root.classList.toggle("is-waiting", v.waiting);
+  root.classList.toggle("is-counting", v.waiting && v.dur >= 2500);
+  root.classList.toggle("is-paused", !f.playing);
+
+  // A new line: other text, the same words sung again (the position went back),
+  // or a line shown waiting or early that now begins (it stays, and gets its timing).
+  if (v.key !== shown || v.t + 300 < shownAt) {
+    const begins =
+      v.key !== shown && !v.waiting && (shown === "wait:" + v.text || shown === "early:" + v.text);
+    shown = v.key;
+    build(v.text, v.timing, !begins);
   }
-  requestAnimationFrame(fill);
+  shownAt = v.t;
+  if ($("next").textContent !== v.under) $("next").textContent = v.under;
+
+  if (v.waiting) {
+    // the dots go out one by one over the pause
+    const left = Math.max(0, v.dur - v.t);
+    dots.forEach((dot, i) => dot.classList.toggle("is-on", left > (v.dur * i) / dots.length));
+    for (const word of words) word.el.style.setProperty("--p", "0");
+    return;
+  }
+  const sung = timed ? v.t : Math.min(1, v.t / Math.max(1, v.sing)) * letters;
+  for (const word of words) {
+    const p = Math.max(0, Math.min(1, (sung - word.from) / Math.max(1, word.to - word.from)));
+    const value = p.toFixed(3);
+    if (word.el.style.getPropertyValue("--p") !== value) word.el.style.setProperty("--p", value);
+  }
 }
-requestAnimationFrame(fill);
+
+function tick() {
+  // The frame whose time has come: at once, or delay ms after it came.
+  const clock = performance.now() - Math.max(0, delay);
+  while (frames.length > 1 && frames[1].at <= clock) frames.shift();
+  if (frames.length && frames[0].at <= clock) frame = frames[0];
+  if (frame) draw();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
 
 onShow(() => {
   root.animate(
@@ -340,6 +390,7 @@ export const karaokeExample: GalleryExample = {
 			wt: "",
 			playing: "1",
 			seq: "1",
+			delay: "0",
 		},
 	}),
 };

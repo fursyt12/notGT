@@ -1835,7 +1835,7 @@ sensible spot.
 | Logo bug with a live tag | `example-logo-bug`      | layers     | an image layer (inline SVG) and a text tag in a corner      |
 | Kinetic lower third      | `example-kinetic`       | code       | letter-by-letter entrance, its own exit, `onShow` / `onHide` |
 | Live poll                | `example-poll`          | code       | bars and percentages travel to new values as the data is edited |
-| Karaoke                  | `example-karaoke`       | code       | the line being sung fills left to right (word by word when the lyrics have word timing), the next one under it; the `karaoke.*` variables come from [notGT Lyrics Bridge](../../lyrics-bridge/README.md), which follows Spotify |
+| Karaoke                  | `example-karaoke`       | code       | the line being sung fills left to right (word by word when the lyrics have word timing), the next one under it; the `karaoke.*` variables come from [notGT Lyrics Bridge](../../lyrics-bridge/README.md), which follows Spotify; `karaoke.delay` (ms) holds the text back live, or below zero runs it early, when it drifts from the music |
 | Ticker                   | `code-sample`           | code       | frame-by-frame motion, the shortest complete code animation |
 | Timer card               | `example-timer`         | code       | a [timer](#timers) of the Control panel: `timer()` in `onData`, running / paused / overtime; ships with the `segment` timer (5:00) |
 | Countdown                | `example-countdown`     | code       | a [timer](#timers) of the Control panel as days to seconds, a ring of time left, paused / final seconds / time up; ships with the `countdown` timer (10:00) |

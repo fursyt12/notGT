@@ -54,9 +54,10 @@ export const REPLICANTS = {
  *   6 — the file example is gone, and so are its sample variables;
  *   7 — timers: the timer example, the countdown redrawn to show a timer,
  *       and the timers they show;
- *   8 — the karaoke example.
+ *   8 — the karaoke example;
+ *   9 — the karaoke example takes a delay (`karaoke.delay`).
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /**
  * How a spreadsheet is connected.
