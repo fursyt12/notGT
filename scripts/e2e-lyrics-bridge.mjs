@@ -255,8 +255,9 @@ async function main() {
 				remembered,
 				JSON.stringify({
 					variants: [
-						{ id: "", sources: "lrclib", votes: 3, lyrics: lines("A") },
-						{ id: "", sources: "netease", votes: 1, lyrics: lines("B") },
+						{ id: "", sources: "lrclib", artist: "E2E Artist", votes: 3, lyrics: lines("A") },
+						// Spotify reports only the first artist; a source credits them all.
+						{ id: "", sources: "netease", artist: "Second Voice & E2E Artist feat. Third", votes: 1, lyrics: lines("B") },
 					],
 					pick: "",
 					manual: false,
@@ -287,6 +288,12 @@ async function main() {
 			const shown = karaoke(notgt.record).map((k) => k.cur).filter(Boolean);
 			check("a remembered track starts with its best variant", shown[0]?.startsWith("A"), shown.join(" / "));
 			check("\"Next\" switches to the other variant", shown.at(-1)?.startsWith("B"), shown.join(" / "));
+			const artists = karaoke(notgt.record).map((k) => k.artist).filter(Boolean);
+			check(
+				"every artist a source credits reaches the title, the reported one first",
+				artists.at(-1) === "E2E Artist, Second Voice, Third",
+				[...new Set(artists)].join(" / "),
+			);
 			const saved = JSON.parse(fs.readFileSync(remembered, "utf8"));
 			const second = saved.variants.find((v) => v.sources === "netease");
 			check(

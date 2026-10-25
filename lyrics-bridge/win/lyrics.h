@@ -417,6 +417,7 @@ typedef struct {
 	int votes; /* copies found */
 	int support; /* copies that agree with it, its own included */
 	Lyrics *ly;
+	wchar_t artist[256]; /* the artists as a source credits them, the fullest credit found */
 } Variant;
 
 typedef struct {
@@ -463,11 +464,25 @@ static void add_source(Variant *v, const wchar_t *source) {
 	}
 }
 
+/* How many artists a credit names (0 for none). */
+static int artist_count(const wchar_t *artist) {
+	wchar_t names[8][128];
+	return artist && artist[0] ? split_artists(artist, names) : 0;
+}
+
+/* Keeps `artist` as the variant's credit when it names more artists than the one it has. */
+static void add_artist(Variant *v, const wchar_t *artist) {
+	if (artist_count(artist) <= artist_count(v->artist)) return;
+	wcsncpy(v->artist, artist, 255);
+	v->artist[255] = L'\0';
+}
+
 /*
- * Adds a variant (taking its lyrics). The same timing found again — LRCLIB
- * keeps many copies of a song, sources share data — only adds votes.
+ * Adds a variant (taking its lyrics), with the artists its source credits. The
+ * same timing found again — LRCLIB keeps many copies of a song, sources share
+ * data — only adds votes, and a fuller credit.
  */
-static void variants_add(Variants *vs, const wchar_t *source, Lyrics *ly, int votes) {
+static void variants_add(Variants *vs, const wchar_t *source, Lyrics *ly, int votes, const wchar_t *artist) {
 	char id[17];
 	Variant *grown;
 	if (!ly) return;
@@ -476,6 +491,7 @@ static void variants_add(Variants *vs, const wchar_t *source, Lyrics *ly, int vo
 		if (strcmp(vs->items[i].id, id)) continue;
 		vs->items[i].votes += votes;
 		add_source(&vs->items[i], source);
+		add_artist(&vs->items[i], artist);
 		lyrics_unref(ly);
 		return;
 	}
@@ -488,6 +504,7 @@ static void variants_add(Variants *vs, const wchar_t *source, Lyrics *ly, int vo
 	ZeroMemory(&vs->items[vs->n], sizeof(Variant));
 	strcpy(vs->items[vs->n].id, id);
 	add_source(&vs->items[vs->n], source);
+	add_artist(&vs->items[vs->n], artist);
 	vs->items[vs->n].votes = votes;
 	vs->items[vs->n].ly = ly;
 	vs->n++;
@@ -495,7 +512,8 @@ static void variants_add(Variants *vs, const wchar_t *source, Lyrics *ly, int vo
 
 /* Moves every variant of `from` into `into`. */
 static void variants_merge(Variants *into, Variants *from) {
-	for (int i = 0; i < from->n; i++) variants_add(into, from->items[i].sources, from->items[i].ly, from->items[i].votes);
+	for (int i = 0; i < from->n; i++)
+		variants_add(into, from->items[i].sources, from->items[i].ly, from->items[i].votes, from->items[i].artist);
 	free(from->items);
 	from->items = NULL;
 	from->n = 0;
@@ -611,6 +629,43 @@ static void track_init(Track *t, const wchar_t *artist, const wchar_t *title, do
 	wcscpy(t->first, names[0]);
 	clean_title(title, t->clean, 256);
 	t->russian = count_letters(title, &latin) + count_letters(artist, &latin) > 0;
+}
+
+/* Do two artist names stand for the same artist (one may carry more words)? */
+static BOOL same_artist(const wchar_t *a, const wchar_t *b) {
+	wchar_t *x = norm(a), *y = norm(b);
+	BOOL same = x && y && x[0] && y[0] && (wcsstr(x, y) || wcsstr(y, x));
+	free(x);
+	free(y);
+	return same;
+}
+
+/*
+ * The track's artists as fully as the sources credit them, into `out`.
+ * Spotify tells the system only the first artist of a track (Windows' media
+ * controls as much as MPRIS); a source that found the song often credits them
+ * all. The fullest credit that names the reported artist wins, written the way
+ * Spotify lists artists: the reported ones first, then the others, "A, B, C".
+ */
+static void credited_artists(const Track *t, const Variants *vs, wchar_t *out, size_t len) {
+	wchar_t mine[8][128], names[8][128], best[8][128];
+	int have = split_artists(t->artist, mine), most = have, n;
+	wcsncpy(out, t->artist, len - 1);
+	out[len - 1] = L'\0';
+	for (int i = 0; i < vs->n; i++) {
+		const wchar_t *credit = vs->items[i].artist;
+		if (!credit[0] || (n = split_artists(credit, names)) <= most || !artist_matches(t->artist, credit)) continue;
+		most = n;
+		memcpy(best, names, sizeof(names));
+	}
+	if (most == have) return;
+	for (int i = 0; i < most; i++) {
+		BOOL known = FALSE;
+		for (int j = 0; j < have && !known; j++) known = same_artist(best[i], mine[j]);
+		if (known || wcslen(out) + wcslen(best[i]) + 3 > len) continue;
+		wcscat(out, L", ");
+		wcscat(out, best[i]);
+	}
 }
 
 /*
@@ -756,7 +811,8 @@ static int source_lrclib(const Track *t, Variants *out) {
 		}
 	}
 	kept = keep_matching(c, n, t);
-	for (int i = 0; i < kept; i++) variants_add(out, L"lrclib", parse_lrc(json_str(c[i].item, L"syncedLyrics")), 1);
+	for (int i = 0; i < kept; i++)
+		variants_add(out, L"lrclib", parse_lrc(json_str(c[i].item, L"syncedLyrics")), 1, c[i].artist);
 	for (int i = 0; i < 8; i++) {
 		json_free(docs[i]);
 		free(f[i].body);
@@ -778,6 +834,18 @@ static BOOL netease_credit(const wchar_t *line) {
 		return *c == L':' || *c == 0xFF1A;
 	}
 	return FALSE;
+}
+
+/* "A, B" from the artists a NetEase song lists. */
+static void netease_artists(const JVal *song, wchar_t *out, size_t len) {
+	const JVal *artists = json_get(song, L"artists");
+	out[0] = L'\0';
+	for (const JVal *a = artists ? artists->child : NULL; a; a = a->next) {
+		const wchar_t *name = json_str(a, L"name");
+		if (!name[0] || wcslen(out) + wcslen(name) + 3 > len) continue;
+		if (out[0]) wcscat(out, L", ");
+		wcscat(out, name);
+	}
 }
 
 static int source_netease(const Track *t, Variants *out) {
@@ -839,7 +907,11 @@ static int source_netease(const Track *t, Variants *out) {
 			free(one);
 			line = eol ? eol + 1 : NULL;
 		}
-		if (lines) variants_add(out, L"netease", parse_lrc(lines), 1);
+		if (lines) {
+			wchar_t credit[256];
+			netease_artists(c[i].item, credit, 256);
+			variants_add(out, L"netease", parse_lrc(lines), 1, credit);
+		}
 		free(lines);
 		json_free(doc);
 		free(lyr[i].body);
@@ -940,6 +1012,7 @@ static int source_musixmatch(const Track *t, const wchar_t *token, Variants *out
 	char *body;
 	JVal *doc;
 	const JVal *calls, *track, *subs;
+	const wchar_t *credit; /* the artists Musixmatch credits */
 	Lyrics *ly = NULL;
 	int length;
 
@@ -974,9 +1047,10 @@ static int source_musixmatch(const Track *t, const wchar_t *token, Variants *out
 	}
 	track = json_get(mxm_body(calls, L"matcher.track.get"), L"track");
 	length = (int)json_num(track, L"track_length", 0);
+	credit = json_str(track, L"artist_name");
 	{
 		/* What it matched: the right artist, or at least the right title; the right length. */
-		const wchar_t *artist = json_str(track, L"artist_name"), *name = json_str(track, L"track_name");
+		const wchar_t *artist = credit, *name = json_str(track, L"track_name");
 		wchar_t *a = norm(t->clean), *b = norm(name);
 		BOOL titleOk = a && b && b[0] && (wcsstr(a, b) || wcsstr(b, a));
 		free(a);
@@ -1012,7 +1086,7 @@ static int source_musixmatch(const Track *t, const wchar_t *token, Variants *out
 	}
 	subs = json_get(mxm_body(calls, L"track.subtitles.get"), L"subtitle_list");
 	if (!ly && subs && subs->child) ly = mxm_subtitle(json_str(json_get(subs->child, L"subtitle"), L"subtitle_body"));
-	variants_add(out, L"musixmatch", ly, 1);
+	variants_add(out, L"musixmatch", ly, 1, credit);
 	json_free(doc);
 	return 1;
 }
@@ -1153,7 +1227,7 @@ static BOOL cache_load(const wchar_t *path, Remembered *r) {
 	for (const JVal *v = list ? list->child : NULL; v; v = v->next) {
 		const wchar_t *sources = json_str(v, L"sources");
 		variants_add(&r->variants, sources[0] ? sources : L"cache", lyrics_from_json(json_get(v, L"lyrics")),
-			(int)json_num(v, L"votes", 1));
+			(int)json_num(v, L"votes", 1), json_str(v, L"artist"));
 	}
 	pick = utf8_of(json_str(doc, L"pick"));
 	if (pick) {
@@ -1175,6 +1249,8 @@ static void cache_save(const wchar_t *path, const Variants *vs, const char *pick
 	for (int i = 0; i < vs->n; i++) {
 		text_printf(&t, "%s{\"id\":\"%s\",\"sources\":", i ? "," : "", vs->items[i].id);
 		text_str(&t, vs->items[i].sources);
+		text_raw(&t, ",\"artist\":");
+		text_str(&t, vs->items[i].artist);
 		text_printf(&t, ",\"votes\":%d,\"lyrics\":", vs->items[i].votes);
 		text_lyrics(&t, vs->items[i].ly);
 		text_raw(&t, "}");

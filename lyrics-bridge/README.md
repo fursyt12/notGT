@@ -46,6 +46,10 @@ track. **Search again** asks the sources once more, past the cache.
 | NetEase    | `music.163.com`, a large catalogue                                               |
 | Musixmatch | the lyrics Spotify itself shows; only with a token of your own account (**Musixmatch…**) |
 
+Spotify tells Windows only the first artist of a track. The sources credit them all more
+often than not, so the title gets the fullest credit that names that artist, written as
+Spotify lists artists: "A, B, C".
+
 Musixmatch no longer hands out anonymous tokens (it answers with a token of zeros, and
 every search with it returns the same demo song), so without a token of your own it is not
 asked. A text in another script than the track's (a transliteration, a translation) is not
@@ -73,6 +77,7 @@ or the position drifts by more than 0.35 s; all values are strings:
 | `karaoke.wt`                   | `start:end,…` per word, ms into the line; empty without word timing  |
 | `karaoke.playing`              | `1` while it plays                                                   |
 | `karaoke.seq`                  | a new value with every frame                                         |
+| `karaoke.delay`                | not sent: the operator's live correction, ms the title shows the text later (below zero, earlier) — set it in Control when the words and the music drift apart |
 
 Anything that writes the same variables drives the title as well.
 

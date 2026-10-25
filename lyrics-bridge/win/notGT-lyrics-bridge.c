@@ -554,7 +554,9 @@ static DWORD WINAPI lookup_thread(LPVOID param) {
 			for (int v = 0; v < jobs[i].found.n; v++) {
 				const wchar_t *bad = check_lyrics(jobs[i].found.items[v].ly, &job->track, why, 160);
 				if (bad) log_line(L"  %ls rejected: %ls", jobs[i].name, bad);
-				else variants_add(&ok, jobs[i].found.items[v].sources, lyrics_ref(jobs[i].found.items[v].ly), jobs[i].found.items[v].votes);
+				else
+					variants_add(&ok, jobs[i].found.items[v].sources, lyrics_ref(jobs[i].found.items[v].ly),
+						jobs[i].found.items[v].votes, jobs[i].found.items[v].artist);
 			}
 			if (!ok.n) continue;
 			log_line(L"  %ls: %d variant%ls in %.1f s", jobs[i].name, ok.n, ok.n == 1 ? L"" : L"s", (GetTickCount() - start) / 1000.0);
@@ -689,6 +691,7 @@ typedef struct {
 	char shown[17];
 	Lyrics *ly; /* of the shown variant */
 	int *sings;
+	wchar_t artist[256]; /* every artist of the track, as far as the sources credit them */
 } Current;
 
 static Current g_cur;
@@ -759,6 +762,14 @@ static void apply_result(const Result *r) {
 	variants_free(&g_cur.variants);
 	g_cur.variants = variants_copy(&r->variants);
 	g_cur.nothing = FALSE;
+	{
+		wchar_t artist[256];
+		credited_artists(&g_cur.track, &g_cur.variants, artist, 256);
+		if (wcscmp(artist, g_cur.artist)) {
+			if (wcscmp(artist, g_cur.track.artist)) log_line(L"  artists: %ls", artist);
+			copy_str(g_cur.artist, 256, artist);
+		}
+	}
 	best = &g_cur.variants.items[0];
 	if (g_cur.manual)
 		for (int i = 0; i < g_cur.variants.n; i++)
@@ -833,7 +844,7 @@ static void push_frame(const PlayerState *st, int idx, double pos, unsigned seq)
 	int end = g_cur.ly && idx + 1 < g_cur.ly->n ? g_cur.ly->lines[idx + 1].t : start + 4000;
 	int dur = end - start, sing = g_cur.ly && idx >= 0 ? g_cur.sings[idx] : dur;
 	text_raw(&t, "{\"type\":\"setData\",\"mode\":\"merge\",\"data\":{\"karaoke\":{\"artist\":");
-	text_str(&t, st->artist);
+	text_str(&t, g_cur.artist[0] ? g_cur.artist : st->artist);
 	text_raw(&t, ",\"title\":");
 	text_str(&t, st->title);
 	text_raw(&t, ",\"prev\":");
@@ -895,7 +906,7 @@ static void demo_lyrics(void) {
 	Variants demo = { NULL, 0 };
 	Result r = { 0 };
 	for (size_t i = 0; ly && i < sizeof(DEMO) / sizeof(DEMO[0]); i++) lyrics_add(ly, DEMO[i].t, wdup(T(DEMO[i].ru, DEMO[i].en)), NULL, 0);
-	variants_add(&demo, L"demo", ly, 1);
+	variants_add(&demo, L"demo", ly, 1, L"");
 	r.generation = g_cur.generation = ++g_generation;
 	r.variants = demo;
 	r.final = r.complete = TRUE;
@@ -946,6 +957,7 @@ static DWORD WINAPI engine_thread(LPVOID unused) {
 			apply_result(r);
 			variants_free(&r->variants);
 			free(r);
+			sentValid = FALSE; /* the lyrics or the artists may have changed */
 		}
 
 		if (!st.found || !st.title[0]) {
@@ -964,6 +976,7 @@ static DWORD WINAPI engine_thread(LPVOID unused) {
 				g_cur.active = TRUE;
 				hadTrack = TRUE;
 				track_init(&g_cur.track, st.artist, st.title, st.durationS);
+				copy_str(g_cur.artist, 256, st.artist);
 				clock_reset(&clock);
 				sentValid = FALSE;
 				log_line(L"%ls - %ls", st.artist, st.title);
@@ -1025,7 +1038,7 @@ static DWORD WINAPI engine_thread(LPVOID unused) {
 		v.player = !smtcOk ? 0 : !st.found ? 1 : st.playing ? 3 : 2;
 		if (st.found && st.title[0]) {
 			int at = shown_index();
-			copy_str(v.artist, 256, st.artist);
+			copy_str(v.artist, 256, g_cur.artist[0] ? g_cur.artist : st.artist);
 			copy_str(v.title, 256, st.title);
 			copy_str(v.cur, 512, line_text(idx));
 			copy_str(v.next, 512, line_text(idx + 1));
