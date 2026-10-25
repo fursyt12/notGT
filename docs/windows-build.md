@@ -15,7 +15,6 @@ assembled and how a release is cut.
 ```
 notGT-win-x64/
   notGT Launcher.exe      the launcher's window (mingw-w64; absent if not available)
-  notGT Karaoke.exe       lyrics of what Spotify plays, into notGT (mingw-w64; absent if not available)
   notGT.cmd               fallback bootstrap, always present
   launcher/
     index.mjs             what the window drives: NodeCG supervisor (spawns app/index.js)
@@ -43,7 +42,8 @@ on Windows it is the number of files that makes unpacking slow and the first
 start slower still, with the antivirus looking at each one.
 
 `dist/notGT-win-x64.zip` contains the folder above with `notGT-win-x64/` as the
-single top-level entry.
+single top-level entry. Next to it goes `dist/notgt-lyrics-bridge.exe`, the
+[lyrics bridge](#notgt-lyrics-bridge): a program of its own, not in the package.
 
 ### The NDI sender
 
@@ -121,10 +121,11 @@ LGPL is enough: the converter only needs VP9 (libvpx) and WebP (libwebp).
    `unzip` on Linux — GNU tar cannot read zip) and takes **only `node.exe`**
    and its licence into `node/`: nothing in the package runs npm or corepack.
 5. **Native programs** — compiles the resources (icon, logo, manifest, version) with
-   `x86_64-w64-mingw32-windres` and `notGT Launcher.exe` and `notGT Karaoke.exe` with
+   `x86_64-w64-mingw32-windres` and `notGT Launcher.exe` (in the package) and
+   `notgt-lyrics-bridge.exe` (next to it) with
    `x86_64-w64-mingw32-gcc -O2 -municode -mwindows`. If mingw-w64 is missing
-   (typical on `windows-latest`) both are skipped with a warning: there is no karaoke
-   program then, and `notGT.cmd` is the entry point — it is fully functional on its own, but shows a
+   (typical on `windows-latest`) both are skipped with a warning: there is no lyrics
+   bridge then, and `notGT.cmd` is the entry point — it is fully functional on its own, but shows a
    console window and opens the control page in the browser instead of a window of
    its own. `MINGW_GCC` / `MINGW_WINDRES` name another compiler.
 6. **`README.txt`** and `notGT.cmd`.
@@ -256,15 +257,16 @@ Two switches exist for it and for development: `--control-url http://127.0.0.1:<
 attaches the window to a `launcher/index.mjs` that is already running, and
 `--snapshot <dir>` saves a picture of every window as `.bmp` and exits.
 
-## notGT Karaoke
+## notGT Lyrics Bridge
 
-`notGT Karaoke.exe` sends the lyrics of what Spotify plays on this computer to notGT,
+`notgt-lyrics-bridge.exe` sends the lyrics of what Spotify plays on its computer to notGT,
 line by line, for the «Караоке» example of the library. It is the launcher's sibling — the
 same look and the same kind of Win32 program in C — but stands on its own: it reads the
 track from Windows' media controls, finds synced lyrics on the internet and talks to
-notGT over the WebSocket API, so it can run on another computer than the server. Closing
-its window hides it in the notification area. See [`karaoke/README.md`](../karaoke/README.md);
-`scripts/e2e-karaoke.mjs` tests it under wine like the launcher's test does.
+notGT over the WebSocket API. So it is not in the package: the release carries it as a
+file of its own, to run on whichever computer plays the music. Closing its window hides
+it in the notification area. See [`lyrics-bridge/README.md`](../lyrics-bridge/README.md);
+`scripts/e2e-lyrics-bridge.mjs` tests it under wine like the launcher's test does.
 
 ## The chosen interface, and why it is not the bind address
 
@@ -322,12 +324,13 @@ NodeCG (`ci.yaml`: lint, типы, тесты, контейнер) переве�
 3. `npm ci` + `npm run build` in `bundles/notGT`;
 4. `node scripts/build-windows.mjs --node-version 22.14.0 --smoke` — the
    package is started with its own `node.exe` before it is zipped;
-5. uploads `dist/notGT-win-x64.zip` as the `notGT-win-x64` workflow artifact.
+5. uploads `dist/notGT-win-x64.zip` and `dist/notgt-lyrics-bridge.exe` as the
+   `notGT-win-x64` workflow artifact.
 
 The macOS package is built by the `macos-package` job in the same way, on
 `macos-latest` — see [macos-build.md](macos-build.md). For a tag, a third job,
 `release`, waits for both, downloads the two artifacts and creates or updates
-the GitHub Release with both zips attached (`gh release view` →
+the GitHub Release with both zips and `notgt-lyrics-bridge.exe` attached (`gh release view` →
 `gh release create` / `gh release upload --clobber`), with a release body
 listing the contents and the OBS Browser Source URL. A release never goes out
 with one of its packages missing.

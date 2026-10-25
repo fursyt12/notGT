@@ -162,19 +162,23 @@ jobs:
         run: |
           ..\node\node.exe -e "import('./index.mjs').then(m => { const s = m.loadSpout(); if (!s.module) { console.error(s.why); process.exit(1) } console.log('Spout addon: ' + s.file) })"
 
-      # Fail loudly rather than publishing a build without the launcher.
-      - name: Assert the launcher executable exists
+      # Fail loudly rather than publishing a build without the launcher, or
+      # without the lyrics bridge, which the release carries next to the zip.
+      - name: Assert the native executables exist
         shell: pwsh
         run: |
-          $exe = "dist/notGT-win-x64/notGT Launcher.exe"
-          if (-not (Test-Path $exe)) { throw "Missing $exe - the native launcher was not built" }
-          Get-Item $exe | Select-Object FullName, Length
+          foreach ($exe in @("dist/notGT-win-x64/notGT Launcher.exe", "dist/notgt-lyrics-bridge.exe")) {
+            if (-not (Test-Path $exe)) { throw "Missing $exe - it was not built" }
+            Get-Item $exe | Select-Object FullName, Length
+          }
 
       - name: Upload the package as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: notGT-win-x64
-          path: dist/notGT-win-x64.zip
+          path: |
+            dist/notGT-win-x64.zip
+            dist/notgt-lyrics-bridge.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -325,9 +329,9 @@ jobs:
             KIND=(--prerelease --latest=false)
           fi
 
-          # What was built: Windows always (this job needs it), macOS when its
-          # build got through.
-          ASSETS=(packages/notGT-win-x64.zip)
+          # What was built: Windows and the lyrics bridge always (this job needs
+          # them), macOS when its build got through.
+          ASSETS=(packages/notGT-win-x64.zip packages/notgt-lyrics-bridge.exe)
           if [ -f packages/notGT-macos-arm64.zip ]; then
             ASSETS+=(packages/notGT-macos-arm64.zip)
           else

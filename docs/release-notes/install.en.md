@@ -4,6 +4,9 @@ Portable builds: there is no need to install Node.js — it is already inside.
 
 - **Windows (x64)** — `notGT-win-x64.zip`
 - **macOS (Apple silicon, M1 and later)** — `notGT-macos-arm64.zip`
+- **notGT Lyrics Bridge (Windows)** — `notgt-lyrics-bridge.exe`: one file, no install.
+  Run it on any Windows 10 (1809 or later) computer that plays Spotify and connect it to
+  your notGT: it sends the lyrics, line by line, to the **Karaoke** title of the library.
 
 ### notGT for Windows (x64)
 
@@ -14,7 +17,6 @@ There is no need to install Node.js — it is already inside.
 #### What is inside
 
 - `notGT Launcher.exe` — the launcher: a window to pick the network interface and the port, start and stop the server, set the sign-in, open the firewall and read the log; in Russian or English;
-- `notGT Karaoke.exe` — the lyrics of what Spotify plays on this computer, line by line, for the Karaoke title of the library; it can run on another computer than the server;
 - `notGT.cmd` — a fallback start through `node\node.exe`: the same controls as a page in the browser;
 - `launcher/` — what the launcher's window drives;
 - `node/` — the official Node.js for Windows;

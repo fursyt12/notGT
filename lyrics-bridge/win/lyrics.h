@@ -12,8 +12,8 @@
  * becomes variants, equal timings are counted as votes for one, and the
  * variants are ranked (see rank_variants).
  */
-#ifndef KARAOKE_LYRICS_H
-#define KARAOKE_LYRICS_H
+#ifndef BRIDGE_LYRICS_H
+#define BRIDGE_LYRICS_H
 
 #include <math.h>
 #include <stdarg.h>

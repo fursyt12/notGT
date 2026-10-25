@@ -2,7 +2,7 @@
  * Example — karaoke.
  *
  * The line being sung, filled left to right as it is sung, with the next line
- * under it. The `karaoke.*` variables come from notGT Karaoke (`karaoke/` in
+ * under it. The `karaoke.*` variables come from notGT Lyrics Bridge (`lyrics-bridge/` in
  * the repository), which follows the track playing in Spotify; any program
  * that writes the same variables drives it as well.
  */
@@ -306,8 +306,8 @@ export const karaokeExample: GalleryExample = {
 	kind: "code",
 	name: { en: "Karaoke", ru: "Караоке" },
 	summary: {
-		en: "The line being sung fills left to right, the next one waits under it. Driven by notGT Karaoke from Spotify.",
-		ru: "Строка заливается слева направо, пока её поют, следующая ждёт под ней. Ведёт notGT Караоке из Spotify.",
+		en: "The line being sung fills left to right, the next one waits under it. Driven by notGT Lyrics Bridge from Spotify.",
+		ru: "Строка заливается слева направо, пока её поют, следующая ждёт под ней. Ведёт notGT Lyrics Bridge из Spotify.",
 	},
 	place: { x: 6, y: 68 },
 	template: (lang) => ({

@@ -1,4 +1,4 @@
-# notGT Karaoke
+# notGT Lyrics Bridge
 
 A small Windows program that puts the lyrics of what Spotify plays into notGT, line by
 line, for the **Karaoke** example of the library (`example-karaoke`). It reads the playing
@@ -7,12 +7,15 @@ being sung to notGT over the [WebSocket API](../bundles/notGT/README.md#bitfocus
 
 It is the [launcher](../launcher/README.md)'s sibling: a Win32 program in C with the same
 look, which links only what Windows ships — no runtime to install. Unlike the launcher it
-stands on its own: it can run on the computer where Spotify plays while notGT runs on
-another one.
+stands on its own: it runs on whichever computer plays the music and talks to notGT
+running on another one, or on the same. So it is not in the Windows package: every
+release carries it as one file, `notgt-lyrics-bridge.exe`, next to the zips.
 
 ## Using it
 
-1. Start `notGT Karaoke.exe` (it is in the Windows package, next to `notGT Launcher.exe`).
+1. Download `notgt-lyrics-bridge.exe` from the
+   [release page](https://github.com/fursyt12/notGT/releases/latest) onto the computer that
+   plays Spotify and start it; nothing needs installing.
 2. Type notGT's address — `localhost:9090`, `192.168.1.20:9090` or a whole `ws://` URL —
    and, if the server asks for one, a WebSocket key (the keys are in the dashboard, Team
    tab), then press **Connect**. The pill says whether notGT let it in.
@@ -52,8 +55,8 @@ taken; a song in two languages is.
 
 | File                                    | What it holds                                                    |
 | --------------------------------------- | ---------------------------------------------------------------- |
-| `%APPDATA%\notGT\karaoke.json`           | the address, the language, and the keys — encrypted for this Windows user (DPAPI) |
-| `%LOCALAPPDATA%\notGT\karaoke\*.json`    | per track: its variants, the one chosen, its own shift          |
+| `%APPDATA%\notGT\lyrics-bridge.json`     | the address, the language, and the keys — encrypted for this Windows user (DPAPI) |
+| `%LOCALAPPDATA%\notGT\lyrics-bridge\*.json` | per track: its variants, the one chosen, its own shift          |
 
 ## What it sends
 
@@ -77,20 +80,21 @@ Anything that writes the same variables drives the title as well.
 
 | File (in `win/`)                   | What it is                                                     |
 | ---------------------------------- | -------------------------------------------------------------- |
-| `notGT-karaoke.c`                  | the windows, the tray, the settings, the engine and the WebSocket |
+| `notGT-lyrics-bridge.c`            | the windows, the tray, the settings, the engine and the WebSocket |
 | `smtc.h`                           | what Spotify plays, from Windows' media controls (WinRT from C) |
 | `lyrics.h`                         | the sources, LRC, the variants and their ranking, the cache   |
 | `net.h`                            | HTTPS and the WebSocket through WinHTTP                        |
-| `notGT-karaoke.rc`, `.manifest`    | the launcher's icon and logo, the version, DPI awareness       |
+| `notGT-lyrics-bridge.rc`, `.manifest` | the launcher's icon and logo, the version, DPI awareness       |
 | `test/post.c`                      | closes, quits or asks about the window, for the test           |
 
-`scripts/build-windows.mjs` builds it into the package. By hand:
+`scripts/build-windows.mjs` builds it next to the Windows package
+(`dist/notgt-lyrics-bridge.exe`), and the release workflow attaches it to the release. By hand:
 
 ```sh
-cd karaoke/win
-x86_64-w64-mingw32-windres notGT-karaoke.rc -O coff -o karaoke-res.o
-x86_64-w64-mingw32-gcc -O2 -municode -mwindows -o "notGT Karaoke.exe" \
-  notGT-karaoke.c karaoke-res.o -lwinhttp -lgdiplus -lole32 -lshell32 -lgdi32 -lcomctl32 -lcrypt32
+cd lyrics-bridge/win
+x86_64-w64-mingw32-windres notGT-lyrics-bridge.rc -O coff -o bridge-res.o
+x86_64-w64-mingw32-gcc -O2 -municode -mwindows -o notgt-lyrics-bridge.exe \
+  notGT-lyrics-bridge.c bridge-res.o -lwinhttp -lgdiplus -lole32 -lshell32 -lgdi32 -lcomctl32 -lcrypt32
 ```
 
 The media controls need Windows 10 1809 or later; the rest runs on Windows 8 and later.
@@ -98,7 +102,7 @@ The media controls need Windows 10 1809 or later; the rest runs on Windows 8 and
 ## Tests
 
 ```sh
-node scripts/e2e-karaoke.mjs
+node scripts/e2e-lyrics-bridge.mjs
 ```
 
 cross-compiles the program and runs it under wine in a virtual display against a stand-in

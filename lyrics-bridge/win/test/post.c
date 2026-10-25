@@ -1,6 +1,6 @@
 /*
- * Talks to the karaoke's main window the way Windows does — for
- * scripts/e2e-karaoke.mjs, which runs it in a virtual display that has no
+ * Talks to the bridge's main window the way Windows does — for
+ * scripts/e2e-lyrics-bridge.mjs, which runs it in a virtual display that has no
  * window manager (no close box) and no notification area (no tray menu).
  *
  *   post close     WM_CLOSE, as the close box sends it
@@ -11,10 +11,10 @@
  */
 #include <windows.h>
 
-#define ID_TRAY_QUIT 201 /* as in notGT-karaoke.c */
+#define ID_TRAY_QUIT 201 /* as in notGT-lyrics-bridge.c */
 
 int wmain(int argc, wchar_t **argv) {
-	HWND hwnd = FindWindowW(L"notGTKaraoke", NULL);
+	HWND hwnd = FindWindowW(L"notGTLyricsBridge", NULL);
 	if (!hwnd) return 1;
 	if (argc > 1 && !lstrcmpW(argv[1], L"close")) PostMessageW(hwnd, WM_CLOSE, 0, 0);
 	else if (argc > 1 && !lstrcmpW(argv[1], L"quit")) PostMessageW(hwnd, WM_COMMAND, ID_TRAY_QUIT, 0);

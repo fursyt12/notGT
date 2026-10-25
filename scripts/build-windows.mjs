@@ -2,11 +2,13 @@
 /**
  * scripts/build-windows.mjs — portable Windows package builder for notGT.
  *
- * Produces `notGT-win-x64/` and (unless --no-zip) `notGT-win-x64.zip`:
+ * Produces `notGT-win-x64/`, (unless --no-zip) `notGT-win-x64.zip` and, next
+ * to them, `notgt-lyrics-bridge.exe` (mingw, when available): the lyrics of
+ * what Spotify plays, into notGT — a program of its own, shipped on its own,
+ * since it runs on whichever computer plays the music:
  *
  *   notGT-win-x64/
  *     notGT Launcher.exe      native bootstrap (mingw, when available)
- *     notGT Karaoke.exe       lyrics of what Spotify plays, into notGT (mingw, when available)
  *     notGT.cmd               fallback bootstrap (always works)
  *     launcher/index.mjs      control UI + server supervisor
  *     launcher/ui.html
@@ -68,8 +70,8 @@ const LAUNCHER_DIR = path.join(REPO_ROOT, "launcher");
 const NDI_DIR = path.join(REPO_ROOT, "ndi");
 const SPOUT_DIR = path.join(REPO_ROOT, "spout");
 const LAUNCHER_C_SRC = path.join(LAUNCHER_DIR, "win", "notGT-launcher.c");
-const KARAOKE_EXE_NAME = "notGT Karaoke.exe";
-const KARAOKE_C_SRC = path.join(REPO_ROOT, "karaoke", "win", "notGT-karaoke.c");
+const BRIDGE_EXE_NAME = "notgt-lyrics-bridge.exe";
+const BRIDGE_C_SRC = path.join(REPO_ROOT, "lyrics-bridge", "win", "notGT-lyrics-bridge.c");
 /** The NodeCG server, relative to the root of an installed tree. */
 const SERVER_ENTRY = path.join(
 	"workspaces",
@@ -711,18 +713,18 @@ async function ensureNodeRuntime(destDir, version) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Native programs (the launcher, the karaoke) + .cmd fallback
+// 5. Native programs (the launcher, the lyrics bridge) + .cmd fallback
 // ---------------------------------------------------------------------------
 
 /** Win32 libraries every native program links. */
 const WIN32_LIBS = ["-lwinhttp", "-lgdiplus", "-lole32", "-lshell32", "-lgdi32", "-lcomctl32"];
 
 /**
- * Compiles one native program of the package with mingw-w64: its resources
- * (`rc`, next to `source`) with windres, then the program. `whenMissing` says
- * what the package does without it. Returns whether it was built.
+ * Compiles one native program with mingw-w64 into `outDir` (the package by
+ * default): its resources (`rc`, next to `source`) with windres, then the
+ * program. `whenMissing` says what goes without it. Returns whether it was built.
  */
-function buildNativeExe({ exeName, source, rc, libs, whenMissing }) {
+function buildNativeExe({ exeName, source, rc, libs, whenMissing, outDir = PACKAGE_DIR }) {
 	if (!exists(source)) {
 		warn(`${path.relative(REPO_ROOT, source)} not found — skipping "${exeName}"`);
 		return false;
@@ -752,7 +754,7 @@ function buildNativeExe({ exeName, source, rc, libs, whenMissing }) {
 		"utf8",
 	);
 
-	const outExe = path.join(PACKAGE_DIR, exeName);
+	const outExe = path.join(outDir, exeName);
 	for (const cc of candidates) {
 		if (!commandExists(cc)) continue;
 		// windres under the compiler's own name; a native Windows toolchain
@@ -814,14 +816,18 @@ function buildLauncherExe() {
 	});
 }
 
-/** notGT Karaoke (karaoke/win): the media controls, lyrics, and the WebSocket to notGT. */
-function buildKaraokeExe() {
+/**
+ * notGT Lyrics Bridge (lyrics-bridge/win): the media controls, lyrics, and the
+ * WebSocket to notGT. Not part of the package: it goes next to the zip.
+ */
+function buildBridgeExe() {
 	return buildNativeExe({
-		exeName: KARAOKE_EXE_NAME,
-		source: KARAOKE_C_SRC,
-		rc: "notGT-karaoke.rc",
+		exeName: BRIDGE_EXE_NAME,
+		source: BRIDGE_C_SRC,
+		rc: "notGT-lyrics-bridge.rc",
 		libs: [...WIN32_LIBS, "-lcrypt32"],
-		whenMissing: "The package has no karaoke program.",
+		whenMissing: "There is no lyrics bridge to ship next to the package.",
+		outDir: OUT_ROOT,
 	});
 }
 
@@ -1086,12 +1092,14 @@ function readmeText() {
 		"",
 		"Караоке из Spotify",
 		"------------------",
-		"«notGT Karaoke.exe» берёт трек, который играет Spotify на этом",
-		"компьютере (Windows 10 1809 или новее), находит к нему синхронизированный",
-		"текст и передаёт в notGT строку, которую поют сейчас. В библиотеке есть",
-		"пример «Караоке», который её показывает: включите его в Control.",
-		"В окне впишите адрес notGT (по умолчанию localhost:9090) и, если сервер",
-		"его просит, ключ WebSocket (ключи — в панели, вкладка «Команда»).",
+		"Пример «Караоке» из библиотеки показывает строку, которую сейчас поют.",
+		"Её передаёт notGT Lyrics Bridge — отдельная программа: файл",
+		"notgt-lyrics-bridge.exe лежит на странице релиза рядом с этим архивом.",
+		"Запустите её на любом компьютере с Windows 10 1809 или новее, где играет",
+		"Spotify: она находит к треку синхронизированный текст и передаёт его в",
+		"notGT. В окне впишите адрес этого notGT (например 192.168.1.20:9090) и,",
+		"если сервер его просит, ключ WebSocket (ключи — в панели, вкладка",
+		"«Команда»). Включите пример в Control.",
 		"Если текст разъезжается с музыкой, выберите другой вариант текста или",
 		"сдвиньте его кнопками — выбор запоминается для трека. Закрытие окна",
 		"прячет программу в область уведомлений; в меню значка те же кнопки и",
@@ -1166,7 +1174,6 @@ function makeZip() {
 function printSummary(zipPath, exeBuilt) {
 	const shell = [
 		["notGT Launcher.exe", path.join(PACKAGE_DIR, LAUNCHER_EXE_NAME)],
-		["notGT Karaoke.exe", path.join(PACKAGE_DIR, KARAOKE_EXE_NAME)],
 		["notGT.cmd", path.join(PACKAGE_DIR, "notGT.cmd")],
 		["launcher/index.mjs", path.join(PACKAGE_DIR, "launcher", "index.mjs")],
 		["launcher/ui.html", path.join(PACKAGE_DIR, "launcher", "ui.html")],
@@ -1221,6 +1228,8 @@ function printSummary(zipPath, exeBuilt) {
 		`Total package size: ${human(dirSize(PACKAGE_DIR))} in ${countFiles(PACKAGE_DIR)} files`,
 	);
 	if (zipPath) log(`Zip: ${zipPath} (${human(fs.statSync(zipPath).size)})`);
+	const bridge = path.join(OUT_ROOT, BRIDGE_EXE_NAME);
+	if (exists(bridge)) log(`Lyrics bridge: ${bridge} (${human(fs.statSync(bridge).size)})`);
 	if (!exeBuilt && !opts.appOnly) {
 		warn(
 			`No "${LAUNCHER_EXE_NAME}": ship notGT.cmd as the entry point (or rebuild with mingw-w64).`,
@@ -1281,6 +1290,7 @@ async function main() {
 
 	// Start clean so re-runs cannot leave stale files behind.
 	fs.rmSync(PACKAGE_DIR, { recursive: true, force: true });
+	fs.rmSync(path.join(OUT_ROOT, BRIDGE_EXE_NAME), { force: true });
 	fs.mkdirSync(PACKAGE_DIR, { recursive: true });
 
 	const { stage, temporary } = stageProductionNodeModules();
@@ -1320,7 +1330,7 @@ async function main() {
 	} else log("--no-ndi: the NDI sender is left out");
 
 	const exeBuilt = buildLauncherExe();
-	buildKaraokeExe();
+	buildBridgeExe();
 	writeCmdFallback();
 	fs.writeFileSync(path.join(PACKAGE_DIR, "README.txt"), readmeText(), "utf8");
 

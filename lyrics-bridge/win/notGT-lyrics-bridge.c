@@ -1,5 +1,5 @@
 /*
- * notGT Karaoke — lyrics of what Spotify plays, line by line, into notGT.
+ * notGT Lyrics Bridge — lyrics of what Spotify plays, line by line, into notGT.
  *
  * It reads the playing track and its position from Windows (the media
  * controls Spotify reports to, see smtc.h), finds synced lyrics (LRCLIB,
@@ -28,15 +28,15 @@
  * for the media controls (Windows 10 1809 or later).
  *
  * Build (mingw-w64) — scripts/build-windows.mjs does this:
- *   x86_64-w64-mingw32-windres notGT-karaoke.rc -O coff -o karaoke-res.o
- *   x86_64-w64-mingw32-gcc -O2 -municode -mwindows -o "notGT Karaoke.exe" \
- *     notGT-karaoke.c karaoke-res.o -lwinhttp -lgdiplus -lole32 -lshell32 -lgdi32 -lcomctl32 -lcrypt32
+ *   x86_64-w64-mingw32-windres notGT-lyrics-bridge.rc -O coff -o bridge-res.o
+ *   x86_64-w64-mingw32-gcc -O2 -municode -mwindows -o notgt-lyrics-bridge.exe \
+ *     notGT-lyrics-bridge.c bridge-res.o -lwinhttp -lgdiplus -lole32 -lshell32 -lgdi32 -lcomctl32 -lcrypt32
  *
- * For development and tests (see scripts/e2e-karaoke.mjs):
+ * For development and tests (see scripts/e2e-lyrics-bridge.mjs):
  *   --simulate                     a built-in demo song instead of Spotify
  *   --fake "Artist|Title|s|from"   play that track (s long, from second `from`) instead of Spotify
- *   --settings <file>              keep the settings there instead of %APPDATA%\notGT\karaoke.json
- *   --cache <dir>                  the cache of lyrics there instead of %LOCALAPPDATA%\notGT\karaoke
+ *   --settings <file>              keep the settings there instead of %APPDATA%\notGT\lyrics-bridge.json
+ *   --cache <dir>                  the cache of lyrics there instead of %LOCALAPPDATA%\notGT\lyrics-bridge
  *   --log-file <file>              also write the journal there (UTF-8)
  *   --command <n|p|+|-|0|r>@<s>    press a button s seconds after the start (may repeat)
  *   --snapshot <dir>               save pictures of every window as .bmp, then exit
@@ -1353,7 +1353,7 @@ static void paint_main(HWND hwnd, HDC dc) {
 	(void)hwnd;
 	fill(dc, &all, C_BG);
 
-	/* header: the logo with "karaoke" after it, the language */
+	/* header: the logo with "lyrics bridge" after it, the language */
 	{
 		int after = S(20) + S(110);
 		if (g_logo) {
@@ -1373,7 +1373,7 @@ static void paint_main(HWND hwnd, HDC dc) {
 			RECT r = R(0, 18, 0, 44);
 			r.left = after + S(10);
 			r.right = S(370);
-			text(dc, T(L"караоке", L"karaoke"), r, g_fontBold, C_MUTED, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+			text(dc, L"lyrics bridge", r, g_fontBold, C_MUTED, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 		}
 	}
 
@@ -1456,7 +1456,7 @@ static void apply_view(void) {
 }
 
 static void relabel(void) {
-	SetWindowTextW(g_main, T(L"notGT Караоке", L"notGT Karaoke"));
+	SetWindowTextW(g_main, L"notGT Lyrics Bridge");
 	SetDlgItemTextW(g_main, ID_CONNECT, T(L"Подключить", L"Connect"));
 	SetDlgItemTextW(g_main, ID_PREV, T(L"\x2039 Предыдущий", L"\x2039 Previous"));
 	SetDlgItemTextW(g_main, ID_NEXT, T(L"Следующий \x203a", L"Next \x203a"));
@@ -1472,7 +1472,7 @@ static void relabel(void) {
 		SetDlgItemTextW(g_mxmWnd, ID_MXM_CLEAR, T(L"Убрать токен", L"Remove the token"));
 		InvalidateRect(g_mxmWnd, NULL, TRUE);
 	}
-	if (g_logWnd) SetWindowTextW(g_logWnd, T(L"Журнал караоке", L"Karaoke journal"));
+	if (g_logWnd) SetWindowTextW(g_logWnd, T(L"Журнал Lyrics Bridge", L"Lyrics Bridge journal"));
 }
 
 static void show_window(HWND hwnd) {
@@ -1486,7 +1486,7 @@ static void update_tray(void) {
 	wchar_t tip[128];
 	if (g_snapshotDir[0]) return;
 	if (g_shown.title[0]) _snwprintf(tip, 128, L"%ls \x2014 %ls", g_shown.artist, g_shown.title);
-	else copy_str(tip, 128, T(L"notGT Караоке", L"notGT Karaoke"));
+	else copy_str(tip, 128, L"notGT Lyrics Bridge");
 	tip[127] = L'\0';
 	if (!wcscmp(tip, g_tray.szTip)) return;
 	copy_str(g_tray.szTip, 128, tip);
@@ -1502,7 +1502,7 @@ static void add_tray(void) {
 	g_tray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 	g_tray.uCallbackMessage = WM_APP_TRAY;
 	g_tray.hIcon = g_iconSmall;
-	copy_str(g_tray.szTip, 128, T(L"notGT Караоке", L"notGT Karaoke"));
+	copy_str(g_tray.szTip, 128, L"notGT Lyrics Bridge");
 	Shell_NotifyIconW(NIM_ADD, &g_tray);
 }
 
@@ -1511,7 +1511,7 @@ static void tray_hint(void) {
 	if (g_hintShown || g_snapshotDir[0]) return;
 	g_hintShown = TRUE;
 	g_tray.uFlags = NIF_INFO;
-	copy_str(g_tray.szInfoTitle, 64, T(L"Караоке работает дальше", L"Karaoke keeps running"));
+	copy_str(g_tray.szInfoTitle, 64, T(L"Lyrics Bridge работает дальше", L"Lyrics Bridge keeps running"));
 	copy_str(g_tray.szInfo, 256,
 		T(L"Окно скрыто. Управление и «Выйти» — в меню этого значка.", L"The window is hidden. The controls and “Quit” are in this icon's menu."));
 	g_tray.dwInfoFlags = NIIF_INFO;
@@ -1786,12 +1786,12 @@ static void snapshot_step(int step) {
 	switch (step) {
 	case 0:
 		save_bmp(g_main, L"main");
-		open_tool_window(&g_mxmWnd, L"notGTKaraokeMxm", L"Musixmatch", MXM_W, MXM_H, fixed);
+		open_tool_window(&g_mxmWnd, L"notGTLyricsBridgeMxm", L"Musixmatch", MXM_W, MXM_H, fixed);
 		break;
 	case 1:
 		save_bmp(g_mxmWnd, L"musixmatch");
 		DestroyWindow(g_mxmWnd);
-		open_tool_window(&g_logWnd, L"notGTKaraokeLog", T(L"Журнал караоке", L"Karaoke journal"), 640, 420, WS_OVERLAPPEDWINDOW);
+		open_tool_window(&g_logWnd, L"notGTLyricsBridgeLog", T(L"Журнал Lyrics Bridge", L"Lyrics Bridge journal"), 640, 420, WS_OVERLAPPEDWINDOW);
 		break;
 	case 2:
 		save_bmp(g_logWnd, L"journal");
@@ -1905,10 +1905,10 @@ static LRESULT CALLBACK main_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 			command(CMD_LATER);
 			break;
 		case ID_SHOW_MXM:
-			open_tool_window(&g_mxmWnd, L"notGTKaraokeMxm", L"Musixmatch", MXM_W, MXM_H, fixed);
+			open_tool_window(&g_mxmWnd, L"notGTLyricsBridgeMxm", L"Musixmatch", MXM_W, MXM_H, fixed);
 			break;
 		case ID_SHOW_LOG:
-			open_tool_window(&g_logWnd, L"notGTKaraokeLog", T(L"Журнал караоке", L"Karaoke journal"), 640, 420, WS_OVERLAPPEDWINDOW);
+			open_tool_window(&g_logWnd, L"notGTLyricsBridgeLog", T(L"Журнал Lyrics Bridge", L"Lyrics Bridge journal"), 640, 420, WS_OVERLAPPEDWINDOW);
 			break;
 		case ID_TRAY_SHOW:
 			show_window(hwnd);
@@ -1945,7 +1945,7 @@ static LRESULT CALLBACK main_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 		paint_buffered(hwnd, paint_main);
 		return 0;
 	case WM_CLOSE:
-		/* Closing hides: the karaoke goes on, from the notification area. */
+		/* Closing hides: the bridge goes on, from the notification area. */
 		if (g_snapshotDir[0]) {
 			DestroyWindow(hwnd);
 		} else {
@@ -2019,8 +2019,8 @@ int wmain(int argc, wchar_t **argv) {
 
 	g_instance = GetModuleHandleW(NULL);
 	g_lang = PRIMARYLANGID(GetUserDefaultUILanguage()) != LANG_RUSSIAN;
-	known_path(CSIDL_APPDATA, L"karaoke.json", g_settingsPath);
-	known_path(CSIDL_LOCAL_APPDATA, L"karaoke", g_cacheDir);
+	known_path(CSIDL_APPDATA, L"lyrics-bridge.json", g_settingsPath);
+	known_path(CSIDL_LOCAL_APPDATA, L"lyrics-bridge", g_cacheDir);
 	for (int i = 1; i < argc; i++) {
 		if (!wcscmp(argv[i], L"--snapshot") && i + 1 < argc) copy_str(g_snapshotDir, MAX_PATH, argv[++i]);
 		else if (!wcscmp(argv[i], L"--snapshot-after") && i + 1 < argc) g_snapshotAfter = _wtof(argv[++i]);
@@ -2054,9 +2054,9 @@ int wmain(int argc, wchar_t **argv) {
 	}
 
 	/* A second start shows the window that is already there. */
-	once = CreateMutexW(NULL, FALSE, L"Local\\notGT-Karaoke");
+	once = CreateMutexW(NULL, FALSE, L"Local\\notGT-LyricsBridge");
 	if (once && GetLastError() == ERROR_ALREADY_EXISTS && !g_snapshotDir[0]) {
-		HWND existing = FindWindowW(L"notGTKaraoke", NULL);
+		HWND existing = FindWindowW(L"notGTLyricsBridge", NULL);
 		if (existing) show_window(existing);
 		return 0;
 	}
@@ -2094,13 +2094,13 @@ int wmain(int argc, wchar_t **argv) {
 	g_engineWake = CreateEventW(NULL, FALSE, FALSE, NULL);
 	g_wsWake = CreateEventW(NULL, FALSE, FALSE, NULL);
 	g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
-	register_class(L"notGTKaraoke", main_proc);
-	register_class(L"notGTKaraokeMxm", mxm_proc);
-	register_class(L"notGTKaraokeLog", log_proc);
+	register_class(L"notGTLyricsBridge", main_proc);
+	register_class(L"notGTLyricsBridgeMxm", mxm_proc);
+	register_class(L"notGTLyricsBridgeLog", log_proc);
 
 	SetRect(&frame, 0, 0, S(MAIN_W), S(MAIN_H));
 	AdjustWindowRectEx(&frame, style, FALSE, 0);
-	CreateWindowExW(0, L"notGTKaraoke", L"notGT", style, CW_USEDEFAULT, CW_USEDEFAULT, frame.right - frame.left,
+	CreateWindowExW(0, L"notGTLyricsBridge", L"notGT", style, CW_USEDEFAULT, CW_USEDEFAULT, frame.right - frame.left,
 		frame.bottom - frame.top, NULL, NULL, g_instance, NULL);
 	if (!g_main) return 1;
 	brand_title_bar(g_main);
@@ -2109,7 +2109,7 @@ int wmain(int argc, wchar_t **argv) {
 		ShowWindow(g_main, SW_SHOW);
 		UpdateWindow(g_main);
 	}
-	log_line(L"notGT Karaoke started");
+	log_line(L"notGT Lyrics Bridge started");
 
 	threads[0] = CreateThread(NULL, 0, engine_thread, NULL, 0, NULL);
 	threads[1] = CreateThread(NULL, 0, ws_thread, NULL, 0, NULL);

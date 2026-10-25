@@ -12,8 +12,8 @@
  * combase.dll is loaded at run time: the program starts on a system without
  * these controls (Windows before 10 1809, wine) and says so instead.
  */
-#ifndef KARAOKE_SMTC_H
-#define KARAOKE_SMTC_H
+#ifndef BRIDGE_SMTC_H
+#define BRIDGE_SMTC_H
 
 #include <windows.h>
 

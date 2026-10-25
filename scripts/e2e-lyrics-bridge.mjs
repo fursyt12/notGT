@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * End-to-end test of notGT Karaoke (karaoke/win/notGT-karaoke.c) without
+ * End-to-end test of notGT Lyrics Bridge (lyrics-bridge/win/notGT-lyrics-bridge.c) without
  * Windows: the program is cross-compiled with mingw-w64 and run under wine in
  * a virtual display, against a stand-in for notGT's WebSocket API that records
  * every frame. Nothing here reaches the internet: the demo song is built in,
@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 
 const self = fileURLToPath(import.meta.url);
 const repo = path.resolve(path.dirname(self), "..");
-const win = path.join(repo, "karaoke", "win");
+const win = path.join(repo, "lyrics-bridge", "win");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const has = (cmd) => spawnSync("sh", ["-c", `command -v ${cmd}`]).status === 0;
 
@@ -44,7 +44,7 @@ const missing = ["x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-windres", "wine",
 	(cmd) => !has(cmd),
 );
 if (missing.length > 0) {
-	console.log(`SKIP  the karaoke test needs: ${missing.join(", ")}`);
+	console.log(`SKIP  the lyrics bridge test needs: ${missing.join(", ")}`);
 	process.exit(0);
 }
 
@@ -59,8 +59,8 @@ if (!process.env.NOTGT_E2E_XVFB) {
 
 const { WebSocketServer } = createRequire(path.join(repo, "package.json"))("ws");
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "notgt-karaoke-"));
-const exe = path.join(tmp, "notGT Karaoke.exe");
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "notgt-lyrics-bridge-"));
+const exe = path.join(tmp, "notgt-lyrics-bridge.exe");
 const post = path.join(tmp, "post.exe");
 const wineEnv = {
 	...process.env,
@@ -165,7 +165,7 @@ function mainWindow() {
 
 async function main() {
 	// ------------------------------------------------------------------ build
-	const res = spawnSync("x86_64-w64-mingw32-windres", ["notGT-karaoke.rc", "-O", "coff", "-o", path.join(tmp, "res.o")], {
+	const res = spawnSync("x86_64-w64-mingw32-windres", ["notGT-lyrics-bridge.rc", "-O", "coff", "-o", path.join(tmp, "res.o")], {
 		cwd: win,
 		encoding: "utf8",
 	});
@@ -179,7 +179,7 @@ async function main() {
 			"-mwindows",
 			"-o",
 			exe,
-			"notGT-karaoke.c",
+			"notGT-lyrics-bridge.c",
 			path.join(tmp, "res.o"),
 			"-lwinhttp",
 			"-lgdiplus",
@@ -191,7 +191,7 @@ async function main() {
 		],
 		{ cwd: win, encoding: "utf8" },
 	);
-	check("the karaoke program compiles", res.status === 0 && cc.status === 0, res.stderr + cc.stderr);
+	check("the lyrics bridge compiles", res.status === 0 && cc.status === 0, res.stderr + cc.stderr);
 	check("…without warnings", (res.stderr + cc.stderr).trim() === "", res.stderr + cc.stderr);
 	const helper = spawnSync("x86_64-w64-mingw32-gcc", ["-O2", "-municode", "-o", post, "test/post.c"], { cwd: win, encoding: "utf8" });
 	if (cc.status !== 0 || helper.status !== 0) return;
@@ -350,6 +350,6 @@ main()
 	.finally(() => {
 		if (failures.length === 0) fs.rmSync(tmp, { recursive: true, force: true });
 		else console.log(`\nleft for inspection: ${tmp}`);
-		console.log(failures.length === 0 ? "\nAll karaoke checks passed" : `\n${failures.length} check(s) failed`);
+		console.log(failures.length === 0 ? "\nAll lyrics bridge checks passed" : `\n${failures.length} check(s) failed`);
 		process.exit(failures.length === 0 ? 0 : 1);
 	});

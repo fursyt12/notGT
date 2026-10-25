@@ -1,11 +1,11 @@
 /*
- * The network of notGT Karaoke: HTTPS requests to the lyrics sources and the
+ * The network of notGT Lyrics Bridge: HTTPS requests to the lyrics sources and the
  * WebSocket to notGT, both through WinHTTP, which Windows has anyway.
  *
  * Every call here blocks; the program makes them from its worker threads.
  */
-#ifndef KARAOKE_NET_H
-#define KARAOKE_NET_H
+#ifndef BRIDGE_NET_H
+#define BRIDGE_NET_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,10 +26,10 @@ static HINTERNET g_http;
 /* One session for the whole program: WinHTTP keeps the connections of a
  * session alive, so a source asked twice does not shake hands twice. */
 static BOOL net_init(void) {
-	g_http = WinHttpOpen(L"notGT-karaoke/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+	g_http = WinHttpOpen(L"notGT-lyrics-bridge/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
 		WINHTTP_NO_PROXY_BYPASS, 0);
 	if (!g_http) /* before Windows 8.1 */
-		g_http = WinHttpOpen(L"notGT-karaoke/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+		g_http = WinHttpOpen(L"notGT-lyrics-bridge/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
 			WINHTTP_NO_PROXY_BYPASS, 0);
 	return g_http != NULL;
 }
