@@ -53,7 +53,8 @@ Spotify lists artists: "A, B, C".
 Musixmatch no longer hands out anonymous tokens (it answers with a token of zeros, and
 every search with it returns the same demo song), so without a token of your own it is not
 asked. A text in another script than the track's (a transliteration, a translation) is not
-taken; a song in two languages is.
+taken; a song in two languages is. Nor is a song of the same title by another artist: only one
+whose artist may be the same name in the other alphabet, "Фараон" for "Pharaoh".
 
 ## Where its files are
 

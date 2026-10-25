@@ -644,6 +644,15 @@ static void track_init(Track *t, const wchar_t *artist, const wchar_t *title, do
 	t->russian = count_letters(title, &latin) + count_letters(artist, &latin) > 0;
 }
 
+/* Are two credits the same, case and punctuation aside? */
+static BOOL same_credit(const wchar_t *a, const wchar_t *b) {
+	wchar_t *x = norm(a), *y = norm(b);
+	BOOL same = x && y && !wcscmp(x, y);
+	free(x);
+	free(y);
+	return same;
+}
+
 /* Do two artist names stand for the same artist (one may carry more words)? */
 static BOOL same_artist(const wchar_t *a, const wchar_t *b) {
 	wchar_t *x = norm(a), *y = norm(b);
@@ -724,9 +733,25 @@ typedef struct {
 	const wchar_t *artist;
 	double durationS; /* 0 = unknown */
 	const JVal *item;
-	int artistMiss; /* 0 = shares an artist name */
+	int artistMiss; /* 0 = shares an artist name, 1 = may be its name in the other alphabet, 2 = another artist */
 	double off; /* seconds from the track's length */
 } Candidate;
+
+/* 'c' for a name written in Cyrillic, 'l' in Latin letters, 0 for anything else. */
+static int script_of(const wchar_t *s) {
+	int latin, cyr = count_letters(s, &latin);
+	return cyr > latin ? 'c' : latin ? 'l' : 0;
+}
+
+/*
+ * Can two names with nothing in common still be one artist? Only written in the
+ * other alphabet ("Фараон" and "Pharaoh"); two names in the same one are two
+ * artists, and their songs of the same title are other songs.
+ */
+static BOOL other_alphabet(const wchar_t *a, const wchar_t *b) {
+	int x = script_of(a), y = script_of(b);
+	return x && y && x != y;
+}
 
 static int candidate_order(const void *a, const void *b) {
 	const Candidate *x = (const Candidate *)a, *y = (const Candidate *)b;
@@ -736,18 +761,19 @@ static int candidate_order(const void *a, const void *b) {
 
 /*
  * The candidates that are this recording, closest in length first: all that
- * share an artist name and are at most 6 s apart; when none shares the artist
- * (a transliterated name) only the closest one. Returns how many are kept, at
- * the front of `c`.
+ * share an artist name and are at most 6 s apart; when none shares the artist,
+ * only the closest one whose artist may be the same name in the other alphabet
+ * (a transliteration). A song of the same title by another artist is another
+ * song. Returns how many are kept, at the front of `c`.
  */
 static int keep_matching(Candidate *c, int n, const Track *t) {
 	int kept = 0;
 	for (int i = 0; i < n; i++) {
-		c[i].artistMiss = !artist_matches(t->artist, c[i].artist);
+		c[i].artistMiss = artist_matches(t->artist, c[i].artist) ? 0 : other_alphabet(t->artist, c[i].artist) ? 1 : 2;
 		c[i].off = t->durationS > 0 && c[i].durationS > 0 ? fabs(c[i].durationS - t->durationS) : 5;
 	}
 	if (n > 1) qsort(c, (size_t)n, sizeof(Candidate), candidate_order);
-	if (!n || c[0].off > 6) return 0; /* more than 6 s apart = a different recording */
+	if (!n || c[0].off > 6 || c[0].artistMiss == 2) return 0; /* more than 6 s apart = a different recording */
 	if (c[0].artistMiss) return 1;
 	for (int i = 0; i < n; i++)
 		if (!c[i].artistMiss && c[i].off <= 6) c[kept++] = c[i];
@@ -824,10 +850,22 @@ static int source_lrclib(const Track *t, Variants *out) {
 		}
 	}
 	kept = keep_matching(c, n, t);
-	for (int i = 0; i < kept; i++) {
-		add_credit(out, c[i].artist);
-		variants_add(out, L"lrclib", parse_lrc(json_str(c[i].item, L"syncedLyrics")), 1, c[i].artist);
+	/* LRCLIB's credits are typed in by whoever uploaded a copy, writers and all:
+	 * the credit most copies agree on counts (on a tie, the fuller one). */
+	{
+		int best = -1, bestVotes = 0;
+		for (int i = 0; i < kept; i++) {
+			int votes = 0;
+			for (int j = 0; j < kept; j++) votes += same_credit(c[i].artist, c[j].artist);
+			if (votes > bestVotes || (votes == bestVotes && artist_count(c[i].artist) > artist_count(c[best].artist))) {
+				best = i;
+				bestVotes = votes;
+			}
+		}
+		if (best >= 0) add_credit(out, c[best].artist);
 	}
+	for (int i = 0; i < kept; i++)
+		variants_add(out, L"lrclib", parse_lrc(json_str(c[i].item, L"syncedLyrics")), 1, L"");
 	for (int i = 0; i < 8; i++) {
 		json_free(docs[i]);
 		free(f[i].body);
@@ -1067,13 +1105,14 @@ static int source_musixmatch(const Track *t, const wchar_t *token, Variants *out
 	length = (int)json_num(track, L"track_length", 0);
 	credit = json_str(track, L"artist_name");
 	{
-		/* What it matched: the right artist, or at least the right title; the right length. */
+		/* What it matched: the right artist, or the right title by the artist's name in the
+		 * other alphabet; the right length. */
 		const wchar_t *artist = credit, *name = json_str(track, L"track_name");
 		wchar_t *a = norm(t->clean), *b = norm(name);
 		BOOL titleOk = a && b && b[0] && (wcsstr(a, b) || wcsstr(b, a));
 		free(a);
 		free(b);
-		if (!track || (artist[0] && !artist_matches(t->artist, artist) && !titleOk)) {
+		if (!track || (artist[0] && !artist_matches(t->artist, artist) && !(titleOk && other_alphabet(t->artist, artist)))) {
 			if (lyrics_log) lyrics_log(L"  musixmatch rejected: matched another song: %ls - %ls", artist, name);
 			json_free(doc);
 			return 1;
