@@ -1081,7 +1081,7 @@ changes instead of being polled. This is what a Companion module connects to.
 ### The conversation
 
 ```
-server → {"type":"hello","protocol":1,"bundle":"notGT","version":"0.17.2",
+server → {"type":"hello","protocol":1,"bundle":"notGT","version":"0.17.3",
           "authRequired":true,"authenticated":false,"login":["token","password"]}
 client → {"type":"login","id":1,"token":"<wsToken>"}
 server → {"type":"reply","id":1,"command":"login","ok":true,"result":{"user":null}}
