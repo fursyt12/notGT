@@ -582,5 +582,12 @@
 	"The render was stopped.": "Рендер остановлен.",
 	"The file is kept on the server for a day.": "Файл хранится на сервере сутки.",
 	"Close": "Закрыть",
-	"Stop": "Остановить"
+	"Stop": "Остановить",
+	"Mode": "Режим",
+	"Loop length": "Длина петли",
+	"One cycle of what moves on air, from where the entrance is over and without the exit: the file plays on in a loop without a jump. 0 finds the length from the animation's own loops, up to 60 s.": "Один цикл того, что движется в эфире, — с момента, когда появление закончилось, и без ухода: файл играет по кругу без скачка. 0 — длина по собственным циклам анимации, до 60 с.",
+	"A loop of {seconds} s.": "Петля {seconds} с.",
+	"Not every part comes round within it: one that repeats every {period} s is {miss} ms off where the file starts over.": "Не всё успевает вернуться к началу: часть, что повторяется каждые {period} с, на стыке смещена на {miss} мс.",
+	"Every part comes round after {seconds} s: that loop length makes an exact loop.": "Всё возвращается к началу через {seconds} с: с такой длиной петля будет точной.",
+	"Nothing repeats on air by itself (no endless animation or looping video): give the loop a length.": "В эфире ничего не повторяется само (нет бесконечной анимации или зацикленного видео): задайте длину петли."
 }

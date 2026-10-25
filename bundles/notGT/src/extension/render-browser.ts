@@ -39,16 +39,17 @@ function candidates(): string[] {
 	return list;
 }
 
-/** The browser a render would use, or null when there is none. */
-export function findBrowser(): string | null {
+/** The browsers a render can use, the first one first. */
+export function findBrowsers(): string[] {
+	const found: string[] = [];
 	for (const candidate of candidates()) {
 		try {
-			if (fs.statSync(candidate).isFile()) return candidate;
+			if (fs.statSync(candidate).isFile() && !found.includes(candidate)) found.push(candidate);
 		} catch {
 			// Not there; the next one.
 		}
 	}
-	return null;
+	return found;
 }
 
 type Handler = (method: string, params: Record<string, unknown>, sessionId?: string) => void;
@@ -219,6 +220,8 @@ export class RenderBrowser {
 			"--disable-checker-imaging",
 			"--disable-dev-shm-usage",
 			"--ignore-certificate-errors",
+			// Its own log on stderr: on Windows the only word on why it would not start.
+			"--enable-logging=stderr",
 		];
 		// Chromium will not sandbox itself as root, which a Docker container is;
 		// unsandboxed it needs no zygote processes either. (Its crash reporter
@@ -241,6 +244,19 @@ export class RenderBrowser {
 			removeProfile(profile);
 			throw error;
 		}
+	}
+
+	/** The first of `executables` that starts; what the others said when none does. */
+	static async launchFirst(executables: string[]): Promise<RenderBrowser> {
+		const reasons: string[] = [];
+		for (const executable of executables) {
+			try {
+				return await RenderBrowser.launch(executable);
+			} catch (error) {
+				reasons.push(`${executable}: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		}
+		throw new Error(reasons.length ? reasons.join("; ") : "no browser to start");
 	}
 
 	async newPage(width: number, height: number): Promise<RenderPage> {
@@ -284,13 +300,26 @@ export class RenderBrowser {
  * Where the browser's DevTools listen: printed on stderr by Chromium, written
  * to `DevToolsActivePort` in the profile by every Chromium-based browser (Edge
  * on Windows prints nothing a parent can read).
+ *
+ * The process started may end with code 0 while the browser goes on in a
+ * process of its own — Chrome and Edge on Windows hand over like that, to an
+ * update that is waiting or from a launcher. The port still turns up in the
+ * profile, so a quiet exit is waited past for a while before it counts.
  */
 function devToolsUrl(child: ChildProcess, profile: string, stderr: () => string): Promise<string> {
 	return new Promise((resolve, reject) => {
-		const until = Date.now() + 30_000;
+		let until = Date.now() + 30_000;
+		let quit: number | null | undefined;
+		const why = () => {
+			const lines = stderr()
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.filter(Boolean);
+			return lines.length ? `: ${lines.slice(-3).join(" | ")}` : "";
+		};
 		const exit = (code: number | null) => {
-			finish();
-			reject(new Error(`the browser quit at start (code ${code}): ${stderr().trim().split("\n").slice(-3).join(" ")}`));
+			quit = code;
+			if (code === 0) until = Math.min(until, Date.now() + 15_000);
 		};
 		const timer = setInterval(() => {
 			const printed = /DevTools listening on (ws:\/\/\S+)/.exec(stderr());
@@ -309,17 +338,28 @@ function devToolsUrl(child: ChildProcess, profile: string, stderr: () => string)
 			} catch {
 				// Not written yet.
 			}
+			if (quit !== undefined && quit !== 0) {
+				finish();
+				reject(new Error(`the browser quit at start (code ${quit})${why()}`));
+				return;
+			}
 			if (Date.now() > until) {
 				finish();
-				child.kill("SIGKILL");
-				reject(new Error("the browser did not start within 30 s"));
+				if (quit === undefined) child.kill("SIGKILL");
+				reject(
+					new Error(
+						quit === 0
+							? `the browser quit at start (code 0) and did not come back in a process of its own${why()}`
+							: `the browser did not start within 30 s${why()}`,
+					),
+				);
 			}
 		}, 100);
 		const finish = () => {
 			clearInterval(timer);
 			child.off("exit", exit);
 		};
-		child.once("exit", exit);
+		child.on("exit", exit);
 	});
 }
 

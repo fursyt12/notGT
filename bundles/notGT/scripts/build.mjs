@@ -4,6 +4,7 @@
  *
  *  - `src/extension/**.ts`  -> `extension/index.js`            (CommonJS, bundled by esbuild)
  *    and `extension/render-worker.js` (the renderer's DXV encoder, run in worker threads)
+ *    and `extension/render-cli.js` (`npm run render`: render another server's animation here)
  *  - `src/dashboard/**.tsx` -> `dashboard/assets/*.js`         (ES modules, bundled by Vite)
  *  - `src/graphics/**.ts`   -> `graphics/assets/*.js`          (ES modules, bundled by Vite)
  *
@@ -28,6 +29,7 @@ async function buildExtension() {
 		entryPoints: {
 			index: SRC("extension", "index.ts"),
 			"render-worker": SRC("extension", "render-worker.ts"),
+			"render-cli": SRC("extension", "render-cli.ts"),
 		},
 		outdir: path.join(bundleDir, "extension"),
 		bundle: true,

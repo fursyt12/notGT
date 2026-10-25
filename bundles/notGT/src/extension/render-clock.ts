@@ -268,6 +268,47 @@ export const RENDER_CLOCK_SOURCE = String.raw`(function () {
 				seen.add(animation);
 			});
 		},
+		/**
+		 * What repeats on air: the period of every endless animation (a back-and-
+		 * forth one counts there and back) and of every looping video, and whether
+		 * something is still on its way in — an animation that ends and has not,
+		 * or a loop still in its delay.
+		 */
+		loops: function () {
+			var periods = [];
+			var busy = false;
+			eachAnimation(function (animation) {
+				var state = animation.playState;
+				if (state !== "running" && state !== "paused") return;
+				var timing = animation.effect && animation.effect.getComputedTiming ? animation.effect.getComputedTiming() : null;
+				if (!timing) return;
+				if (timing.iterations !== Infinity) {
+					busy = true;
+					return;
+				}
+				if (state === "paused") return;
+				if ((animation.currentTime || 0) < (timing.delay || 0)) {
+					busy = true;
+					return;
+				}
+				var there = Number(timing.duration) || 0;
+				var back = timing.direction === "alternate" || timing.direction === "alternate-reverse" ? 2 : 1;
+				var period = (there * back) / Math.abs(animation.playbackRate || 1);
+				if (period > 0) periods.push(period);
+			});
+			var docs = documents();
+			for (var i = 0; i < docs.length; i++) {
+				var list = docs[i].querySelectorAll("video");
+				for (var k = 0; k < list.length; k++) {
+					var video = list[k];
+					var wants = video.__notgtWants === undefined ? video.autoplay : video.__notgtWants;
+					if (wants && video.loop && isFinite(video.duration) && video.duration > 0) {
+						periods.push((video.duration * 1000) / (video.playbackRate || 1));
+					}
+				}
+			}
+			return { busy: busy, periods: periods };
+		},
 		settle: settle,
 		wait: wait,
 		get now() {

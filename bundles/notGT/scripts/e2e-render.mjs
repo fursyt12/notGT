@@ -6,7 +6,8 @@
  *      server can make (WebM VP9, ProRes 4444, DXV3); each file has the codec,
  *      the frame count and, frame by frame, the alpha the fade gives;
  *   2. a `layers` animation (CSS transitions) comes out whole: transparent at
- *      the start and the end, opaque in the middle;
+ *      the start and the end, opaque in the middle; a loop finds its own
+ *      length from two endless animations, and its last frame leads into the first;
  *   3. a second render while one runs is refused, and a render can be stopped.
  *
  * The frames are read back with ffmpeg on this machine; without it the
@@ -192,6 +193,68 @@ async function main() {
 			);
 		}
 
+		// --- 2b. one seamless loop ------------------------------------------
+		// Two endless animations, back and forth every 1 s and round every
+		// 0.6 s, after a 0.3 s entrance: one loop is 3 s, 75 frames at 25 fps,
+		// and the frame after the last would be the first again.
+		await api("POST", "/api/templates", {
+			id: "e2e-render-loop",
+			name: "E2E render loop",
+			kind: "code",
+			width: 320,
+			height: 180,
+			layers: [],
+			code: {
+				html:
+					'<div id="a" style="position:absolute;left:0;top:0;width:160px;height:180px;background:#00ff00"></div>' +
+					'<div id="b" style="position:absolute;left:160px;top:0;width:160px;height:180px;background:#00ff00"></div>',
+				css: "",
+				js:
+					"const a = document.getElementById('a'), b = document.getElementById('b');" +
+					"onShow(() => {" +
+					" a.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, fill: 'backwards' });" +
+					" a.animate([{ opacity: 1 }, { opacity: 0.2 }], { duration: 500, delay: 300, iterations: Infinity, direction: 'alternate', easing: 'linear' });" +
+					" b.animate([{ opacity: 1 }, { opacity: 0.2 }], { duration: 600, iterations: Infinity, easing: 'linear' });" +
+					"});",
+			},
+		});
+		const { json: looped } = await api("POST", `${RENDER}/jobs`, {
+			templateId: "e2e-render-loop",
+			format: "dxv",
+			fps: 25,
+			mode: "loop",
+			holdMs: 0,
+			cycleMs: 0,
+		});
+		let loop = looped.job;
+		for (let i = 0; i < 400 && loop.state === "running"; i++) {
+			await sleep(300);
+			loop = (await api("GET", `${RENDER}/jobs/${loop.id}`)).json.job;
+		}
+		check(
+			"loop: one cycle of both loops, found by itself",
+			loop.state === "done" && loop.cycleMs === 3000 && loop.frames === 75 && (loop.missMs ?? 0) < 1,
+			JSON.stringify({ state: loop.state, error: loop.error, cycleMs: loop.cycleMs, frames: loop.frames, missMs: loop.missMs }),
+		);
+		if (loop.state === "done" && hasFfmpeg) {
+			const response = await fetch(`${BASE}${RENDER}/files/${encodeURIComponent(loop.file)}`);
+			const file = path.join(outDir, loop.file);
+			fs.writeFileSync(file, Buffer.from(await response.arrayBuffer()));
+			// Round the corner, from the last frame to the first, no part jumps
+			// further than it moves from one frame to the next.
+			const seam = (values) => {
+				const steps = values.map((value, i) => Math.abs(value - values[(i + 1) % values.length]));
+				return { wrap: steps[steps.length - 1], most: Math.max(...steps.slice(0, -1)) };
+			};
+			const left = seam(alphaAt(file, "dxv", 320, 180, 80, 90));
+			const right = seam(alphaAt(file, "dxv", 320, 180, 240, 90));
+			check(
+				"loop: the last frame leads into the first",
+				left.wrap <= left.most + 4 && right.wrap <= right.most + 4 && left.most > 0 && right.most > 0,
+				JSON.stringify({ left, right }),
+			);
+		}
+
 		// --- 3. one at a time, and a stop ----------------------------------
 		const { json: long } = await api("POST", `${RENDER}/jobs`, {
 			templateId: "e2e-render-code",
@@ -217,6 +280,7 @@ async function main() {
 	} finally {
 		await api("DELETE", "/api/templates/e2e-render-code", undefined, [404]);
 		await api("DELETE", "/api/templates/e2e-render-layers", undefined, [404]);
+		await api("DELETE", "/api/templates/e2e-render-loop", undefined, [404]);
 	}
 
 	console.log(

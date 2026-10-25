@@ -95,6 +95,12 @@ export function RenderButton({
 	const [holdMs, setHoldMs] = useState<number>(() =>
 		remembered("notgt.render.holdMs", 5000, (value) => typeof value === "number" && value >= 0 && value <= RENDER_MAX_HOLD_MS),
 	);
+	const [mode, setMode] = useState<"play" | "loop">(() =>
+		remembered("notgt.render.mode", "play", (value) => value === "play" || value === "loop"),
+	);
+	const [cycleMs, setCycleMs] = useState<number>(() =>
+		remembered("notgt.render.cycleMs", 0, (value) => typeof value === "number" && value >= 0 && value <= RENDER_MAX_HOLD_MS),
+	);
 
 	const running = job?.state === "running";
 
@@ -136,12 +142,16 @@ export function RenderButton({
 		remember("notgt.render.format", format);
 		remember("notgt.render.fps", fps);
 		remember("notgt.render.holdMs", holdMs);
+		remember("notgt.render.mode", mode);
+		remember("notgt.render.cycleMs", cycleMs);
 		try {
 			const { job: started } = await request<{ job: RenderJob }>("POST", `${RENDER_BASE}/jobs`, {
 				templateId: target.id,
 				format,
 				fps,
+				mode,
 				holdMs,
+				cycleMs,
 			});
 			setJob(started);
 			poll(started.id);
@@ -224,17 +234,52 @@ export function RenderButton({
 				</div>
 
 				<div className="ed-render__row">
-					<span className="ed-render__label">{t("On screen")}</span>
-					<SecondsInput
-						valueMs={holdMs}
-						minMs={0}
-						disabled={running}
-						label={t("On screen")}
-						onCommit={(ms) => setHoldMs(Math.min(RENDER_MAX_HOLD_MS, ms))}
-					/>
+					<span className="ed-render__label">{t("Mode")}</span>
+					<div className="seg" role="radiogroup" aria-label={t("Mode")}>
+						{(["play", "loop"] as const).map((value) => (
+							<button
+								key={value}
+								type="button"
+								role="radio"
+								aria-checked={value === mode}
+								className={value === mode ? "is-on" : undefined}
+								disabled={running}
+								onClick={() => setMode(value)}
+								data-render-mode={value}
+							>
+								{value === "play" ? t("Play once") : t("Loop")}
+							</button>
+						))}
+					</div>
 				</div>
+
+				{mode === "play" ? (
+					<div className="ed-render__row">
+						<span className="ed-render__label">{t("On screen")}</span>
+						<SecondsInput
+							valueMs={holdMs}
+							minMs={0}
+							disabled={running}
+							label={t("On screen")}
+							onCommit={(ms) => setHoldMs(Math.min(RENDER_MAX_HOLD_MS, ms))}
+						/>
+					</div>
+				) : (
+					<div className="ed-render__row">
+						<span className="ed-render__label">{t("Loop length")}</span>
+						<SecondsInput
+							valueMs={cycleMs}
+							minMs={0}
+							disabled={running}
+							label={t("Loop length")}
+							onCommit={(ms) => setCycleMs(Math.min(RENDER_MAX_HOLD_MS, ms))}
+						/>
+					</div>
+				)}
 				<div className="hint">
-					{t("The entrance, this long on screen, then the exit, with the variables as they are now: the selected row of every list.")}
+					{mode === "play"
+						? t("The entrance, this long on screen, then the exit, with the variables as they are now: the selected row of every list.")
+						: t("One cycle of what moves on air, from where the entrance is over and without the exit: the file plays on in a loop without a jump. 0 finds the length from the animation's own loops, up to 60 s.")}
 					{unsaved ? ` ${t("Unsaved changes are saved first.")}` : ""}
 				</div>
 
@@ -258,7 +303,15 @@ export function RenderButton({
 									{t("{name}: frame {frames}", { name: job.name, frames: job.frames })}
 								</span>
 							</>
-						) : job.state === "done" && job.file ? (
+						) : job.state === "error" ? (
+							<div className="err">
+								{job.errorCode === "no_loop"
+									? t("Nothing repeats on air by itself (no endless animation or looping video): give the loop a length.")
+									: t("The render failed: {error}", { error: job.error ?? "" })}
+							</div>
+						) : job.state === "cancelled" ? (
+							<span className="muted">{t("The render was stopped.")}</span>
+						) : job.file ? (
 							<a
 								className="ed-render__file"
 								href={`${RENDER_BASE}/files/${encodeURIComponent(job.file)}`}
@@ -269,11 +322,23 @@ export function RenderButton({
 								<span className="truncate">{job.file}</span>
 								<span className="muted">{job.bytes ? formatBytes(job.bytes) : ""}</span>
 							</a>
-						) : job.state === "error" ? (
-							<div className="err">{t("The render failed: {error}", { error: job.error ?? "" })}</div>
-						) : (
-							<span className="muted">{t("The render was stopped.")}</span>
-						)}
+						) : null}
+						{job.state === "done" && job.mode === "loop" && job.cycleMs > 0 ? (
+							<span className="muted" data-render-loop={job.cycleMs}>
+								{t("A loop of {seconds} s.", { seconds: (job.cycleMs / 1000).toFixed(2) })}
+								{(job.missMs ?? 0) > 500 / job.fps
+									? ` ${t("Not every part comes round within it: one that repeats every {period} s is {miss} ms off where the file starts over.", {
+											period: ((job.missPeriodMs ?? 0) / 1000).toFixed(2),
+											miss: Math.round(job.missMs ?? 0),
+										})}`
+									: ""}
+								{job.exactMs
+									? ` ${t("Every part comes round after {seconds} s: that loop length makes an exact loop.", {
+											seconds: Number((job.exactMs / 1000).toFixed(2)),
+										})}`
+									: ""}
+							</span>
+						) : null}
 					</div>
 				) : null}
 				{error ? <div className="err">{error}</div> : null}

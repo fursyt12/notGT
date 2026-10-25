@@ -543,6 +543,40 @@ download and kept on the server (`assets/notGT/renders/`) for a day.
   stores each frame's texture uncompressed: about a byte per pixel per frame, 50 MB a
   second at 1080p25.
 
+**`Loop`** instead of **`Play once`** renders one cycle of what moves on air, from where the
+entrance is over and without the exit, so the file plays on in a loop without a jump — a
+drifting glass, a breathing glow, a sheen that sweeps again and again. With the loop length
+at 0 the length is found from the animation's own endless animations and looping videos:
+the shortest whole number of frames, up to 60 s, after which each of them is back where it
+began (a back-and-forth one counts there and back, so it keeps its direction). When no
+length that short fits them all, the dialog says which part is how far off at the seam,
+and after how long everything does come round; that length, up to 10 minutes, can be set
+by hand. Loops that a script runs with its own timers are not seen: set their length.
+
+#### Rendering on another machine
+
+`npm run render` in `bundles/notGT` renders an animation of any notGT server (0.16.0 or
+newer) on the machine it runs on, with that machine's browser and ffmpeg — for a server that
+cannot render by itself, or to keep the work off the machine that runs the show. It only
+reads from the server; nothing goes on air.
+
+```bash
+cd bundles/notGT && npm run build      # once
+npm run render -- --server http://192.168.1.20:9090 --user admin --password admin --list
+npm run render -- --server http://192.168.1.20:9090 --user admin --password admin \
+  --title "Lower third" --format dxv --fps 25 --hold 5
+npm run render -- --server … --title "Side" --format webm --loop          # one seamless loop
+```
+
+`--token` signs in with the server's `apiToken` instead; with the sign-in off neither is
+needed. `--length` sets a loop's length, `--out` the file, `--browser` the browser (by default
+the first Chromium, Chrome or Edge found). Node 20 works too: the script restarts itself
+with `--experimental-websocket`.
+
+If a render on Windows stops with “the browser quit at start”, the message names the
+browser and ends with what it logged. Another one can be named in `NOTGT_BROWSER` (every
+browser found is tried in turn), or the render made on another machine as above.
+
 ### Team (`team.html`)
 
 For an administrator: the groups with their outs and WebSocket keys, the users, and the

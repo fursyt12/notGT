@@ -7,5 +7,7 @@ node_modules/
 /extension/index.js.map
 /extension/render-worker.js
 /extension/render-worker.js.map
+/extension/render-cli.js
+/extension/render-cli.js.map
 /dashboard/assets/
 /graphics/assets/

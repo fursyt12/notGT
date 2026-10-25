@@ -24,6 +24,9 @@ export const RENDER_FORMATS: Record<RenderFormat, RenderFormatInfo> = {
 
 export const RENDER_FPS = [25, 30, 50, 60] as const;
 
+/** The longest loop a render looks for by itself; one asked for may last as long as a hold. */
+export const RENDER_LOOP_MAX_MS = 60_000;
+
 /** The longest time on screen a render takes. */
 export const RENDER_MAX_HOLD_MS = 10 * 60_000;
 
@@ -37,8 +40,12 @@ export interface RenderRequest {
 	templateId: string;
 	format: RenderFormat;
 	fps: number;
+	/** "play": the entrance, `holdMs` on screen, the exit. "loop": one cycle of what moves on air. */
+	mode?: "play" | "loop";
 	/** From the show to the start of the exit. */
 	holdMs: number;
+	/** The loop's length; 0 or none finds it from the animation's own loops. */
+	cycleMs?: number;
 }
 
 export interface RenderJob {
@@ -50,7 +57,15 @@ export interface RenderJob {
 	fps: number;
 	width: number;
 	height: number;
+	mode: "play" | "loop";
 	holdMs: number;
+	/** Asked for: 0 finds it. Done: the loop's length. */
+	cycleMs: number;
+	/** A loop: the most a repeating part is off where the file starts over, and its period. */
+	missMs?: number;
+	missPeriodMs?: number;
+	/** A loop that misses: the length after which every part does come round, when there is one. */
+	exactMs?: number;
 	state: "running" | "done" | "error" | "cancelled";
 	/** 0..1 */
 	progress: number;
@@ -60,6 +75,8 @@ export interface RenderJob {
 	file?: string;
 	bytes?: number;
 	error?: string;
+	/** `no_loop`: a loop found nothing that repeats by itself. */
+	errorCode?: "no_loop";
 	startedAt: number;
 	updatedAt: number;
 }

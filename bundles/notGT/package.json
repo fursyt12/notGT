@@ -71,6 +71,7 @@
 		"build": "node scripts/build.mjs",
 		"watch": "node scripts/build.mjs --watch",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"render": "node extension/render-cli.js",
 		"test:e2e": "node scripts/e2e-out.mjs && node scripts/e2e-motion.mjs && node scripts/e2e-panels.mjs && node scripts/e2e-excel.mjs && node scripts/e2e-media.mjs && node scripts/e2e-ws.mjs && node scripts/e2e-timers.mjs && node scripts/e2e-ndi.mjs && node scripts/e2e-project.mjs && node scripts/e2e-render.mjs",
 		"test:e2e:team": "node scripts/e2e-team.mjs && node scripts/e2e-ws.mjs",
 		"convert-alpha": "node scripts/convert-alpha.mjs"
