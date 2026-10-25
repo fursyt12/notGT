@@ -256,9 +256,11 @@ async function main() {
 				JSON.stringify({
 					variants: [
 						{ id: "", sources: "lrclib", artist: "E2E Artist", votes: 3, lyrics: lines("A") },
-						// Spotify reports only the first artist; a source credits them all.
-						{ id: "", sources: "netease", artist: "Second Voice & E2E Artist feat. Third", votes: 1, lyrics: lines("B") },
+						{ id: "", sources: "netease", artist: "E2E Artist feat. Second Voice", votes: 1, lyrics: lines("B") },
 					],
+					// Spotify reports only the first artist. The fullest credit may come
+					// from a song a source matched without lyrics.
+					credit: "Second Voice & E2E Artist feat. Third",
 					pick: "",
 					manual: false,
 					offset: 0,

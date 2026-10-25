@@ -521,7 +521,7 @@ static DWORD WINAPI lookup_thread(LPVOID param) {
 	SourceJob *jobs = (SourceJob *)calloc(3, sizeof(SourceJob));
 	HANDLE threads[3];
 	int n = 0, answered = 0, finished = 0;
-	Variants found = { NULL, 0 };
+	Variants found = { 0 };
 	DWORD start = GetTickCount();
 	const wchar_t *names[3] = { L"musixmatch", L"lrclib", L"netease" };
 
@@ -542,7 +542,7 @@ static DWORD WINAPI lookup_thread(LPVOID param) {
 		/* every thread that is done and not yet counted */
 		for (int i = 0; i < n; i++) {
 			wchar_t why[160];
-			Variants ok = { NULL, 0 };
+			Variants ok = { 0 };
 			if (jobs[i].counted || WaitForSingleObject(threads[i], 0) != WAIT_OBJECT_0) continue;
 			jobs[i].counted = TRUE;
 			finished++;
@@ -558,6 +558,8 @@ static DWORD WINAPI lookup_thread(LPVOID param) {
 					variants_add(&ok, jobs[i].found.items[v].sources, lyrics_ref(jobs[i].found.items[v].ly),
 						jobs[i].found.items[v].votes, jobs[i].found.items[v].artist);
 			}
+			/* a song matched without lyrics may still credit its artists best */
+			if (add_credit(&found, jobs[i].found.credit) && found.n) any = TRUE;
 			if (!ok.n) continue;
 			log_line(L"  %ls: %d variant%ls in %.1f s", jobs[i].name, ok.n, ok.n == 1 ? L"" : L"s", (GetTickCount() - start) / 1000.0);
 			variants_merge(&found, &ok);
@@ -800,6 +802,12 @@ static void start_search(BOOL fresh) {
 		log_line(L"  source: cache");
 		apply_result(&r);
 		variants_free(&remembered.variants);
+		if (!remembered.credited) {
+			/* Remembered before the artists' credit was: ask the sources once more,
+			 * in the background; the variant chosen and the shift stay. */
+			log_line(L"  asking the sources again for every artist");
+			start_search(TRUE);
+		}
 		return;
 	}
 	if (!fresh) {
@@ -903,7 +911,7 @@ static BOOL read_player(BOOL smtcOk, PlayerState *st) {
 
 static void demo_lyrics(void) {
 	Lyrics *ly = lyrics_new();
-	Variants demo = { NULL, 0 };
+	Variants demo = { 0 };
 	Result r = { 0 };
 	for (size_t i = 0; ly && i < sizeof(DEMO) / sizeof(DEMO[0]); i++) lyrics_add(ly, DEMO[i].t, wdup(T(DEMO[i].ru, DEMO[i].en)), NULL, 0);
 	variants_add(&demo, L"demo", ly, 1, L"");

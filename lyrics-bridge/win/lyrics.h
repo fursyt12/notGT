@@ -423,6 +423,9 @@ typedef struct {
 typedef struct {
 	Variant *items;
 	int n;
+	/* The fullest artist credit of the songs the sources matched, with lyrics or
+	 * without: a source that has no lyrics for a song may still credit it best. */
+	wchar_t credit[256];
 } Variants;
 
 static void variant_id(const Lyrics *ly, char *out) {
@@ -445,7 +448,8 @@ static void variants_free(Variants *vs) {
 
 /* A copy that shares the lyrics. */
 static Variants variants_copy(const Variants *vs) {
-	Variants out = { NULL, 0 };
+	Variants out = { 0 };
+	memcpy(out.credit, vs->credit, sizeof(out.credit));
 	if (vs->n && (out.items = (Variant *)malloc((size_t)vs->n * sizeof(Variant))) != NULL) {
 		memcpy(out.items, vs->items, (size_t)vs->n * sizeof(Variant));
 		out.n = vs->n;
@@ -475,6 +479,14 @@ static void add_artist(Variant *v, const wchar_t *artist) {
 	if (artist_count(artist) <= artist_count(v->artist)) return;
 	wcsncpy(v->artist, artist, 255);
 	v->artist[255] = L'\0';
+}
+
+/* The same for the credit of all the songs matched; TRUE when it got fuller. */
+static BOOL add_credit(Variants *vs, const wchar_t *artist) {
+	if (artist_count(artist) <= artist_count(vs->credit)) return FALSE;
+	wcsncpy(vs->credit, artist, 255);
+	vs->credit[255] = L'\0';
+	return TRUE;
 }
 
 /*
@@ -514,6 +526,7 @@ static void variants_add(Variants *vs, const wchar_t *source, Lyrics *ly, int vo
 static void variants_merge(Variants *into, Variants *from) {
 	for (int i = 0; i < from->n; i++)
 		variants_add(into, from->items[i].sources, from->items[i].ly, from->items[i].votes, from->items[i].artist);
+	add_credit(into, from->credit);
 	free(from->items);
 	from->items = NULL;
 	from->n = 0;
@@ -652,8 +665,8 @@ static void credited_artists(const Track *t, const Variants *vs, wchar_t *out, s
 	int have = split_artists(t->artist, mine), most = have, n;
 	wcsncpy(out, t->artist, len - 1);
 	out[len - 1] = L'\0';
-	for (int i = 0; i < vs->n; i++) {
-		const wchar_t *credit = vs->items[i].artist;
+	for (int i = 0; i <= vs->n; i++) {
+		const wchar_t *credit = i < vs->n ? vs->items[i].artist : vs->credit;
 		if (!credit[0] || (n = split_artists(credit, names)) <= most || !artist_matches(t->artist, credit)) continue;
 		most = n;
 		memcpy(best, names, sizeof(names));
@@ -811,8 +824,10 @@ static int source_lrclib(const Track *t, Variants *out) {
 		}
 	}
 	kept = keep_matching(c, n, t);
-	for (int i = 0; i < kept; i++)
+	for (int i = 0; i < kept; i++) {
+		add_credit(out, c[i].artist);
 		variants_add(out, L"lrclib", parse_lrc(json_str(c[i].item, L"syncedLyrics")), 1, c[i].artist);
+	}
 	for (int i = 0; i < 8; i++) {
 		json_free(docs[i]);
 		free(f[i].body);
@@ -887,6 +902,9 @@ static int source_netease(const Track *t, Variants *out) {
 	kept = keep_matching(c, n, t);
 	if (kept > 3) kept = 3;
 	for (int i = 0; i < kept; i++) {
+		wchar_t credit[256];
+		netease_artists(c[i].item, credit, 256);
+		add_credit(out, credit);
 		lyr[i].timeoutMs = 6000;
 		_snwprintf(lyr[i].url, 2048, L"https://music.163.com/api/song/lyric?id=%.0f&lv=1&kv=1&tv=-1", json_num(c[i].item, L"id", 0));
 	}
@@ -1066,6 +1084,7 @@ static int source_musixmatch(const Track *t, const wchar_t *token, Variants *out
 			return 1;
 		}
 	}
+	add_credit(out, credit);
 	if (json_num(track, L"has_richsync", 0) && json_num(track, L"commontrack_id", 0) > 0) {
 		/* the word timing has a call of its own */
 		int n = length ? length : (int)(t->durationS + 0.5);
@@ -1196,6 +1215,7 @@ typedef struct {
 	char pick[17];
 	BOOL manual;
 	int offset;
+	BOOL credited; /* written since the artists' credit is kept, else worth a search again */
 } Remembered;
 
 static void cache_path(const wchar_t *dir, const Track *t, wchar_t *out, size_t len) {
@@ -1235,6 +1255,8 @@ static BOOL cache_load(const wchar_t *path, Remembered *r) {
 		free(pick);
 	}
 	r->manual = json_bool(doc, L"manual");
+	r->credited = json_get(doc, L"credit") != NULL;
+	add_credit(&r->variants, json_str(doc, L"credit"));
 	r->offset = (int)json_num(doc, L"offset", 0);
 	json_free(doc);
 	return r->variants.n > 0;
@@ -1255,7 +1277,9 @@ static void cache_save(const wchar_t *path, const Variants *vs, const char *pick
 		text_lyrics(&t, vs->items[i].ly);
 		text_raw(&t, "}");
 	}
-	text_printf(&t, "],\"pick\":\"%s\",\"manual\":%s,\"offset\":%d}", pick ? pick : "", manual ? "true" : "false", offset);
+	text_raw(&t, "],\"credit\":");
+	text_str(&t, vs->credit);
+	text_printf(&t, ",\"pick\":\"%s\",\"manual\":%s,\"offset\":%d}", pick ? pick : "", manual ? "true" : "false", offset);
 	file = t.s ? CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL) : INVALID_HANDLE_VALUE;
 	if (file != INVALID_HANDLE_VALUE) {
 		WriteFile(file, t.s, (DWORD)t.n, &wrote, NULL);
