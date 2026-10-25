@@ -302,9 +302,27 @@ body.editor-body {
 	z-index: 1;
 }
 
+/* Sized in the template's design px and scaled (with a corner pin, warped) onto
+   the placement from its top-left, as the out page does; inside, the design box
+   pulled back by the window's offset. */
 .ed-code-overlay__box {
 	position: absolute;
 	overflow: hidden;
+	transform-origin: 0 0;
+}
+
+.ed-code-overlay__design {
+	position: absolute;
+}
+
+/* A pinned animation built from layers: the out page's own layer elements. */
+.ed-pin-layers {
+	position: absolute;
+	inset: 0;
+}
+
+.ed-pin-layers .notgt-layer {
+	position: absolute;
 }
 
 .ed-code-overlay__box iframe {

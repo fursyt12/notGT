@@ -514,6 +514,54 @@ async function main() {
 				boundedStyles.animatorTop === "108px",
 			JSON.stringify(boundedStyles),
 		);
+
+		// --- 4c4. a corner pin warps the window onto its four corners -------
+		// The corners are design px of the box; on the out they land where the
+		// placement puts those px (x/y percent, then the scale), each on its own.
+		const pinned = await api("PATCH", `/api/outs/main/items/${cropped.item.id}`, {
+			bounds: null,
+			corners: { tl: { x: 100, y: 50 }, tr: { x: 1800, y: 0 }, br: { x: 1920, y: 1080 }, bl: { x: 0, y: 900 } },
+		});
+		await sleep(300);
+		const pinCorners = await page.evaluate(() => {
+			const layer = document.querySelector('.notgt-layer[data-layer-id="p_marker"]');
+			const slot = layer.closest(".notgt-slot");
+			const matrix = new DOMMatrix(getComputedStyle(slot).transform);
+			const at = (x, y) => {
+				const point = matrix.transformPoint(new DOMPoint(x, y));
+				return [
+					Math.round(slot.offsetLeft + point.x / point.w),
+					Math.round(slot.offsetTop + point.y / point.w),
+				];
+			};
+			return { tl: at(0, 0), tr: at(1920, 0), br: at(1920, 1080), bl: at(0, 1080) };
+		});
+		const sameAs = (got, x, y) => Math.abs(got[0] - x) <= 1 && Math.abs(got[1] - y) <= 1;
+		check(
+			"a corner pin puts each corner of the window where it was dragged",
+			Boolean(pinned.item?.corners) &&
+				sameAs(pinCorners.tl, 530, 295) &&
+				sameAs(pinCorners.tr, 1380, 270) &&
+				sameAs(pinCorners.br, 1440, 810) &&
+				sameAs(pinCorners.bl, 480, 720),
+			JSON.stringify(pinCorners),
+		);
+		const folded = await api("PATCH", `/api/outs/main/items/${cropped.item.id}`, {
+			corners: { tl: { x: 0, y: 0 }, tr: { x: 1920, y: 1080 }, br: { x: 1920, y: 0 }, bl: { x: 0, y: 1080 } },
+		});
+		check(
+			"corners that fold the picture over itself are not taken",
+			folded.ok === true && folded.item.corners === undefined,
+			JSON.stringify(folded.item?.corners ?? null),
+		);
+		await sleep(300);
+		const unpinned = await page.evaluate(
+			() =>
+				document
+					.querySelector('.notgt-layer[data-layer-id="p_marker"]')
+					.closest(".notgt-slot").style.transform,
+		);
+		check("without corners the placement is a rectangle again", unpinned === "scale(0.5)", unpinned);
 		await api("DELETE", `/api/outs/main/items/${cropped.item.id}`);
 		await api("DELETE", "/api/templates/e2e-placement");
 		await api("POST", "/api/titles/hide", {});

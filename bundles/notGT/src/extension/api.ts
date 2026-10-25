@@ -3,6 +3,7 @@ import {
 	defaultPlayback,
 	defaultTransition,
 	newId,
+	type ItemCorners,
 	type ItemCrop,
 	type Out,
 	type OutItem,
@@ -11,6 +12,7 @@ import {
 	type TitleData,
 	type TitleTemplate,
 } from "../shared/types";
+import { CORNER_KEYS, isConvex } from "../shared/corners";
 import { normalizeNdi, normalizeSpout } from "../shared/ndi";
 import {
 	type Access,
@@ -623,7 +625,26 @@ export function normalizeItem(input: Record<string, unknown>, index = 0): OutIte
 		playback: mergePlayback(input["playback"], base.playback),
 		crop: normalizeCrop(input["crop"]),
 		bounds: normalizeCrop(input["bounds"]),
+		corners: normalizeCorners(input["corners"]),
 	};
+}
+
+/**
+ * A corner pin sent through the HTTP API, or `undefined` when it is not four
+ * points or folds over itself (`null` removes one, as it does a crop).
+ */
+function normalizeCorners(value: unknown): ItemCorners | undefined {
+	if (!isPlainObject(value)) return undefined;
+	const corners = {} as ItemCorners;
+	for (const key of CORNER_KEYS) {
+		const point = value[key];
+		if (!isPlainObject(point)) return undefined;
+		const x = pickNumber(point["x"]);
+		const y = pickNumber(point["y"]);
+		if (x === undefined || y === undefined) return undefined;
+		corners[key] = { x, y };
+	}
+	return isConvex(corners) ? corners : undefined;
 }
 
 /**

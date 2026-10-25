@@ -550,7 +550,7 @@
 	"Could not save the project: {error}": "Не удалось сохранить проект: {error}",
 	"The animation is {box} and the out {out}: its code is drawn in a {box} frame and scaled to fit.": "Анимация {box}, а out {out}: её код рисуется в кадре {box} и масштабируется под out.",
 	"Make the animation {out}": "Сделать анимацию {out}",
-	"Its frame becomes the size of the out, and it covers the whole out: position 0, scale 1, no crop or bounds.": "Её кадр станет размером с out, и она займёт весь out: положение 0, масштаб 1, без обрезки и границ.",
+	"Its frame becomes the size of the out, and it covers the whole out: position 0, scale 1, no crop, bounds or corner pin.": "Её кадр станет размером с out, и она займёт весь out: положение 0, масштаб 1, без обрезки, границ и перспективы.",
 	"The animation is now {size}": "Теперь анимация {size}",
 	"Column": "Столбец",
 	"A new field in every row": "Новое поле в каждой строке",
@@ -589,5 +589,12 @@
 	"A loop of {seconds} s.": "Петля {seconds} с.",
 	"Not every part comes round within it: one that repeats every {period} s is {miss} ms off where the file starts over.": "Не всё успевает вернуться к началу: часть, что повторяется каждые {period} с, на стыке смещена на {miss} мс.",
 	"Every part comes round after {seconds} s: that loop length makes an exact loop.": "Всё возвращается к началу через {seconds} с: с такой длиной петля будет точной.",
-	"Nothing repeats on air by itself (no endless animation or looping video): give the loop a length.": "В эфире ничего не повторяется само (нет бесконечной анимации или зацикленного видео): задайте длину петли."
+	"Nothing repeats on air by itself (no endless animation or looping video): give the loop a length.": "В эфире ничего не повторяется само (нет бесконечной анимации или зацикленного видео): задайте длину петли.",
+	"Corner Pin": "Перспектива",
+	" · corner pin": " · перспектива",
+	"The corners of the selected animation, each moved on its own: the picture is warped after them": "Углы выбранной анимации, каждый двигается сам по себе: картинка искажается вслед за ними",
+	"Drag a corner: the animation is warped after it. Drag inside to move it.": "Тяните угол — анимация искажается вслед за ним. Тяните внутри, чтобы сдвинуть её.",
+	"Warped onto four corners": "Натянута на четыре угла",
+	"A rectangle, not warped": "Прямоугольник, без искажения",
+	"Pin corners": "Двигать углы"
 }

@@ -131,6 +131,14 @@ and clears the other, and if an API client sends both, `bounds` wins. A code ani
 draws inside its iframe, which keeps the template's size, so growing its box past the
 template only adds empty space.
 
+On top of either comes `corners`, the **corner pin**: where the four corners of the visible
+window go — `{tl, tr, br, bl}`, each `{x, y}` in template pixels from the top-left of the
+template box. The window is warped onto that four-sided shape in perspective, a title on a
+screen or a wall seen at an angle; on the out it is a CSS `matrix3d`, so the browser draws
+it like everything else. The corners move with the placement's `x`, `y` and `scale`. A
+shape that folds over itself (a corner pulled across the opposite edge) has no projection,
+and the API does not take one. Without `corners` the window stays a rectangle.
+
 The same template can be placed on several outs, or several times on one out — these are
 different placements with different `id`s.
 
@@ -410,11 +418,13 @@ draw it.
   created, placed on it and made active.
 - **`Crop`** turns on the crop tool for the active placement (see below).
 - **`Scale Bounds`** turns on the tool that resizes the active placement's box (see below).
+- **`Corner Pin`** turns on the tool that moves the corners of the active placement's
+  window, each on its own (see below).
 - The **full-screen** button next to it gives the whole screen to the desk — the canvas
   and its status bar, without the bars around it. The same button sits at the end of the
   status bar, so it is there in full screen too; `Esc` also leaves. Where the browser does
   not allow a page full screen, the desk fills the panel instead. In full screen
-  **`+ Layer`**, **`Crop`** and **`Scale Bounds`** come along: they move into a strip above
+  **`+ Layer`**, **`Crop`**, **`Scale Bounds`** and **`Corner Pin`** come along: they move into a strip above
   the canvas, so a layer can be added and a placement cropped without leaving it.
 - **`Play`** and **`Go on air`** act on the selected placement: the same one-shot and the
   same “On air” switch Control has (the button turns into **`Take off air`**). Unsaved
@@ -461,6 +471,16 @@ double-click to rename) and the **“Library”** of all animations (place, dupl
   Dragging inside the frame moves the placement, and the edges stick to the out's lines
   and to other animations. “Reset” goes back to the template box; `Esc` or “Done” turns
   the tool off. It is stored as `bounds` in the placement.
+- **Corner Pin**: four round handles on the corners of the visible window, each moved on
+  its own; the animation is warped after them in perspective, on the canvas exactly as on
+  air. Only the pinned shape is drawn, not the rectangle it came from. A corner sticks to
+  the out's lines and to other animations and stops where the shape would fold over
+  itself; dragging inside the shape moves the placement, and moving or scaling it carries
+  the warp along. While Crop or Scale Bounds is on, the placement is shown flat, so its
+  window is edited as it is before the warp. The layers of a pinned animation are picked
+  in the layer list and edited in the inspector, not on the canvas. “Reset” takes the
+  corners back to the window's own; `Esc` or “Done” turns the tool off. It is stored as
+  `corners` in the placement.
 - The **magnets** measure a placement by its **visible part**: a cropped animation sticks
   to lines with the edge and centre of its window, not of the hidden template box, and
   that same window is offered to other animations as a target. The magnets also work
@@ -1027,6 +1047,13 @@ curl -sS -X PATCH http://<host>/api/outs/interview/items/<itemId> \
   -H "Authorization: Bearer $NOTGT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"bounds":{"x":-192,"y":-192,"width":2304,"height":1464}}'
+
+# pin the corners of a placement's window (a 1040x184 template) as on a screen seen
+# from the left: the right edge is shorter; {"corners":null} makes it a rectangle again
+curl -sS -X PATCH http://<host>/api/outs/interview/items/<itemId> \
+  -H "Authorization: Bearer $NOTGT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"corners":{"tl":{"x":0,"y":0},"tr":{"x":1040,"y":24},"br":{"x":1040,"y":160},"bl":{"x":0,"y":184}}}'
 
 # one-shot of a specific placement
 curl -sS -X POST http://<host>/api/outs/interview/items/item_ab12cd34ef56/trigger \

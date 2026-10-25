@@ -328,6 +328,24 @@ export interface ItemCrop {
 	height: number;
 }
 
+/** A point in a template's design px, from the top-left of its design box. */
+export interface ItemPoint {
+	x: number;
+	y: number;
+}
+
+/**
+ * A corner pin: where the four corners of a placement's visible window go, in
+ * the template's design px from the top-left of its design box. The window is
+ * warped in perspective onto the shape they make (see `shared/corners.ts`).
+ */
+export interface ItemCorners {
+	tl: ItemPoint;
+	tr: ItemPoint;
+	br: ItemPoint;
+	bl: ItemPoint;
+}
+
 /** An animation placed on an out. */
 export interface OutItem {
 	id: string;
@@ -350,6 +368,13 @@ export interface OutItem {
 	 * `crop`, never with it. Absent = the design box (see `shared/crop.ts`).
 	 */
 	bounds?: ItemCrop;
+	/**
+	 * The visible window warped onto these four corners with the Corner Pin
+	 * tool — onto a screen or a wall seen at an angle. It comes after the crop
+	 * or the bounds: they say what is shown, the corners where it goes. Absent =
+	 * the window stays a rectangle.
+	 */
+	corners?: ItemCorners;
 	/**
 	 * "Show it and keep it": while true the placement stays on air until the
 	 * toggle is switched off — no `holdMs` timeout, no `once`/`loop` schedule,

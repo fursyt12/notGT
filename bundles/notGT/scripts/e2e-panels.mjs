@@ -669,7 +669,66 @@ async function main() {
 					fullPage: false,
 				});
 
-				await page.click("button[data-bounds-toggle]");
+				// --- Corner Pin ---------------------------------------------------
+				// It takes over from Scale Bounds. Its corners start on the window's
+				// own; pulling one moves that corner alone, and the window, the
+				// placement and the other corners stay where they were.
+				await page.click("button[data-corners-toggle]");
+				await sleep(200);
+				const cornersOn = await page.evaluate(() => ({
+					corners: document
+						.querySelector("button[data-corners-toggle]")
+						.classList.contains("is-active"),
+					bounds: document
+						.querySelector("button[data-bounds-toggle]")
+						.classList.contains("is-active"),
+				}));
+				check(
+					"editor.html: Corner Pin takes over from Scale Bounds",
+					cornersOn.corners && !cornersOn.bounds,
+					JSON.stringify(cornersOn),
+				);
+				const unpinned = await readItem();
+				const win = await windowOnPage();
+				await page.mouse.move(win.right, win.top);
+				await page.mouse.down();
+				await page.mouse.move(win.right - 40, win.top + 30, { steps: 10 });
+				await page.mouse.up();
+				await sleep(500);
+				const pinnedItem = await readItem();
+				const w = unpinned.bounds;
+				const pin = pinnedItem?.corners;
+				const at = (point, x, y) => Math.abs(point.x - x) < 0.02 && Math.abs(point.y - y) < 0.02;
+				check(
+					"editor.html: a pulled corner moves alone, the window and the placement stay",
+					Boolean(pin) &&
+						pin.tr.x < w.x + w.width - 20 &&
+						pin.tr.y > w.y + 20 &&
+						at(pin.tl, w.x, w.y) &&
+						at(pin.br, w.x + w.width, w.y + w.height) &&
+						at(pin.bl, w.x, w.y + w.height) &&
+						JSON.stringify(pinnedItem.bounds) === JSON.stringify(w) &&
+						pinnedItem.x === unpinned.x &&
+						pinnedItem.y === unpinned.y &&
+						pinnedItem.scale === unpinned.scale,
+					JSON.stringify({ corners: pin, bounds: pinnedItem?.bounds }),
+				);
+				const cornersInfo = await page.evaluate(
+					() => document.querySelector("[data-corners-info]") !== null,
+				);
+				check("editor.html: the inspector shows the corner pin", cornersInfo);
+				await page.screenshot({
+					path: path.join(outDir, "editor-corners.png"),
+					fullPage: false,
+				});
+				await page.click("button[data-corners-reset]");
+				await sleep(500);
+				check(
+					"editor.html: Reset takes the corners back to the window's own",
+					(await readItem())?.corners === undefined,
+				);
+
+				await page.click("button[data-corners-toggle]");
 				await fetch(`${BASE}/api/outs/${fixtureOut}`, { method: "DELETE" });
 				await fetch(`${BASE}/api/templates/${templateId}`, {
 					method: "DELETE",

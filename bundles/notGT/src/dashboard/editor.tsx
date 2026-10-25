@@ -1649,6 +1649,7 @@ function PlacementInspector({
 	onSizeToOut,
 	onCrop,
 	onBounds,
+	onCorners,
 }: {
 	out: Out;
 	item: OutItem;
@@ -1663,6 +1664,8 @@ function PlacementInspector({
 	onCrop: () => void;
 	/** Turns the Scale Bounds tool on. */
 	onBounds: () => void;
+	/** Turns the Corner Pin tool on. */
+	onCorners: () => void;
 }) {
 	const playback = item.playback ?? defaultPlayback();
 	const crop = item.crop ? cropBox(item, template) : null;
@@ -1727,7 +1730,7 @@ function PlacementInspector({
 						<button
 							type="button"
 							className="small ed-start"
-							title={t("Its frame becomes the size of the out, and it covers the whole out: position 0, scale 1, no crop or bounds.")}
+							title={t("Its frame becomes the size of the out, and it covers the whole out: position 0, scale 1, no crop, bounds or corner pin.")}
 							onClick={onSizeToOut}
 							data-size-to-out
 						>
@@ -1799,6 +1802,32 @@ function PlacementInspector({
 						<button type="button" className="small" onClick={onBounds}>
 							<Icon name="bounds" size={14} />
 							{t("Scale bounds")}
+						</button>
+					</div>
+				)}
+			</Section>
+
+			<Section title={t("Corner Pin")}>
+				{item.corners ? (
+					<div className="ed-crop-row">
+						<span data-corners-info>{t("Warped onto four corners")}</span>
+						<button
+							type="button"
+							className="ghost small"
+							onClick={() => onPatch({ corners: undefined })}
+							data-corners-clear
+						>
+							{t("Clear")}
+						</button>
+					</div>
+				) : (
+					<div className="ed-crop-row">
+						<span className="ed-hint" data-corners-none>
+							{t("A rectangle, not warped")}
+						</span>
+						<button type="button" className="small" onClick={onCorners}>
+							<Icon name="corners" size={14} />
+							{t("Pin corners")}
 						</button>
 					</div>
 				)}
@@ -2536,16 +2565,23 @@ export function EditorApp() {
 		// Only the size is saved: whatever else is being edited stays a draft.
 		saveTemplate({ ...stored, ...size });
 		setDraft((prev) => (prev && prev.id === stored.id ? { ...prev, ...size } : prev));
-		updateItem(out.id, item.id, { x: 0, y: 0, scale: 1, crop: undefined, bounds: undefined });
+		updateItem(out.id, item.id, {
+			x: 0,
+			y: 0,
+			scale: 1,
+			crop: undefined,
+			bounds: undefined,
+			corners: undefined,
+		});
 		notify(t("The animation is now {size}", { size: `${out.width}×${out.height}` }));
 	};
 
-	// ------------------------------------------------ crop + scale bounds tools
+	// ----------------------------------- crop, scale bounds and corner pin tools
 
 	/**
-	 * The crop and Scale Bounds tools edit the visible window of the active
-	 * placement, so they are offered exactly when there is a placement with a
-	 * template to measure.
+	 * The crop, Scale Bounds and Corner Pin tools edit the visible window of the
+	 * active placement, so they are offered exactly when there is a placement
+	 * with a template to measure.
 	 */
 	const canFrame = Boolean(activeItem && getTemplate(activeItem.templateId));
 
@@ -2559,7 +2595,7 @@ export function EditorApp() {
 		updateItem(out.id, activeItem.id, patch);
 	};
 
-	/** Switches a tool on (and the other one off), or off when it is already on. */
+	/** Switches a tool on (and the others off), or off when it is already on. */
 	const toggleTool = (which: CanvasTool) => {
 		if (!canFrame) return;
 		setTool((value) => {
@@ -2953,6 +2989,21 @@ export function EditorApp() {
 				<Icon name="bounds" size={14} />
 				{t("Scale Bounds")}
 			</button>
+			<button
+				type="button"
+				className={`ed-tool${tool === "corners" ? " is-active" : ""}`}
+				onClick={() => toggleTool("corners")}
+				disabled={!canFrame}
+				data-corners-toggle
+				title={
+					canFrame
+						? t("The corners of the selected animation, each moved on its own: the picture is warped after them")
+						: t("Select an animation on the out first")
+				}
+			>
+				<Icon name="corners" size={14} />
+				{t("Corner Pin")}
+			</button>
 		</>
 	);
 	const frameTools =
@@ -2986,6 +3037,25 @@ export function EditorApp() {
 						className="ghost small"
 						onClick={() => patchActive({ bounds: undefined })}
 						data-bounds-reset
+					>
+						{t("Reset")}
+					</button>
+				) : null}
+				<button type="button" className="small" onClick={() => setTool(null)}>
+					{t("Done")}
+				</button>
+			</>
+		) : tool === "corners" && activeItem ? (
+			<>
+				<span className="ed-hint" data-corners-hint>
+					{t("Drag a corner: the animation is warped after it. Drag inside to move it.")}
+				</span>
+				{activeItem.corners ? (
+					<button
+						type="button"
+						className="ghost small"
+						onClick={() => patchActive({ corners: undefined })}
+						data-corners-reset
 					>
 						{t("Reset")}
 					</button>
@@ -3263,6 +3333,9 @@ export function EditorApp() {
 										}}
 										onBounds={() => {
 											if (tool !== "bounds") toggleTool("bounds");
+										}}
+										onCorners={() => {
+											if (tool !== "corners") toggleTool("corners");
 										}}
 									/>
 								) : (

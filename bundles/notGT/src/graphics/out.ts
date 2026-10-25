@@ -15,6 +15,7 @@ import {
 	MESSAGES,
 	type ItemCrop,
 	type Out,
+	type OutItem,
 	REPLICANTS,
 	type RuntimeState,
 	type TitleData,
@@ -22,6 +23,7 @@ import {
 	type ActiveTitleState,
 	type VariableSelection,
 } from "../shared/types";
+import { cornerPinCss, cornersOf } from "../shared/corners";
 import { windowBox } from "../shared/crop";
 import {
 	ServerClock,
@@ -62,6 +64,8 @@ interface Instance {
 	data: TitleData;
 	/** Visible window (crop or scaled bounds) in design px, or `null` for the whole box. */
 	crop: ItemCrop | null;
+	/** The corner pin as a CSS `matrix3d`, or `null` when the window stays a rectangle. */
+	pin: string | null;
 	/** Design size of the out, for placing a crop window (px -> percent). */
 	outW: number;
 	outH: number;
@@ -231,6 +235,7 @@ function renderInstances(): Instance[] {
 			trigger: renderPlays,
 			data: withTimers(baseData(), timers(), clock.now()),
 			crop: null,
+			pin: null,
 			outW: template.width,
 			outH: template.height,
 		},
@@ -263,6 +268,7 @@ function computeInstances(out: Out | undefined): Instance[] {
 			trigger: runtimeRep.value?.triggers?.[`${out.id}:${item.id}`] ?? 0,
 			data: live(baseData()),
 			crop: item.crop || item.bounds ? windowBox(item, template) : null,
+			pin: pinOf(item, template),
 			outW: out.width,
 			outH: out.height,
 		});
@@ -285,6 +291,7 @@ function computeInstances(out: Out | undefined): Instance[] {
 				trigger: active.updatedAt ?? 0,
 				data: live(mergedData()),
 				crop: null,
+				pin: null,
 				outW: out.width,
 				outH: out.height,
 			});
@@ -339,6 +346,12 @@ function createSlot(inst: Instance, template: TitleTemplate): Slot {
 	return slot;
 }
 
+/** A placement's corner pin as CSS, in the px of the window it warps. */
+function pinOf(item: OutItem, template: TitleTemplate): string | null {
+	const corners = cornersOf(item);
+	return corners ? cornerPinCss(windowBox(item, template), corners) : null;
+}
+
 function sortLayers(template: TitleTemplate): TitleTemplate["layers"] {
 	return [...(template.layers ?? [])].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 }
@@ -363,7 +376,10 @@ function sortLayers(template: TitleTemplate): TitleTemplate["layers"] {
  * back, so the animation still does not move.
  */
 function applyPlacement(slot: Slot, inst: Instance): void {
-	slot.positioner.style.transform = `scale(${inst.scale})`;
+	// The warp works in the window's own design px, so it comes before the scale.
+	slot.positioner.style.transform = inst.pin
+		? `scale(${inst.scale}) ${inst.pin}`
+		: `scale(${inst.scale})`;
 
 	const crop = inst.crop;
 	if (!crop) {

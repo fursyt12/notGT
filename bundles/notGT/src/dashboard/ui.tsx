@@ -78,6 +78,15 @@ const ICONS = {
 			<path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5" />
 		</>
 	),
+	corners: (
+		<>
+			<path d="M5 6l14-2-1 16-12-3z" />
+			<circle cx="5" cy="6" r="1.8" />
+			<circle cx="19" cy="4" r="1.8" />
+			<circle cx="18" cy="20" r="1.8" />
+			<circle cx="6" cy="17" r="1.8" />
+		</>
+	),
 	sliders: (
 		<>
 			<path d="M4 7h8M18 7h2M4 17h2M12 17h8" />

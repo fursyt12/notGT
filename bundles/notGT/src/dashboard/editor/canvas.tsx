@@ -15,6 +15,10 @@
  *   - the crop tool cuts the visible window (`item.crop`); Scale Bounds resizes
  *     the box the animation is rendered in (`item.bounds`) without resizing
  *     the animation;
+ *   - Corner Pin moves the four corners of that window each on its own
+ *     (`item.corners`), and the picture is warped after them. Konva cannot
+ *     warp in perspective, so a pinned placement is drawn as DOM under the
+ *     stage with the out page's own transform, the way a code animation is;
  *   - layers of the active animation can be selected, dragged (`layer.x/y`) and
  *     transformed (`layer.width/height`);
  *   - every other animation is dimmed and only responds to a click that makes
@@ -46,7 +50,19 @@ import {
 
 import { interpolate } from "../../shared/binding";
 import { clampCrop, cropIsFull, fullCrop, roundCrop, windowBox, MIN_CROP_PX } from "../../shared/crop";
+import {
+	CORNER_KEYS,
+	type CornerKey,
+	cornerPinCss,
+	cornersBounds,
+	cornersOf,
+	cornersPatch,
+	isConvex,
+	rectCorners,
+} from "../../shared/corners";
+import { createLayerElement } from "../../graphics/layers";
 import type {
+	ItemCorners,
 	ItemCrop,
 	Layer,
 	LayerStyle,
@@ -88,7 +104,7 @@ type KonvaEvent<T extends Event> = Konva.KonvaEventObject<T>;
 const HANDLE = 18;
 
 /** The tools that edit the active placement through a frame on the canvas. */
-export type CanvasTool = "crop" | "bounds";
+export type CanvasTool = "crop" | "bounds" | "corners";
 
 export interface EditorCanvasProps {
 	out: Out;
@@ -224,6 +240,8 @@ interface DragPreview {
 	scale?: number;
 	/** The window in template px while the crop or bounds frame is dragged. */
 	crop?: ItemCrop;
+	/** The corner pin while one of its corners is dragged. */
+	corners?: ItemCorners;
 }
 
 /**
@@ -247,6 +265,8 @@ interface DragApi {
 	) => void;
 	/** The geometry as it should be drawn right now (preview applied). */
 	view: (geom: Geometry) => Geometry;
+	/** The corner pin a placement is drawn with right now (see `pinFor`). */
+	pin: (geom: Geometry) => ItemCorners | null;
 }
 
 const DragContext = createContext<DragApi | null>(null);
@@ -385,9 +405,16 @@ export function EditorCanvas({
 		[preview, fit],
 	);
 
+	/** The crop and bounds frames edit the active window flat, before the warp. */
+	const flatId = tool === "crop" || tool === "bounds" ? activeItemId : null;
+	const pinOf = useCallback(
+		(geom: Geometry) => pinFor(geom, preview, geom.item.id === flatId),
+		[preview, flatId],
+	);
+
 	const dragApi = useMemo<DragApi>(
-		() => ({ preview, setPreview, pointOf, begin, view: withPreview }),
-		[preview, pointOf, begin, withPreview],
+		() => ({ preview, setPreview, pointOf, begin, view: withPreview, pin: pinOf }),
+		[preview, pointOf, begin, withPreview, pinOf],
 	);
 
 	// A new selection, another out or another tool: nothing is being dragged.
@@ -481,14 +508,15 @@ export function EditorCanvas({
 	 *
 	 * A cropped animation is only as big as the window the operator sees, so
 	 * lining it up by the hidden part of its box would put a guide where nothing
-	 * is drawn and stop the title where it does not look aligned.
+	 * is drawn and stop the title where it does not look aligned. A pinned one
+	 * offers the box around its shape.
 	 */
 	const snapBoxOf = useCallback(
 		(geom: Geometry) => {
-			const win = windowOf(withPreview(geom), cropFor(geom, preview));
+			const win = shownBoxOf(withPreview(geom), cropFor(geom, preview), pinOf(geom));
 			return { boxX: win.x, boxY: win.y, boxW: win.width, boxH: win.height };
 		},
-		[withPreview, preview],
+		[withPreview, preview, pinOf],
 	);
 
 	const placementLines = useMemo(
@@ -734,6 +762,8 @@ export function EditorCanvas({
 		activeGeom !== null && onAir(activeGeom) && (unsaved || selectedLayerId !== null);
 	const isLive = (geom: Geometry) =>
 		onAir(geom) && !(editingLive && geom.item.id === activeItemId);
+	const dimOf = (geom: Geometry) =>
+		geom.item.id === activeItemId ? 1 : geom.item.enabled === false ? 0.22 : 0.45;
 
 	return (
 		<SnapContext.Provider value={snapApi}>
@@ -771,16 +801,26 @@ export function EditorCanvas({
 										key={geom.item.id}
 										box={withPreview(geom)}
 										crop={cropFor(geom, preview)}
-										dim={
-											geom.item.id === activeItemId
-												? 1
-												: geom.item.enabled === false
-													? 0.22
-													: 0.45
-										}
+										corners={pinOf(geom)}
+										dim={dimOf(geom)}
 										data={data}
 									/>
 								))}
+							{geoms.map((geom) => {
+								const corners = pinOf(geom);
+								if (geom.template.kind === "code" || isLive(geom) || !corners) return null;
+								return (
+									<LayersOverlayFrame
+										key={geom.item.id}
+										box={withPreview(geom)}
+										crop={cropFor(geom, preview)}
+										corners={corners}
+										dim={dimOf(geom)}
+										data={data}
+										selection={selection}
+									/>
+								);
+							})}
 							{draftBox && draftBox.template.kind === "code" && !liveDraft ? (
 								<CodeOverlayFrame box={draftBox} dim={1} data={data} />
 							) : null}
@@ -803,17 +843,16 @@ export function EditorCanvas({
 								}}
 							/>
 							{geoms.filter(onAir).map((geom) => {
-								const box = withPreview(geom);
-								const window_ = cropFor(geom, preview);
+								const shown = shownBoxOf(withPreview(geom), cropFor(geom, preview), pinOf(geom));
 								return (
 									<div
 										key={geom.item.id}
 										className="ed-onair"
 										style={{
-											left: box.boxX + window_.x * box.k,
-											top: box.boxY + window_.y * box.k,
-											width: Math.max(1, window_.width * box.k),
-											height: Math.max(1, window_.height * box.k),
+											left: shown.x,
+											top: shown.y,
+											width: shown.width,
+											height: shown.height,
 										}}
 									>
 										<span className="ed-onair__tag">{t("On air")}</span>
@@ -900,6 +939,22 @@ export function EditorCanvas({
 								{geoms
 									.filter((geom) => geom.item.id !== activeItemId)
 									.map((geom) => {
+										const corners = pinOf(geom);
+										if (corners) {
+											return (
+												<Line
+													key={`catcher:${geom.item.id}`}
+													points={pinPoints(geom, corners).flatMap((point) => [point.x, point.y])}
+													closed
+													fill="rgba(0,0,0,0.001)"
+													onMouseDown={(event: KonvaEvent<MouseEvent>) => {
+														event.cancelBubble = true;
+														onSelectItem(geom.item.id);
+														onSelectLayer(null);
+													}}
+												/>
+											);
+										}
 										const win = windowOf(geom, cropFor(geom, preview));
 										return (
 											<Rect
@@ -962,6 +1017,14 @@ export function EditorCanvas({
 								) : null}
 								{activeGeom && tool === "bounds" ? (
 									<BoundsOverlay
+										geom={activeGeom}
+										stageW={stageW}
+										stageH={stageH}
+										onItemChange={onItemChange}
+									/>
+								) : null}
+								{activeGeom && tool === "corners" ? (
+									<CornersOverlay
 										geom={activeGeom}
 										stageW={stageW}
 										stageH={stageH}
@@ -1112,6 +1175,7 @@ export function EditorCanvas({
 									},
 								)
 							: ""}
+						{pinOf(activeGeom) ? t(" · corner pin") : ""}
 						{activePending ? t(" · dragging") : ""}
 					</span>
 				) : (
@@ -1160,8 +1224,13 @@ function usePlacementDrag(
 	const drag = useContext(DragContext);
 	const { item } = geom;
 	// The window at the moment the drag starts: the hook's own preview is not
-	// published yet, so the saved window is the right one.
-	const win = windowOf(geom, windowBox(item, geom.template));
+	// published yet, so the saved window is the right one. A pinned placement
+	// is measured by the box around its shape.
+	const win = shownBoxOf(
+		geom,
+		windowBox(item, geom.template),
+		drag ? drag.pin(geom) : cornersOf(item),
+	);
 
 	return useCallback(
 		(event: KonvaEvent<MouseEvent>) => {
@@ -1244,6 +1313,16 @@ function AnimatedItem({
 	const view = drag ? drag.view(geom) : geom;
 	const crop = cropFor(geom, drag?.preview ?? null);
 	const cropped = !cropIsFull(crop, template);
+	const corners = drag ? drag.pin(geom) : cornersOf(item);
+	/**
+	 * A pinned shape in the group's own px. Its picture is the DOM one under the
+	 * stage (`LayersOverlayFrame`, `CodeOverlayFrame`); here it is only what
+	 * answers the pointer.
+	 */
+	const shape = corners
+		? CORNER_KEYS.flatMap((key) => [corners[key].x * view.k, corners[key].y * view.k])
+		: null;
+	const clipped = cropped && !shape;
 	// Everything inside the group is drawn in the template's own box, so the
 	// window (a crop, or scaled bounds that may reach past the box) is a local
 	// rectangle and the clip is one line.
@@ -1277,28 +1356,49 @@ function AnimatedItem({
 			opacity={dim}
 			// A crop hides what sticks out of the window, the same way the out
 			// page clips it with `overflow: hidden`.
-			clipX={cropped ? local.x : undefined}
-			clipY={cropped ? local.y : undefined}
-			clipWidth={cropped ? local.width : undefined}
-			clipHeight={cropped ? local.height : undefined}
+			clipX={clipped ? local.x : undefined}
+			clipY={clipped ? local.y : undefined}
+			clipWidth={clipped ? local.width : undefined}
+			clipHeight={clipped ? local.height : undefined}
 		>
 			{/* Placement frame: transparent hit area behind the layers, so dragging
 			    an empty part of the box moves the whole animation. Only the visible
 			    window answers, so a cropped animation is not grabbed by its hidden
 			    half. */}
 			{active ? (
-				<Rect
-					x={local.x}
-					y={local.y}
-					width={local.width}
-					height={local.height}
-					fill="rgba(0,0,0,0.001)"
-					hitStrokeWidth={14}
-					onMouseDown={hitDown}
-				/>
+				shape ? (
+					<Line
+						points={shape}
+						closed
+						fill="rgba(0,0,0,0.001)"
+						hitStrokeWidth={14}
+						onMouseDown={hitDown}
+					/>
+				) : (
+					<Rect
+						x={local.x}
+						y={local.y}
+						width={local.width}
+						height={local.height}
+						fill="rgba(0,0,0,0.001)"
+						hitStrokeWidth={14}
+						onMouseDown={hitDown}
+					/>
+				)
 			) : null}
 
-			{live ? null : template.kind === "code" ? (
+			{live ? null : shape ? (
+				template.kind === "code" ? (
+					<Line
+						points={shape}
+						closed
+						stroke="rgba(245,236,218,0.4)"
+						strokeWidth={1}
+						dash={[8, 6]}
+						listening={false}
+					/>
+				) : null
+			) : template.kind === "code" ? (
 				<CodePlaceholder box={local} />
 			) : (
 				sortByZ(template.layers ?? []).map((layer) => (
@@ -1347,24 +1447,75 @@ function CodePlaceholder({ box }: { box: SnapBox }) {
 }
 
 /**
- * One code animation on the canvas: its document rendered live in an iframe,
- * scaled from the template's design size down to the placement box. Pointer
- * events stay off so the canvas underneath keeps receiving drags and clicks.
- *
- * A crop shrinks the outer box to the visible window and pulls the iframe back
- * by the same offset, so the animation keeps its place on screen and only the
- * part outside the window is cut away — the editor shows exactly what the out
- * page does.
+ * A placement drawn as DOM in the overlay under the stage, built the way the
+ * out page builds it: a box the size of the visible window (in design px) where
+ * the window sits, scaled to the stage and, with a corner pin, warped by the
+ * same `matrix3d`; inside it the animation's design box, pulled back by the
+ * window's offset. So the animation keeps its place on screen, only the part
+ * outside the window is cut away, and the warp is the one that goes on air.
+ */
+function OverlayBox({
+	box,
+	crop,
+	corners,
+	clip,
+	dim,
+	children,
+}: {
+	box: PreviewBox;
+	crop: ItemCrop;
+	corners: ItemCorners | null;
+	/** Cut what lies outside the window, as `overflow: hidden` does on the out. */
+	clip: boolean;
+	dim: number;
+	children: ReactNode;
+}) {
+	const pin = corners ? ` ${cornerPinCss(crop, corners)}` : "";
+	return (
+		<div
+			className="ed-code-overlay__box"
+			style={{
+				left: box.boxX + crop.x * box.k,
+				top: box.boxY + crop.y * box.k,
+				width: Math.max(1, crop.width),
+				height: Math.max(1, crop.height),
+				overflow: clip ? "hidden" : "visible",
+				transform: `scale(${box.k})${pin}`,
+				opacity: dim,
+			}}
+		>
+			<div
+				className="ed-code-overlay__design"
+				style={{
+					left: -crop.x,
+					top: -crop.y,
+					width: box.template.width,
+					height: box.template.height,
+				}}
+			>
+				{children}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * One code animation on the canvas: its document rendered live in an iframe of
+ * the template's design size, in the overlay box that scales (and warps) it
+ * onto the placement. Pointer events stay off so the canvas underneath keeps
+ * receiving drags and clicks.
  */
 function CodeOverlayFrame({
 	box,
 	crop,
+	corners = null,
 	dim,
 	data,
 }: {
 	box: PreviewBox;
 	/** Visible window in template px; absent = the whole box (the draft). */
 	crop?: ItemCrop;
+	corners?: ItemCorners | null;
 	dim: number;
 	data: TitleData;
 }) {
@@ -1378,16 +1529,7 @@ function CodeOverlayFrame({
 	const feedTimers = useTimerFeed(frameRef, box.template, base);
 	const window_ = crop ?? fullCrop(box.template);
 	return (
-		<div
-			className="ed-code-overlay__box"
-			style={{
-				left: box.boxX + window_.x * box.k,
-				top: box.boxY + window_.y * box.k,
-				width: Math.max(1, window_.width * box.k),
-				height: Math.max(1, window_.height * box.k),
-				opacity: dim,
-			}}
-		>
+		<OverlayBox box={box} crop={window_} corners={corners} clip dim={dim}>
 			{/* An iframe created with an empty `srcdoc` and filled in a moment
 			    later occasionally keeps its about:blank and never paints, so it
 			    is only created once there is a document to show. */}
@@ -1398,16 +1540,86 @@ function CodeOverlayFrame({
 					title={t("{name} — preview on the canvas", { name: box.template.name })}
 					sandbox="allow-scripts allow-same-origin"
 					srcDoc={doc}
-					style={{
-						width: box.template.width,
-						height: box.template.height,
-						left: -window_.x * box.k,
-						top: -window_.y * box.k,
-						transform: `scale(${box.k})`,
-					}}
+					style={{ width: box.template.width, height: box.template.height }}
 				/>
 			) : null}
-		</div>
+		</OverlayBox>
+	);
+}
+
+/**
+ * A pinned animation built from layers, drawn with the out page's own layer
+ * elements in the overlay box, so that the warp the operator sees is the one
+ * that goes on air. Konva draws every other placement's layers; it cannot warp
+ * a picture in perspective.
+ *
+ * The elements are built again only when the layers change; variables and
+ * ticking timers only update their text and sources, so a video is not
+ * reloaded every second. Video is shown paused and silent, as on the canvas.
+ */
+function LayersOverlayFrame({
+	box,
+	crop,
+	corners,
+	dim,
+	data,
+	selection,
+}: {
+	box: PreviewBox;
+	crop: ItemCrop;
+	corners: ItemCorners;
+	dim: number;
+	data: TitleData;
+	selection: VariableSelection;
+}) {
+	const hostRef = useRef<HTMLDivElement | null>(null);
+	const elements = useRef(new Map<string, HTMLElement>());
+	const layersJson = JSON.stringify(box.template.layers ?? []);
+	const layers = useMemo(() => JSON.parse(layersJson) as Layer[], [layersJson]);
+
+	useEffect(() => {
+		const host = hostRef.current;
+		if (!host) return;
+		host.replaceChildren();
+		elements.current.clear();
+		for (const layer of sortByZ(layers)) {
+			const element = createLayerElement(layer);
+			if (element instanceof HTMLVideoElement) {
+				element.muted = true;
+				element.autoplay = false;
+			}
+			elements.current.set(layer.id, element);
+			host.appendChild(element);
+		}
+	}, [layers]);
+
+	useEffect(() => {
+		for (const layer of layers) {
+			const element = elements.current.get(layer.id);
+			if (!element) continue;
+			if (layer.type === "text") {
+				const text = resolveText(layer, data, selection);
+				if (element.textContent !== text) element.textContent = text;
+				continue;
+			}
+			if (layer.type === "shape") continue;
+			const src = resolveAssetUrl(interpolate(layer.src ?? "", data, selection));
+			if ((element.getAttribute("src") ?? "") === src) continue;
+			if (src) element.setAttribute("src", src);
+			else element.removeAttribute("src");
+		}
+	}, [layers, data, selection]);
+
+	return (
+		<OverlayBox
+			box={box}
+			crop={crop}
+			corners={corners}
+			clip={!cropIsFull(crop, box.template)}
+			dim={dim}
+		>
+			<div ref={hostRef} className="ed-pin-layers" data-pinned-layers />
+		</OverlayBox>
 	);
 }
 
@@ -1442,14 +1654,21 @@ function PlacementHandles({
 	const snap = useContext(SnapContext);
 	const { item, template } = geom;
 	const crop = cropFor(geom, drag?.preview ?? null);
+	const corners = drag ? drag.pin(geom) : cornersOf(item);
+	/** What the handles frame: the window, or the box around the pinned shape. */
+	const frame = corners ? cornersBounds(corners) : crop;
 	const view = drag ? drag.view(geom) : geom;
-	const win = windowOf(view, crop);
+	const win = windowOf(view, frame);
+	/** The pinned shape in the frame's own px. */
+	const shape = corners
+		? pinPoints(view, corners).flatMap((point) => [point.x - win.x, point.y - win.y])
+		: null;
 	const onPlacementDown = usePlacementDrag(geom, stageW, stageH, onItemChange);
 	const fit = fitOf(geom);
 
 	/**
-	 * Resizing keeps the window's top-left corner where it is: the scale changes
-	 * the crop's offset inside the box too, so the placement has to move back by
+	 * Resizing keeps the frame's top-left corner where it is: the scale changes
+	 * the frame's offset inside the box too, so the placement has to move back by
 	 * exactly that much or the title would crawl away from the corner the
 	 * operator grabbed.
 	 *
@@ -1463,8 +1682,8 @@ function PlacementHandles({
 		if (!start) return;
 		const anchorX = win.x;
 		const anchorY = win.y;
-		const designW = crop.width > 0 ? crop.width : template.width;
-		const designH = crop.height > 0 ? crop.height : template.height;
+		const designW = frame.width > 0 ? frame.width : template.width;
+		const designH = frame.height > 0 ? frame.height : template.height;
 		const baseK = geom.k;
 		let scale = geom.scale;
 		drag.begin(
@@ -1486,8 +1705,8 @@ function PlacementHandles({
 				const k = scale * fit;
 				drag.setPreview({
 					itemId: item.id,
-					dx: -(crop.x * k - crop.x * baseK),
-					dy: -(crop.y * k - crop.y * baseK),
+					dx: -(frame.x * k - frame.x * baseK),
+					dy: -(frame.y * k - frame.y * baseK),
 					scale,
 				});
 			},
@@ -1499,11 +1718,11 @@ function PlacementHandles({
 					scale: round(scale, 4),
 					x: round(
 						(item.x ?? 0) -
-							(stageW > 0 ? ((crop.x * k - crop.x * baseK) / stageW) * 100 : 0),
+							(stageW > 0 ? ((frame.x * k - frame.x * baseK) / stageW) * 100 : 0),
 					),
 					y: round(
 						(item.y ?? 0) -
-							(stageH > 0 ? ((crop.y * k - crop.y * baseK) / stageH) * 100 : 0),
+							(stageH > 0 ? ((frame.y * k - frame.y * baseK) / stageH) * 100 : 0),
 					),
 				});
 			},
@@ -1513,7 +1732,7 @@ function PlacementHandles({
 	return (
 		<Fragment>
 			{/* The whole template box, when the window is only a part of it. */}
-			{cropIsFull(crop, template) || item.bounds ? null : (
+			{cropIsFull(crop, template) || item.bounds || corners ? null : (
 				<Rect
 					x={view.boxX}
 					y={view.boxY}
@@ -1532,17 +1751,32 @@ function PlacementHandles({
 				    frame is drawn on top of the layers, and a filled one would
 				    swallow every click meant for a layer. Its empty areas are
 				    still draggable through the surface behind the layers. */}
-				<Rect
-					width={win.width}
-					height={win.height}
-					fill="rgba(0,0,0,0.001)"
-					fillEnabled={template.kind !== "layers"}
-					stroke="rgba(255,90,140,0.9)"
-					strokeWidth={1}
-					dash={[5, 4]}
-					hitStrokeWidth={14}
-					onMouseDown={onPlacementDown}
-				/>
+				{shape ? (
+					// A pinned animation's layers are not on the canvas to be
+					// clicked: the whole shape is the drag surface.
+					<Line
+						points={shape}
+						closed
+						fill="rgba(0,0,0,0.001)"
+						stroke="rgba(255,90,140,0.9)"
+						strokeWidth={1}
+						dash={[5, 4]}
+						hitStrokeWidth={14}
+						onMouseDown={onPlacementDown}
+					/>
+				) : (
+					<Rect
+						width={win.width}
+						height={win.height}
+						fill="rgba(0,0,0,0.001)"
+						fillEnabled={template.kind !== "layers"}
+						stroke="rgba(255,90,140,0.9)"
+						strokeWidth={1}
+						dash={[5, 4]}
+						hitStrokeWidth={14}
+						onMouseDown={onPlacementDown}
+					/>
+				)}
 
 				{/* Move handle (top-left). */}
 				<Group x={0} y={0} onMouseDown={onPlacementDown}>
@@ -1620,6 +1854,30 @@ function windowOf(geom: Geometry, crop: ItemCrop): SnapBox {
 function cropFor(geom: Geometry, preview: DragPreview | null): ItemCrop {
 	if (preview && preview.itemId === geom.item.id && preview.crop) return preview.crop;
 	return windowBox(geom.item, geom.template);
+}
+
+/**
+ * The corner pin to draw a geometry with: the one being dragged, else the saved
+ * one. `flat`: the crop or bounds frame is editing this placement's window,
+ * which is done on the picture as it is before the warp.
+ */
+function pinFor(geom: Geometry, preview: DragPreview | null, flat: boolean): ItemCorners | null {
+	if (flat) return null;
+	if (preview && preview.itemId === geom.item.id && preview.corners) return preview.corners;
+	return cornersOf(geom.item);
+}
+
+/** The pinned shape on the stage, in stage px, clockwise from the top-left. */
+function pinPoints(geom: Geometry, corners: ItemCorners): Point[] {
+	return CORNER_KEYS.map((key) => ({
+		x: geom.boxX + corners[key].x * geom.k,
+		y: geom.boxY + corners[key].y * geom.k,
+	}));
+}
+
+/** What a placement shows on the stage, as a box: its window, or the box around its pinned shape. */
+function shownBoxOf(geom: Geometry, crop: ItemCrop, corners: ItemCorners | null): SnapBox {
+	return windowOf(geom, corners ? cornersBounds(corners) : crop);
 }
 
 // ------------------------------------------------------------------- crop tool
@@ -2056,6 +2314,115 @@ function BoundsOverlay({
 				/>
 			))}
 		</Group>
+	);
+}
+
+// ------------------------------------------------------------- corner pin tool
+
+/** Screen-px size of a corner pin handle. */
+const PIN_HANDLE = 14;
+
+/**
+ * The Corner Pin frame: the four corners of the active placement's visible
+ * window, each free. Dragging a corner moves that corner alone and the picture
+ * is warped after it (see `shared/corners.ts`); dragging inside the shape moves
+ * the placement, the same drag the move handle does.
+ *
+ * Only the pinned shape is drawn. The rectangle the corners started from is not
+ * kept in view behind it: once a corner has moved, nothing is there.
+ *
+ * A corner sticks to the out's lines (its edges, centre and safe area and the
+ * other animations), and it stops where the shape would fold over itself: a
+ * picture turned inside out has no projection.
+ */
+function CornersOverlay({
+	geom,
+	stageW,
+	stageH,
+	onItemChange,
+}: {
+	geom: Geometry;
+	stageW: number;
+	stageH: number;
+	onItemChange: (itemId: string, patch: Partial<OutItem>) => void;
+}) {
+	const snap = useContext(SnapContext);
+	const drag = useContext(DragContext);
+	const { item, template } = geom;
+	const view = drag ? drag.view(geom) : geom;
+	const window_ = windowBox(item, template);
+	/** The corners as they are saved, which is where every drag starts from. */
+	const saved = cornersOf(item) ?? rectCorners(window_);
+	const points = pinPoints(view, drag?.pin(geom) ?? saved);
+	const onBodyDown = usePlacementDrag(geom, stageW, stageH, onItemChange);
+	const threshold = snap?.threshold ?? 0;
+
+	/** Moves one coordinate of a corner, magnets included. */
+	const pull = (value: number, lines: SnapLine[], guides: number[]): number => {
+		if (!snap?.enabled) return value;
+		const snapped = snapCoordinate(value, lines, threshold);
+		guides.push(...snapped.guide);
+		return snapped.value;
+	};
+
+	const onCornerDown = (key: CornerKey) => (event: KonvaEvent<MouseEvent>) => {
+		if (!drag) return;
+		const start = drag.pointOf(event.evt);
+		if (!start) return;
+		const from = { x: geom.boxX + saved[key].x * geom.k, y: geom.boxY + saved[key].y * geom.k };
+		let next: ItemCorners | null = null;
+		drag.begin(
+			event,
+			(point) => {
+				const guidesX: number[] = [];
+				const guidesY: number[] = [];
+				const x = pull(from.x + (point.x - start.x), snap?.placementX ?? [], guidesX);
+				const y = pull(from.y + (point.y - start.y), snap?.placementY ?? [], guidesY);
+				const candidate: ItemCorners = {
+					...saved,
+					[key]: { x: (x - geom.boxX) / geom.k, y: (y - geom.boxY) / geom.k },
+				};
+				// Past the point where the shape would fold, the corner waits
+				// where it last could be.
+				if (!isConvex(candidate)) return;
+				next = candidate;
+				drag.setPreview({ itemId: item.id, dx: 0, dy: 0, corners: candidate });
+				snap?.showPlacement(guidesX, guidesY);
+			},
+			() => {
+				drag.setPreview(null);
+				snap?.clear();
+				if (!next) return;
+				onItemChange(item.id, { corners: cornersPatch(next, window_) });
+			},
+		);
+	};
+
+	return (
+		<Fragment>
+			<Line
+				points={points.flatMap((point) => [point.x, point.y])}
+				closed
+				fill="rgba(0,0,0,0.001)"
+				stroke="rgba(255,210,63,0.95)"
+				strokeWidth={1}
+				onMouseDown={onBodyDown}
+			/>
+			{CORNER_KEYS.map((key, index) => (
+				<Rect
+					key={key}
+					x={points[index]!.x - PIN_HANDLE / 2}
+					y={points[index]!.y - PIN_HANDLE / 2}
+					width={PIN_HANDLE}
+					height={PIN_HANDLE}
+					fill="rgba(255,210,63,0.95)"
+					stroke="#0c2b25"
+					strokeWidth={1}
+					cornerRadius={PIN_HANDLE / 2}
+					onMouseDown={onCornerDown(key)}
+				/>
+			))}
+		</Fragment>
 	);
 }
 
