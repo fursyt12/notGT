@@ -789,67 +789,85 @@ static void duration_param(wchar_t *url, const Track *t) {
 
 /* Every source returns 1 when it answered (whatever it found), 0 when it did not. */
 
-static int source_lrclib(const Track *t, Variants *out) {
+/* Where LRCLIB and NetEase are; the test points them at a stand-in (--sources). */
+static wchar_t g_lrclib[300] = L"https://lrclib.net", g_netease[300] = L"https://music.163.com";
+
+/* Told what a source has found so far, before its end (LRCLIB tells answer by answer). */
+typedef void (*SourceEarly)(void *ctx, const Variants *found);
+
+/*
+ * A JSON list whose answer was cut off on the way (Fetch.cut): the entries that
+ * came whole. A search's first entries are its best ones.
+ */
+static JVal *json_parse_cut(const char *body, BOOL cut) {
+	JVal *doc = body ? json_parse(body) : NULL;
+	const char *s = body, *end = NULL;
+	int depth = 0;
+	BOOL quoted = FALSE, escaped = FALSE;
+	char *whole;
+	if (doc || !cut || !body) return doc;
+	while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+	if (*s != '[') return NULL;
+	for (const char *c = s; *c; c++) {
+		if (quoted) {
+			if (escaped) escaped = FALSE;
+			else if (*c == '\\') escaped = TRUE;
+			else if (*c == '"') quoted = FALSE;
+		} else if (*c == '"') {
+			quoted = TRUE;
+		} else if (*c == '[' || *c == '{') {
+			depth++;
+		} else if ((*c == ']' || *c == '}') && --depth == 1) {
+			end = c + 1; /* an entry of the list is complete */
+		}
+	}
+	if (!end || !(whole = (char *)malloc((size_t)(end - s) + 2))) return NULL;
+	memcpy(whole, s, (size_t)(end - s));
+	whole[end - s] = ']';
+	whole[end - s + 1] = '\0';
+	doc = json_parse(whole);
+	free(whole);
+	return doc;
+}
+
+/* Its searches begin to answer in ~0.3 s, in ~1 s when it is busy: a pause this
+ * long is a frozen connection (see Fetch). */
+#define LRCLIB_STALL_MS 1500
+
+/* LRCLIB's answers, gathered as they come. */
+typedef struct {
+	const Track *t;
 	Fetch f[8];
-	JVal *docs[8] = { 0 };
+	JVal *docs[8];
 	Candidate c[256];
-	int n = 0, kept, answered = 0;
-	wchar_t q[400];
-	ZeroMemory(f, sizeof(f));
-	/* stage 1: LRCLIB's own database (get-cached answers at once) and its searches */
-	for (int i = 0; i < 6; i++) {
-		f[i].timeoutMs = 5000;
-		wcscpy(f[i].url, i < 3 ? L"https://lrclib.net/api/get-cached" : L"https://lrclib.net/api/search");
+	int n, cut;
+	SourceEarly early;
+	void *ctx;
+} Lrclib;
+
+/* The entries of answer `i` that have synced lyrics, each once. */
+static void lrclib_collect(Lrclib *l, int i) {
+	const JVal *doc;
+	l->cut += l->f[i].cut;
+	if (!l->f[i].body || !(l->docs[i] = json_parse_cut(l->f[i].body, l->f[i].cut))) return;
+	doc = l->docs[i];
+	/* /get answers with one entry, /search with a list */
+	for (const JVal *item = doc->type == J_ARR ? doc->child : doc; item; item = doc->type == J_ARR ? item->next : NULL) {
+		double id = json_num(item, L"id", -1);
+		BOOL seen = FALSE;
+		if (!*json_str(item, L"syncedLyrics")) continue;
+		for (int k = 0; k < l->n && !seen; k++) seen = json_num(l->c[k].item, L"id", -2) == id;
+		if (seen || l->n >= 256) continue;
+		l->c[l->n].artist = json_str(item, L"artistName");
+		l->c[l->n].durationS = json_num(item, L"duration", 0);
+		l->c[l->n].item = item;
+		l->n++;
 	}
-	url_param(f[0].url, 2048, L"artist_name", t->artist);
-	url_param(f[0].url, 2048, L"track_name", t->title);
-	duration_param(f[0].url, t);
-	url_param(f[1].url, 2048, L"artist_name", t->first);
-	url_param(f[1].url, 2048, L"track_name", t->title);
-	duration_param(f[1].url, t);
-	url_param(f[2].url, 2048, L"artist_name", t->first);
-	url_param(f[2].url, 2048, L"track_name", t->clean);
-	url_param(f[3].url, 2048, L"track_name", t->title);
-	url_param(f[3].url, 2048, L"artist_name", t->first);
-	_snwprintf(q, 400, L"%ls %ls", t->first, t->clean);
-	q[399] = L'\0';
-	url_param(f[4].url, 2048, L"q", q);
-	url_param(f[5].url, 2048, L"q", t->clean);
-	fetch_all(f, 6);
-	for (int i = 3; i < 6; i++) answered += f[i].status != 0; /* a search never says 404 */
-	for (int pass = 0; pass < 2; pass++) {
-		int from = pass ? 6 : 0, to = pass ? 8 : 6;
-		if (pass) {
-			/* stage 2: the slow /get that may ask other providers */
-			if (n || !answered) break;
-			for (int i = 6; i < 8; i++) {
-				f[i].timeoutMs = 6000;
-				wcscpy(f[i].url, L"https://lrclib.net/api/get");
-				url_param(f[i].url, 2048, L"artist_name", i == 6 ? t->artist : t->first);
-				url_param(f[i].url, 2048, L"track_name", i == 6 ? t->title : t->clean);
-				duration_param(f[i].url, t);
-			}
-			fetch_all(f + 6, 2);
-		}
-		for (int i = from; i < to; i++) {
-			const JVal *doc;
-			if (!f[i].body || !(docs[i] = json_parse(f[i].body))) continue;
-			doc = docs[i];
-			/* /get answers with one entry, /search with a list */
-			for (const JVal *item = doc->type == J_ARR ? doc->child : doc; item; item = doc->type == J_ARR ? item->next : NULL) {
-				double id = json_num(item, L"id", -1);
-				BOOL seen = FALSE;
-				if (!*json_str(item, L"syncedLyrics")) continue;
-				for (int k = 0; k < n && !seen; k++) seen = json_num(c[k].item, L"id", -2) == id;
-				if (seen || n >= 256) continue;
-				c[n].artist = json_str(item, L"artistName");
-				c[n].durationS = json_num(item, L"duration", 0);
-				c[n].item = item;
-				n++;
-			}
-		}
-	}
-	kept = keep_matching(c, n, t);
+}
+
+/* The variants of the entries that are this recording (`c` is reordered). */
+static void lrclib_variants(Candidate *c, int n, const Track *t, Variants *out) {
+	int kept = keep_matching(c, n, t);
 	/* LRCLIB's credits are typed in by whoever uploaded a copy, writers and all:
 	 * the credit most copies agree on counts (on a tie, the fuller one). */
 	{
@@ -866,11 +884,81 @@ static int source_lrclib(const Track *t, Variants *out) {
 	}
 	for (int i = 0; i < kept; i++)
 		variants_add(out, L"lrclib", parse_lrc(json_str(c[i].item, L"syncedLyrics")), 1, L"");
-	for (int i = 0; i < 8; i++) {
-		json_free(docs[i]);
-		free(f[i].body);
+}
+
+/* An answer of the first stage has come: what is found so far is told at once. */
+static void lrclib_answered(void *ctx, int i) {
+	Lrclib *l = (Lrclib *)ctx;
+	int had = l->n;
+	Candidate *c;
+	Variants sofar = { 0 };
+	lrclib_collect(l, i);
+	if (!l->early || l->n == had || !(c = (Candidate *)malloc((size_t)l->n * sizeof(Candidate)))) return;
+	memcpy(c, l->c, (size_t)l->n * sizeof(Candidate));
+	lrclib_variants(c, l->n, l->t, &sofar);
+	free(c);
+	if (sofar.n) l->early(l->ctx, &sofar);
+	variants_free(&sofar);
+}
+
+/*
+ * LRCLIB: its own database (get-cached answers at once) and its searches, all at
+ * the same time, each answer told as it comes (`early`), so a request on a frozen
+ * connection holds nothing up; only when they find nothing, the slow /get that
+ * may ask other providers.
+ */
+static int source_lrclib(const Track *t, Variants *out, SourceEarly early, void *ctx) {
+	Lrclib *l = (Lrclib *)calloc(1, sizeof(Lrclib));
+	int found, answered = 0, asked = 6;
+	wchar_t q[400];
+	if (!l) return 0;
+	l->t = t;
+	l->early = early;
+	l->ctx = ctx;
+	for (int i = 0; i < 8; i++) l->f[i].alone = TRUE; /* lrclib.net is behind Cloudflare: see Fetch */
+	for (int i = 0; i < 6; i++) {
+		l->f[i].timeoutMs = 5000;
+		l->f[i].stallMs = LRCLIB_STALL_MS;
+		_snwprintf(l->f[i].url, 2048, L"%ls/api/%ls", g_lrclib, i < 3 ? L"get-cached" : L"search");
 	}
-	return n || answered;
+	url_param(l->f[0].url, 2048, L"artist_name", t->artist);
+	url_param(l->f[0].url, 2048, L"track_name", t->title);
+	duration_param(l->f[0].url, t);
+	url_param(l->f[1].url, 2048, L"artist_name", t->first);
+	url_param(l->f[1].url, 2048, L"track_name", t->title);
+	duration_param(l->f[1].url, t);
+	url_param(l->f[2].url, 2048, L"artist_name", t->first);
+	url_param(l->f[2].url, 2048, L"track_name", t->clean);
+	url_param(l->f[3].url, 2048, L"track_name", t->title);
+	url_param(l->f[3].url, 2048, L"artist_name", t->first);
+	_snwprintf(q, 400, L"%ls %ls", t->first, t->clean);
+	q[399] = L'\0';
+	url_param(l->f[4].url, 2048, L"q", q);
+	url_param(l->f[5].url, 2048, L"q", t->clean);
+	fetch_all(l->f, 6, lrclib_answered, l);
+	for (int i = 3; i < 6; i++) answered += l->f[i].status != 0; /* a search never says 404 */
+	if (!l->n && answered) {
+		/* the slow /get, which may take long to begin answering */
+		for (int i = 6; i < 8; i++) {
+			l->f[i].timeoutMs = 6000;
+			_snwprintf(l->f[i].url, 2048, L"%ls/api/get", g_lrclib);
+			url_param(l->f[i].url, 2048, L"artist_name", i == 6 ? t->artist : t->first);
+			url_param(l->f[i].url, 2048, L"track_name", i == 6 ? t->title : t->clean);
+			duration_param(l->f[i].url, t);
+		}
+		fetch_all(l->f + 6, 2, NULL, NULL);
+		for (int i = 6; i < 8; i++) lrclib_collect(l, i);
+		asked = 8;
+	}
+	if (l->cut && lyrics_log) lyrics_log(L"  lrclib: %d of %d answers stopped half-way, their whole entries taken", l->cut, asked);
+	lrclib_variants(l->c, l->n, t, out);
+	found = l->n;
+	for (int i = 0; i < 8; i++) {
+		json_free(l->docs[i]);
+		free(l->f[i].body);
+	}
+	free(l);
+	return found || answered;
 }
 
 /* A credits line NetEase puts among the lyrics ("作词 : X"). */
@@ -914,11 +1002,11 @@ static int source_netease(const Track *t, Variants *out) {
 		else wcscpy(q, t->clean);
 		q[399] = L'\0';
 		f[i].timeoutMs = 6000;
-		wcscpy(f[i].url, L"https://music.163.com/api/search/get");
+		_snwprintf(f[i].url, 2048, L"%ls/api/search/get", g_netease);
 		url_param(f[i].url, 2048, L"s", q);
 		wcscat(f[i].url, L"&type=1&limit=8");
 	}
-	fetch_all(f, 2);
+	fetch_all(f, 2, NULL, NULL);
 	if (!f[0].status && !f[1].status) return 0;
 	for (int i = 0; i < 2; i++) {
 		const JVal *songs;
@@ -944,9 +1032,9 @@ static int source_netease(const Track *t, Variants *out) {
 		netease_artists(c[i].item, credit, 256);
 		add_credit(out, credit);
 		lyr[i].timeoutMs = 6000;
-		_snwprintf(lyr[i].url, 2048, L"https://music.163.com/api/song/lyric?id=%.0f&lv=1&kv=1&tv=-1", json_num(c[i].item, L"id", 0));
+		_snwprintf(lyr[i].url, 2048, L"%ls/api/song/lyric?id=%.0f&lv=1&kv=1&tv=-1", g_netease, json_num(c[i].item, L"id", 0));
 	}
-	fetch_all(lyr, kept);
+	fetch_all(lyr, kept, NULL, NULL);
 	for (int i = 0; i < kept; i++) {
 		JVal *doc = json_parse(lyr[i].body);
 		const wchar_t *text = json_str(json_get(doc, L"lrc"), L"lyric"), *line = text;

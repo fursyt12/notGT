@@ -50,6 +50,12 @@ Spotify tells Windows only the first artist of a track. The sources credit them 
 often than not, so the title gets the fullest credit that names that artist, written as
 Spotify lists artists: "A, B, C".
 
+LRCLIB is behind Cloudflare, and some networks (Russian providers, since 2025) freeze a
+connection to Cloudflare once its first ~16 KB have come down: the answer begins and never
+ends. So every LRCLIB request goes over a connection of its own, an answer that stops for
+1.5 s is taken as far as it came (the songs of a search that came whole), and what LRCLIB
+finds goes to the title answer by answer, without waiting for the slowest one.
+
 Musixmatch no longer hands out anonymous tokens (it answers with a token of zeros, and
 every search with it returns the same demo song), so without a token of your own it is not
 asked. A text in another script than the track's (a transliteration, a translation) is not
@@ -113,11 +119,13 @@ node scripts/e2e-lyrics-bridge.mjs
 
 cross-compiles the program and runs it under wine in a virtual display against a stand-in
 for notGT's WebSocket API: the demo song's frames, the variants and the shift from a
-remembered track, the key, hiding and quitting. It needs mingw-w64, wine, Xvfb and xdotool
+remembered track, a lookup whose requests freeze half-way (a stand-in for LRCLIB and NetEase),
+the key, hiding and quitting. It needs mingw-w64, wine, Xvfb and xdotool
 and skips itself without them; it does not reach the internet.
 
 For development the program takes `--simulate` (a built-in demo song instead of Spotify),
 `--fake "Artist|Title|seconds|from"` (play that track), `--settings <file>`,
 `--cache <dir>`, `--log-file <file>`, `--command <n|p|+|-|0|r>@<seconds>` (press a button),
-`--snapshot <dir>` (save pictures of the windows and exit) and `--hidden` (start in the
-notification area).
+`--snapshot <dir>` (save pictures of the windows and exit), `--hidden` (start in the
+notification area) and `--sources <url>` (ask a stand-in at `<url>/lrclib` and `<url>/netease`
+instead of the internet).

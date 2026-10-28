@@ -12,9 +12,13 @@
  *      in order as `karaoke.*` frames; its windows are drawn in the brand colours;
  *   3. from a remembered track it shows the best variant, and the buttons
  *      switch to another variant and shift the text — remembered for the track;
- *   4. with no key notGT asks for one; a key typed in and "Connect" gets in,
+ *   4. a track nobody remembered gets LRCLIB's first answer at once while its
+ *      other requests hang, as they do on networks that freeze connections to
+ *      Cloudflare; an answer frozen half-way ends after a pause and gives the
+ *      songs that came whole (a stand-in for LRCLIB and NetEase, --sources);
+ *   5. with no key notGT asks for one; a key typed in and "Connect" gets in,
  *      and the key is stored encrypted, not as text;
- *   5. closing the window hides it and the program goes on; "Quit" in the
+ *   6. closing the window hides it and the program goes on; "Quit" in the
  *      tray menu tells the title that nothing plays and ends the program.
  *
  * Needs: x86_64-w64-mingw32-gcc + windres, wine, Xvfb (xvfb-run), xdotool.
@@ -23,6 +27,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -303,6 +308,60 @@ async function main() {
 				saved.manual === true && saved.offset === 200 && second && saved.pick === second.id,
 				JSON.stringify({ manual: saved.manual, offset: saved.offset, pick: saved.pick }),
 			);
+		}
+
+		// ------------------------------------ a lookup through frozen connections
+		{
+			// get-cached answers at once; every search sends two songs and a half and
+			// then nothing, for good; NetEase has nothing.
+			const entry = (id, letter) => ({
+				id,
+				artistName: "E2E Frozen",
+				trackName: "E2E Search",
+				duration: 60,
+				syncedLyrics: Array.from({ length: 20 }, (_, i) => `[00:${String(i * 2).padStart(2, "0")}.00] ${letter}${i + 1} line`).join("\n"),
+			});
+			const list = JSON.stringify([entry(2, "B"), entry(3, "C"), entry(4, "D")]);
+			const hanging = [];
+			const sources = http.createServer((req, res) => {
+				res.writeHead(200, { "Content-Type": "application/json" });
+				if (req.url.startsWith("/lrclib/api/get-cached")) res.end(JSON.stringify(entry(1, "A")));
+				else if (req.url.startsWith("/lrclib/api/search")) hanging.push(res.write(list.slice(0, list.indexOf('{"id":4') + 40)) && res);
+				else res.end(JSON.stringify({ result: { songs: [] } }));
+			});
+			await new Promise((resolve) => sources.listen(0, "127.0.0.1", resolve));
+			const notgt = await fakeNotgt();
+			const log = path.join(tmp, "frozen.log");
+			const run = start([
+				"--fake",
+				"E2E Frozen|E2E Search|60|0",
+				"--sources",
+				`http://127.0.0.1:${sources.address().port}`,
+				"--settings",
+				settings(path.join(tmp, "frozen.json"), { address: `127.0.0.1:${notgt.port}`, lang: "en" }),
+				"--cache",
+				winPath(cache),
+				"--log-file",
+				winPath(log),
+			]);
+			await waitFor("the end of the lookup", () => /lrclib: \d+ variants? in|lrclib failed/.test(journal(log)), 30_000);
+			spawnSync("wine", [post, "quit"], { env: wineEnv });
+			await run.exited;
+			notgt.close();
+			for (const res of hanging) res.destroy();
+			sources.close();
+			const text = journal(log);
+			const early = /lrclib: 1 variant so far in ([\d.]+) s/.exec(text);
+			const shown = text.indexOf("lyrics: 20 lines [lrclib]");
+			const stopped = text.indexOf("lrclib: 3 of 6 answers stopped half-way");
+			const ended = /lrclib: (\d+) variants? in ([\d.]+) s/.exec(text);
+			check(
+				"a track nobody remembered gets LRCLIB's first answer while its searches hang",
+				Boolean(early) && Number(early[1]) < 1 && shown >= 0 && stopped > shown,
+				text,
+			);
+			check("an answer frozen half-way gives the songs that came whole", stopped >= 0 && ended?.[1] === "3", text);
+			check("…and ends after a pause, not the timeout", Number(ended?.[2]) < 3.5, ended?.[0] ?? text);
 		}
 
 		// ---------------------------------------------------------- the key

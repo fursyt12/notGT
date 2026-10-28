@@ -42,6 +42,7 @@
  *   --snapshot <dir>               save pictures of every window as .bmp, then exit
  *   --snapshot-after <s>           when to take the first picture (default 4 s)
  *   --hidden                       start in the notification area only
+ *   --sources <url>                ask a stand-in for LRCLIB (<url>/lrclib) and NetEase (<url>/netease)
  */
 
 #ifndef UNICODE
@@ -494,11 +495,29 @@ typedef struct {
 	Variants found;
 	int answered;
 	BOOL counted;
+	/* What it found before its end (LRCLIB tells answer by answer): `early`,
+	 * under `lock`, and the lookup's own `sofar`, checked. */
+	CRITICAL_SECTION lock;
+	Variants early;
+	BOOL news;
+	HANDLE wake; /* the lookup's: there is news */
+	Variants sofar;
 } SourceJob;
+
+/* A source tells what it has found so far (see lookup_thread). */
+static void source_early(void *param, const Variants *found) {
+	SourceJob *job = (SourceJob *)param;
+	EnterCriticalSection(&job->lock);
+	variants_free(&job->early);
+	job->early = variants_copy(found);
+	job->news = TRUE;
+	LeaveCriticalSection(&job->lock);
+	SetEvent(job->wake);
+}
 
 static DWORD WINAPI source_thread(LPVOID param) {
 	SourceJob *job = (SourceJob *)param;
-	if (!wcscmp(job->name, L"lrclib")) job->answered = source_lrclib(&job->track, &job->found);
+	if (!wcscmp(job->name, L"lrclib")) job->answered = source_lrclib(&job->track, &job->found, source_early, job);
 	else if (!wcscmp(job->name, L"netease")) job->answered = source_netease(&job->track, &job->found);
 	else job->answered = source_musixmatch(&job->track, job->token, &job->found);
 	return 0;
@@ -510,54 +529,105 @@ typedef struct {
 	wchar_t token[256];
 } LookupJob;
 
+/* The variants of `from` that pass the checks, into `ok`; the others into the journal unless `quiet`. */
+static void keep_checked(const SourceJob *job, const Track *track, const Variants *from, Variants *ok, BOOL quiet) {
+	wchar_t why[160];
+	for (int v = 0; v < from->n; v++) {
+		const wchar_t *bad = check_lyrics(from->items[v].ly, track, why, 160);
+		if (!bad)
+			variants_add(ok, from->items[v].sources, lyrics_ref(from->items[v].ly), from->items[v].votes, from->items[v].artist);
+		else if (!quiet)
+			log_line(L"  %ls rejected: %ls", job->name, bad);
+	}
+}
+
+/* Posts what is known: the sources that ended, and what the others found so far,
+ * best first. Returns how many variants that is. */
+static int post_known(unsigned generation, const Variants *found, const SourceJob *jobs, int n, BOOL final, BOOL complete) {
+	Variants all = variants_copy(found);
+	int count;
+	for (int i = 0; i < n; i++) {
+		Variants sofar;
+		if (jobs[i].counted || !jobs[i].sofar.n) continue;
+		sofar = variants_copy(&jobs[i].sofar);
+		variants_merge(&all, &sofar);
+	}
+	rank_variants(&all);
+	post_result(generation, &all, final, complete);
+	count = all.n;
+	variants_free(&all);
+	return count;
+}
+
 /*
- * Asks every source at once. Each answer that passes the checks is posted as
- * it comes — playback starts with the fastest one and moves to a better one
- * while it plays — and the end of the search is posted once more, saying
- * whether every source answered (only then does "nothing" mean nothing).
+ * Asks every source at once. What passes the checks is posted as it comes —
+ * playback starts with the fastest answer and moves to a better one while it
+ * plays: a source's answer when it ends, LRCLIB's request by request, so one of
+ * its requests on a frozen connection holds nothing up. The end of the search is
+ * posted once more, saying whether every source answered (only then does
+ * "nothing" mean nothing).
  */
 static DWORD WINAPI lookup_thread(LPVOID param) {
 	LookupJob *job = (LookupJob *)param;
 	SourceJob *jobs = (SourceJob *)calloc(3, sizeof(SourceJob));
-	HANDLE threads[3];
+	HANDLE wait[4], news = CreateEventW(NULL, FALSE, FALSE, NULL);
 	int n = 0, answered = 0, finished = 0;
 	Variants found = { 0 };
 	DWORD start = GetTickCount();
 	const wchar_t *names[3] = { L"musixmatch", L"lrclib", L"netease" };
 
-	for (int i = 0; jobs && i < 3; i++) {
+	for (int i = 0; jobs && news && i < 3; i++) {
 		if (i == 0 && !job->token[0]) continue;
 		jobs[n].name = names[i];
 		jobs[n].track = job->track;
+		jobs[n].wake = news;
 		copy_str(jobs[n].token, 256, job->token);
-		threads[n] = CreateThread(NULL, 0, source_thread, &jobs[n], 0, NULL);
-		if (threads[n]) n++;
+		InitializeCriticalSection(&jobs[n].lock);
+		wait[n] = CreateThread(NULL, 0, source_thread, &jobs[n], 0, NULL);
+		if (wait[n]) n++;
+		else DeleteCriticalSection(&jobs[n].lock);
 	}
+	wait[n] = news; /* after the threads */
 	while (finished < n) {
 		DWORD spent = GetTickCount() - start, which;
 		BOOL any = FALSE;
 		if (spent >= 10000) break;
-		which = WaitForMultipleObjects((DWORD)n, threads, FALSE, 10000 - spent);
-		if (which >= WAIT_OBJECT_0 + (DWORD)n) break;
-		/* every thread that is done and not yet counted */
+		which = WaitForMultipleObjects((DWORD)n + 1, wait, FALSE, 10000 - spent);
+		if (which > WAIT_OBJECT_0 + (DWORD)n) break;
 		for (int i = 0; i < n; i++) {
-			wchar_t why[160];
 			Variants ok = { 0 };
-			if (jobs[i].counted || WaitForSingleObject(threads[i], 0) != WAIT_OBJECT_0) continue;
+			if (jobs[i].counted) continue;
+			if (WaitForSingleObject(wait[i], 0) != WAIT_OBJECT_0) {
+				/* still asking: what it has found so far */
+				Variants early = { 0 };
+				int had = jobs[i].sofar.n;
+				EnterCriticalSection(&jobs[i].lock);
+				if (jobs[i].news) {
+					early = jobs[i].early;
+					ZeroMemory(&jobs[i].early, sizeof(early));
+					jobs[i].news = FALSE;
+				}
+				LeaveCriticalSection(&jobs[i].lock);
+				if (!early.n) continue;
+				variants_free(&jobs[i].sofar);
+				keep_checked(&jobs[i], &job->track, &early, &jobs[i].sofar, TRUE);
+				add_credit(&jobs[i].sofar, early.credit);
+				variants_free(&early);
+				if (jobs[i].sofar.n != had)
+					log_line(L"  %ls: %d variant%ls so far in %.1f s", jobs[i].name, jobs[i].sofar.n, jobs[i].sofar.n == 1 ? L"" : L"s",
+						(GetTickCount() - start) / 1000.0);
+				if (jobs[i].sofar.n) any = TRUE;
+				continue;
+			}
 			jobs[i].counted = TRUE;
+			variants_free(&jobs[i].sofar); /* its end says it all */
 			finished++;
 			if (!jobs[i].answered) {
 				log_line(L"  %ls failed: no answer", jobs[i].name);
 				continue;
 			}
 			answered++;
-			for (int v = 0; v < jobs[i].found.n; v++) {
-				const wchar_t *bad = check_lyrics(jobs[i].found.items[v].ly, &job->track, why, 160);
-				if (bad) log_line(L"  %ls rejected: %ls", jobs[i].name, bad);
-				else
-					variants_add(&ok, jobs[i].found.items[v].sources, lyrics_ref(jobs[i].found.items[v].ly),
-						jobs[i].found.items[v].votes, jobs[i].found.items[v].artist);
-			}
+			keep_checked(&jobs[i], &job->track, &jobs[i].found, &ok, FALSE);
 			/* a song matched without lyrics may still credit its artists best */
 			if (add_credit(&found, jobs[i].found.credit) && found.n) any = TRUE;
 			if (!ok.n) continue;
@@ -566,18 +636,23 @@ static DWORD WINAPI lookup_thread(LPVOID param) {
 			rank_variants(&found);
 			any = TRUE;
 		}
-		if (any) post_result(job->generation, &found, FALSE, FALSE);
+		if (any) post_known(job->generation, &found, jobs, n, FALSE, FALSE);
 	}
 	if (finished < n) log_line(L"  some sources did not answer in 10 s");
-	if (!found.n) log_line(L"  nothing suitable for: %ls - %ls (%d s)", job->track.artist, job->track.title, (int)job->track.durationS);
-	post_result(job->generation, &found, TRUE, answered == n && finished == n);
+	/* the last word, with what the late ones found so far */
+	if (!post_known(job->generation, &found, jobs, n, TRUE, n > 0 && answered == n && finished == n))
+		log_line(L"  nothing suitable for: %ls - %ls (%d s)", job->track.artist, job->track.title, (int)job->track.durationS);
 	variants_free(&found);
 	/* The late ones have their own timeouts; what they find is dropped. */
 	for (int i = 0; i < n; i++) {
-		WaitForSingleObject(threads[i], INFINITE);
-		CloseHandle(threads[i]);
+		WaitForSingleObject(wait[i], INFINITE);
+		CloseHandle(wait[i]);
 		variants_free(&jobs[i].found);
+		variants_free(&jobs[i].early);
+		variants_free(&jobs[i].sofar);
+		DeleteCriticalSection(&jobs[i].lock);
 	}
+	if (news) CloseHandle(news);
 	SecureZeroMemory(job->token, sizeof(job->token));
 	free(jobs);
 	free(job);
@@ -946,8 +1021,9 @@ static DWORD WINAPI engine_thread(LPVOID unused) {
 		if (WaitForMultipleObjects(2, wake, FALSE, 120) == WAIT_OBJECT_0) break;
 		now = now_ms();
 
-		/* The player is asked twice a second; in between its position runs on. */
-		if (now - lastRead >= 500) {
+		/* The player is asked five times a second, so a new track is seen at once;
+		 * in between its position runs on. */
+		if (now - lastRead >= 200) {
 			if (!read_player(smtcOk, &last)) ZeroMemory(&last, sizeof(last));
 			lastRead = now;
 		}
@@ -2050,6 +2126,11 @@ int wmain(int argc, wchar_t **argv) {
 		else if (!wcscmp(argv[i], L"--cache") && i + 1 < argc) copy_str(g_cacheDir, MAX_PATH, argv[++i]);
 		else if (!wcscmp(argv[i], L"--simulate")) g_playerKind = PLAYER_SIMULATE;
 		else if (!wcscmp(argv[i], L"--hidden")) hidden = TRUE;
+		else if (!wcscmp(argv[i], L"--sources") && i + 1 < argc) {
+			_snwprintf(g_lrclib, 300, L"%ls/lrclib", argv[i + 1]);
+			_snwprintf(g_netease, 300, L"%ls/netease", argv[++i]);
+			g_lrclib[299] = g_netease[299] = L'\0';
+		}
 		else if (!wcscmp(argv[i], L"--log-file") && i + 1 < argc)
 			g_logFile = CreateFileW(argv[++i], GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 		else if (!wcscmp(argv[i], L"--command") && i + 1 < argc) {

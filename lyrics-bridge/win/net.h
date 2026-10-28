@@ -88,45 +88,82 @@ static BOOL url_split(const wchar_t *url, wchar_t *host, wchar_t *path, INTERNET
 }
 
 /*
- * GET `url`. Returns the body as a NUL-terminated UTF-8 string (free it), or
- * NULL when nothing came back at all; `*status` is the HTTP status, or 0.
+ * Some networks freeze a connection to Cloudflare once ~16 KB have come down it,
+ * the TLS handshake and the headers included (Russian providers do, since 2025;
+ * lrclib.net is behind Cloudflare): the answer begins at once and never ends. A
+ * request to such a host goes `alone`, on a connection of its own, so what an
+ * earlier answer used up is not missing from this one; and its `stallMs` ends it
+ * after a pause that long, the wait for the answer to begin included, keeping
+ * what came of the body (`cut`), instead of the timeout.
  */
-static char *http_get(const wchar_t *url, const wchar_t *headers, DWORD timeoutMs, DWORD *status) {
+typedef struct {
+	wchar_t url[2048];
+	const wchar_t *headers;
+	DWORD timeoutMs;
+	BOOL alone;
+	DWORD stallMs; /* 0 = timeoutMs */
+	char *body; /* free it */
+	DWORD status; /* 0 = no answer */
+	BOOL cut; /* the body stopped before its end; `body` holds what came */
+} Fetch;
+
+/*
+ * GETs `f->url`. The body comes as a NUL-terminated UTF-8 string, or NULL when
+ * nothing came back at all; `status` is the HTTP status, or 0.
+ */
+static void http_fetch(Fetch *f) {
 	wchar_t host[256], path[4096];
 	INTERNET_PORT port;
 	BOOL secure;
 	HINTERNET connection = NULL, request = NULL;
 	DWORD code = 0, size = sizeof(code), got = 0, flags = WINHTTP_DECOMPRESSION_FLAG_ALL;
+	DWORD timeoutMs = f->timeoutMs, stallMs = f->stallMs && f->stallMs < timeoutMs ? f->stallMs : timeoutMs;
 	size_t used = 0, cap = 0;
 	char *body = NULL;
 
-	if (status) *status = 0;
-	if (!g_http || !url_split(url, host, path, &port, &secure)) return NULL;
+	f->body = NULL;
+	f->status = 0;
+	f->cut = FALSE;
+	if (!g_http || !url_split(f->url, host, path, &port, &secure)) return;
 	connection = WinHttpConnect(g_http, host, port, 0);
 	if (connection)
 		request = WinHttpOpenRequest(connection, L"GET", path, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
 			secure ? WINHTTP_FLAG_SECURE : 0);
 	if (!request) goto done;
-	WinHttpSetTimeouts(request, (int)timeoutMs, (int)timeoutMs, (int)timeoutMs, (int)timeoutMs);
+	WinHttpSetTimeouts(request, (int)timeoutMs, (int)timeoutMs, (int)timeoutMs, (int)stallMs);
 	/* Gzip when Windows can unpack it (8.1 and later); plain text otherwise. */
 	WinHttpSetOption(request, WINHTTP_OPTION_DECOMPRESSION, &flags, sizeof(flags));
-	if (!WinHttpSendRequest(request, headers ? headers : WINHTTP_NO_ADDITIONAL_HEADERS, headers ? (DWORD)-1 : 0,
+	if (f->alone) {
+		DWORD off = WINHTTP_DISABLE_KEEP_ALIVE;
+		WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &off, sizeof(off));
+	}
+	if (!WinHttpSendRequest(request, f->headers ? f->headers : WINHTTP_NO_ADDITIONAL_HEADERS, f->headers ? (DWORD)-1 : 0,
 			WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
 		!WinHttpReceiveResponse(request, NULL))
 		goto done;
 	WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
 		&code, &size, WINHTTP_NO_HEADER_INDEX);
 	for (;;) {
+		DWORD ready = 0;
 		if (used + 16384 + 1 > cap) {
 			char *grown = (char *)realloc(body, cap = cap ? cap * 2 : 65536);
 			if (!grown) break;
 			body = grown;
 		}
-		if (!WinHttpReadData(request, body + used, 16384, &got) || got == 0) break;
+		/* What has come is read as it is, so a stall loses none of it. */
+		if (!WinHttpQueryDataAvailable(request, &ready)) {
+			f->cut = TRUE;
+			break;
+		}
+		if (!ready) break;
+		if (!WinHttpReadData(request, body + used, ready < 16384 ? ready : 16384, &got) || got == 0) {
+			f->cut = TRUE;
+			break;
+		}
 		used += got;
 	}
 	if (body) body[used] = '\0';
-	if (status) *status = code;
+	f->status = code;
 done:
 	if (request) WinHttpCloseHandle(request);
 	if (connection) WinHttpCloseHandle(connection);
@@ -134,37 +171,60 @@ done:
 		free(body);
 		body = NULL;
 	}
-	return body;
+	f->body = body;
+}
+
+/* The same for a plain request: the body (free it) or NULL, and the status. */
+static char *http_get(const wchar_t *url, const wchar_t *headers, DWORD timeoutMs, DWORD *status) {
+	Fetch f;
+	ZeroMemory(&f, sizeof(f));
+	wcsncpy(f.url, url, 2047);
+	f.headers = headers;
+	f.timeoutMs = timeoutMs;
+	http_fetch(&f);
+	if (status) *status = f.status;
+	return f.body;
 }
 
 /* --------------------------------------------------- several at a time */
 
-typedef struct {
-	wchar_t url[2048];
-	const wchar_t *headers;
-	DWORD timeoutMs;
-	char *body; /* free it */
-	DWORD status; /* 0 = no answer */
-} Fetch;
-
 static DWORD WINAPI fetch_thread(LPVOID param) {
-	Fetch *f = (Fetch *)param;
-	f->body = http_get(f->url, f->headers, f->timeoutMs, &f->status);
+	http_fetch((Fetch *)param);
 	return 0;
 }
 
 /* Runs the requests at the same time and waits for all of them (each has its
- * own timeout, so this ends). */
-static void fetch_all(Fetch *fetches, int n) {
+ * own timeout, so this ends). `ended`, when given, hears of each request as it
+ * ends, on this thread. */
+static void fetch_all(Fetch *fetches, int n, void (*ended)(void *ctx, int i), void *ctx) {
 	HANDLE threads[16];
-	DWORD started = 0;
+	int index[16], started = 0;
 	for (int i = 0; i < n && i < 16; i++) {
-		threads[started] = CreateThread(NULL, 0, fetch_thread, &fetches[i], 0, NULL);
-		if (threads[started]) started++;
-		else fetch_thread(&fetches[i]);
+		HANDLE thread = CreateThread(NULL, 0, fetch_thread, &fetches[i], 0, NULL);
+		if (thread) {
+			threads[started] = thread;
+			index[started++] = i;
+		} else {
+			fetch_thread(&fetches[i]);
+			if (ended) ended(ctx, i);
+		}
 	}
-	if (started) WaitForMultipleObjects(started, threads, TRUE, INFINITE);
-	for (DWORD i = 0; i < started; i++) CloseHandle(threads[i]);
+	while (started > 0) {
+		DWORD which = WaitForMultipleObjects((DWORD)started, threads, FALSE, INFINITE) - WAIT_OBJECT_0;
+		if (which >= (DWORD)started) { /* the wait failed: each in turn */
+			for (int k = 0; k < started; k++) {
+				WaitForSingleObject(threads[k], INFINITE);
+				CloseHandle(threads[k]);
+				if (ended) ended(ctx, index[k]);
+			}
+			return;
+		}
+		CloseHandle(threads[which]);
+		if (ended) ended(ctx, index[which]);
+		started--;
+		threads[which] = threads[started];
+		index[which] = index[started];
+	}
 }
 
 /* ------------------------------------------------------------ WebSocket */
